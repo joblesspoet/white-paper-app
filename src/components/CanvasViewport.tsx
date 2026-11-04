@@ -10,7 +10,7 @@ type Point = { x: number; y: number };
 export type InkTool = 'select' | 'pen' | 'highlighter' | 'eraser' | 'text' | 'sticky';
 export type InkStroke = { id: string; points: Point[]; color: string; width: number; opacity: number; tool: 'pen' | 'highlighter'; createdAt: string };
 export type ViewportState = { x: number; y: number; scale: number };
-export type CanvasObject = { id: string; type: 'text' | 'sticky'; text: string; x: number; y: number; color: string; backgroundColor?: string; fontSize: number; };
+export type CanvasObject = { id: string; type: 'text' | 'sticky'; text: string; x: number; y: number; width: number; height: number; rotation: number; color: string; backgroundColor?: string; fontSize: number; };
 type CanvasViewportProps = {
   dark?: boolean;
   activeTool?: InkTool;
@@ -24,13 +24,15 @@ type CanvasViewportProps = {
   onDrawingStart?: () => void;
   objects?: CanvasObject[];
   onObjectCreate?: (type: 'text' | 'sticky', point: Point) => void;
+  onObjectMove?: (id: string, point: Point) => void;
+  onObjectEdit?: (object: CanvasObject) => void;
 };
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 4;
 const ERASE_RADIUS = 24;
 
-export function CanvasViewport({ dark = false, activeTool = 'pen', color = colors.foreground, width = 4, opacity = 1, undoRequest = 0, redoRequest = 0, onViewportChange, onHistoryChange, onDrawingStart, objects = [], onObjectCreate }: CanvasViewportProps) {
+export function CanvasViewport({ dark = false, activeTool = 'pen', color = colors.foreground, width = 4, opacity = 1, undoRequest = 0, redoRequest = 0, onViewportChange, onHistoryChange, onDrawingStart, objects = [], onObjectCreate, onObjectMove, onObjectEdit }: CanvasViewportProps) {
   const offsetX = useSharedValue(0);
   const offsetY = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -68,11 +70,12 @@ export function CanvasViewport({ dark = false, activeTool = 'pen', color = color
   const panGesture = Gesture.Pan().enabled(false).onStart(() => { startX.value = offsetX.value; startY.value = offsetY.value; }).onChange((event) => { offsetX.value = startX.value + event.translationX; offsetY.value = startY.value + event.translationY; runOnJS(report)(offsetX.value, offsetY.value, scale.value); });
   const pinchGesture = Gesture.Pinch().onStart(() => { startScale.value = scale.value; }).onChange((event) => { scale.value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, startScale.value * event.scale)); runOnJS(report)(offsetX.value, offsetY.value, scale.value); });
   const objectTap = Gesture.Tap().enabled((activeTool === 'text' || activeTool === 'sticky') && !!onObjectCreate).onEnd((event) => { if (onObjectCreate) runOnJS(onObjectCreate)(activeTool as 'text' | 'sticky', { x: (event.x - offsetX.value) / scale.value, y: (event.y - offsetY.value) / scale.value }); });
-  const gesture = Gesture.Simultaneous(activeTool === 'eraser' ? eraseGesture : (activeTool === 'text' || activeTool === 'sticky' ? objectTap : drawGesture), pinchGesture);
+  const selectGesture = Gesture.Pan().enabled(activeTool === 'select').minDistance(4).onStart((event) => { const point = { x: (event.x - offsetX.value) / scale.value, y: (event.y - offsetY.value) / scale.value }; const hit = objects.slice().reverse().find((item) => point.x >= item.x && point.x <= item.x + item.width && point.y >= item.y && point.y <= item.y + item.height); if (hit && onObjectMove) runOnJS(onObjectMove)(hit.id, point); }).onUpdate((event) => { if (!onObjectMove) return; const point = { x: (event.x - offsetX.value) / scale.value, y: (event.y - offsetY.value) / scale.value }; const hit = objects.slice().reverse().find((item) => point.x >= item.x && point.x <= item.x + item.width && point.y >= item.y && point.y <= item.y + item.height); if (hit) runOnJS(onObjectMove)(hit.id, point); });
+  const gesture = Gesture.Simultaneous(activeTool === 'eraser' ? eraseGesture : activeTool === 'select' ? selectGesture : (activeTool === 'text' || activeTool === 'sticky' ? objectTap : drawGesture), pinchGesture);
   const canvasColor = dark ? colors.darkBackground : colors.background;
   const renderedStrokes = useMemo(() => [...strokes, ...(activeStroke ? [activeStroke] : [])], [strokes, activeStroke]);
 
-  return <View style={styles.root} accessibilityLabel="Interactive canvas viewport"><GestureDetector gesture={gesture}><Canvas style={StyleSheet.absoluteFill} accessibilityLabel="Canvas surface"><Group transform={[{ translateX: offsetX.value }, { translateY: offsetY.value }, { scale: scale.value }]}><Rect x={-2000} y={-2000} width={4000} height={4000} color={canvasColor} />{renderedStrokes.map((stroke) => <Path key={stroke.id} path={pathFromPoints(stroke.points)} color={stroke.color} opacity={stroke.opacity} style="stroke" strokeWidth={stroke.width} strokeCap="round" strokeJoin="round" />)}</Group></Canvas></GestureDetector>{objects.map((object) => <View key={object.id} pointerEvents="none" style={[styles.object, { left: object.x * scale.value + offsetX.value, top: object.y * scale.value + offsetY.value, backgroundColor: object.backgroundColor ?? 'transparent' }]}><Text style={{ color: object.color, fontSize: object.fontSize * scale.value }}>{object.text || (object.type === 'sticky' ? ' ' : 'Text')}</Text></View>)}</View>;
+  return <View style={styles.root} accessibilityLabel="Interactive canvas viewport"><GestureDetector gesture={gesture}><Canvas style={StyleSheet.absoluteFill} accessibilityLabel="Canvas surface"><Group transform={[{ translateX: offsetX.value }, { translateY: offsetY.value }, { scale: scale.value }]}><Rect x={-2000} y={-2000} width={4000} height={4000} color={canvasColor} />{renderedStrokes.map((stroke) => <Path key={stroke.id} path={pathFromPoints(stroke.points)} color={stroke.color} opacity={stroke.opacity} style="stroke" strokeWidth={stroke.width} strokeCap="round" strokeJoin="round" />)}</Group></Canvas></GestureDetector>{objects.map((object) => <View key={object.id} pointerEvents="none" style={[styles.object, { left: object.x * scale.value + offsetX.value, top: object.y * scale.value + offsetY.value, width: object.width * scale.value, minHeight: object.height * scale.value, backgroundColor: object.backgroundColor ?? 'transparent', transform: [{ rotate: `${object.rotation}deg` }] }]}><Text style={{ color: object.color, fontSize: object.fontSize * scale.value }}>{object.text || (object.type === 'sticky' ? ' ' : 'Text')}</Text></View>)}</View>;
 }
 
 function pathFromPoints(points: Point[]) { const first = points[0]; if (!first) return Skia.Path.Make(); return Skia.Path.MakeFromSVGString([`M ${first.x} ${first.y}`, ...points.slice(1).map((point) => `L ${point.x} ${point.y}`)].join(' ')) ?? Skia.Path.Make(); }
