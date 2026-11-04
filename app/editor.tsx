@@ -1,101 +1,77 @@
-import { Stack, useRouter } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { useBoards } from '../src/board-context';
+import { Pressable, StyleSheet, Text, TextInput, useColorScheme, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, radii, spacing, touchTarget, typography } from '../src/theme';
+import { ChevronRightIcon, MoreIcon } from '../src/components/icons';
+import { colors, darkColors, radii, spacing, touchTarget, typography } from '../src/theme';
 
-/**
- * Board editor placeholder. Canvas, tools, gestures and persistence are
- * intentionally absent — this slice only proves the route and back navigation.
- */
 export default function BoardEditorScreen() {
   const router = useRouter();
+  const { boardId } = useLocalSearchParams<{ boardId?: string }>();
+  const { boards, updateTitle } = useBoards();
+  const board = boards.find((item) => item.id === boardId);
+  const [title, setTitle] = useState(board?.title ?? 'Untitled board');
+  useEffect(() => { if (board) setTitle(board.title); }, [board]);
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const theme = useColorScheme() === 'dark' ? darkColors : colors;
+  const tablet = width >= 768;
 
   return (
-    <View style={styles.root}>
-      <Stack.Screen options={{ title: 'Untitled board' }} />
-
-      <View style={styles.canvas}>
-        <Text style={styles.canvasTitle}>Canvas placeholder</Text>
-        <Text style={styles.canvasBody}>
-          The Skia canvas, tool dock, and drawing gestures arrive in later
-          slices. This route exists so navigation can be verified.
-        </Text>
-      </View>
-
-      <View style={[styles.footer, { paddingBottom: spacing.md + insets.bottom }]}>
-        <Text style={styles.hint}>
-          Use the header back button, the iOS swipe gesture, or Android back to
-          return Home.
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back to Home"
-          onPress={() => router.back()}
-          style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-        >
-          <Text style={styles.backLabel}>Back to Home</Text>
+    <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <View style={[styles.topBar, { borderBottomColor: theme.border }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Back to boards" onPress={() => router.back()} style={styles.iconButton}>
+          <ChevronRightIcon color={theme.foreground} />
         </Pressable>
+        <TextInput accessibilityLabel="Board title" value={title} onChangeText={(value) => { setTitle(value); if (boardId) updateTitle(boardId, value); }} style={[styles.title, { color: theme.foreground }]} />
+        <View style={styles.actions}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Undo" style={styles.action}><Text style={[styles.actionText, { color: theme.foreground }]}>↶</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Redo" style={styles.action}><Text style={[styles.actionText, { color: theme.foreground }]}>↷</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="More board options" style={styles.iconButton}><MoreIcon color={theme.foreground} /></Pressable>
+        </View>
       </View>
+
+      <View style={styles.workspace}>
+        {tablet && <ToolRail theme={theme} />}
+        <View style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
+          <Text style={[styles.canvasBody, { color: theme.foreground }]}>Use the tools below to start creating.</Text>
+        </View>
+      </View>
+
+      {!tablet && <ToolDock theme={theme} bottom={insets.bottom} />}
     </View>
   );
 }
 
+function ToolRail({ theme }: { theme: { foreground: string; border: string } }) {
+  return <View style={[styles.rail, { borderRightColor: theme.border }]}><Tool theme={theme} label="Select" icon="↖" /><Tool theme={theme} label="Pen" icon="✎" /><Tool theme={theme} label="Text" icon="T" /><Tool theme={theme} label="Shape" icon="□" /></View>;
+}
+function ToolDock({ theme, bottom }: { theme: { foreground: string; surface: string; border: string }; bottom: number }) {
+  return <View style={[styles.dock, { backgroundColor: theme.surface, borderColor: theme.border, paddingBottom: Math.max(spacing.sm, bottom) }]}><Tool theme={theme} label="Select" icon="↖" /><Tool theme={theme} label="Pen" icon="✎" /><Tool theme={theme} label="Text" icon="T" /><Tool theme={theme} label="Shape" icon="□" /></View>;
+}
+function Tool({ theme, label, icon }: { theme: { foreground: string }; label: string; icon: string }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} style={styles.tool}><Text style={[styles.toolIcon, { color: theme.foreground }]}>{icon}</Text><Text style={[styles.toolLabel, { color: theme.foreground }]}>{label}</Text></Pressable>;
+}
+
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  canvas: {
-    flex: 1,
-    margin: spacing.md,
-    padding: spacing.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    borderRadius: radii.md,
-    borderWidth: 2,
-    borderColor: colors.border,
-    borderStyle: 'dashed',
-    backgroundColor: colors.surface,
-  },
-  canvasTitle: {
-    ...typography.subtitle,
-    color: colors.foreground,
-  },
-  canvasBody: {
-    ...typography.body,
-    color: colors.foreground,
-    opacity: 0.8,
-    textAlign: 'center',
-  },
-  footer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    gap: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  hint: {
-    ...typography.caption,
-    color: colors.foreground,
-    opacity: 0.7,
-  },
-  backButton: {
-    alignSelf: 'flex-start',
-    minHeight: touchTarget,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.sm,
-    borderWidth: 2,
-    borderColor: colors.primary,
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  backLabel: {
-    ...typography.bodyStrong,
-    color: colors.primary,
-  },
+  root: { flex: 1 },
+  topBar: { minHeight: 64, flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.sm, borderBottomWidth: 1, gap: spacing.sm },
+  iconButton: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '180deg' }] },
+  title: { flex: 1, ...typography.bodyStrong, paddingVertical: spacing.sm },
+  actions: { flexDirection: 'row', alignItems: 'center' },
+  action: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  actionText: { fontSize: 28 },
+  workspace: { flex: 1, flexDirection: 'row' },
+  rail: { width: 80, borderRightWidth: 1, alignItems: 'center', paddingTop: spacing.md, gap: spacing.sm },
+  canvas: { flex: 1, margin: spacing.md, borderWidth: 1, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+  canvasTitle: { ...typography.subtitle },
+  canvasBody: { ...typography.body, opacity: 0.7 },
+  dock: { minHeight: 76, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', borderTopWidth: 1, paddingTop: spacing.sm },
+  tool: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
+  toolIcon: { fontSize: 22, lineHeight: 26 },
+  toolLabel: { ...typography.caption },
 });

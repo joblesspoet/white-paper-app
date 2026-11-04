@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { colors, typography } from '../src/theme';
+import { BoardProvider } from '../src/board-context';
 
 /**
  * Screens that are opened from a deep link or a cold start still resolve a stack
@@ -16,6 +17,7 @@ export const unstable_settings = {
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
+      <BoardProvider>
       <StatusBar style="dark" />
       <Stack
         screenOptions={{
@@ -28,9 +30,10 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="editor" options={{ title: 'Board editor' }} />
+        <Stack.Screen name="editor" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ title: 'Settings' }} />
       </Stack>
+      </BoardProvider>
     </SafeAreaProvider>
   );
 }

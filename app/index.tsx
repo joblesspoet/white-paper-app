@@ -1,12 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { FlatList, Pressable, Text, useColorScheme, useWindowDimensions, View } from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, Text, useColorScheme, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from '../src/components/AppButton';
 import { BoardCard, BoardSummary } from '../src/components/BoardCard';
 import { BoardIcon, PlusIcon, SettingsIcon } from '../src/components/icons';
-import { colors, darkColors, spacing } from '../src/theme';
+import { colors, darkColors, radii, spacing, touchTarget, typography } from '../src/theme';
 import { homeStyles as styles } from '../src/screens/home.styles';
 
 const initialBoards: BoardSummary[] = [];
@@ -18,6 +18,8 @@ export default function HomeScreen() {
   const isDark = useColorScheme() === 'dark';
   const theme = isDark ? darkColors : colors;
   const [boards, setBoards] = useState(initialBoards);
+  const [sheetVisible, setSheetVisible] = useState(false);
+  const [canvasBackground, setCanvasBackground] = useState<'light' | 'dark'>(isDark ? 'dark' : 'light');
   const columns = width >= 768 ? 4 : 2;
   const horizontalPadding = width >= 768 ? spacing.xl : spacing.lg;
   const contentStyle = useMemo(() => ({ paddingHorizontal: horizontalPadding, paddingBottom: spacing.xl + insets.bottom }), [horizontalPadding, insets.bottom]);
@@ -27,6 +29,12 @@ export default function HomeScreen() {
     setBoards((current) => [board, ...current]);
     router.push('/editor');
   }, [router]);
+
+  const openCustomize = useCallback(() => setSheetVisible(true), []);
+  const createCustomizedBoard = useCallback(() => {
+    setSheetVisible(false);
+    createBoard();
+  }, [createBoard]);
 
   const renderBoard = useCallback(({ item }: { item: BoardSummary }) => (
     <BoardCard board={item} onPress={() => router.push('/editor')} onMenuPress={() => undefined} />
@@ -52,7 +60,7 @@ export default function HomeScreen() {
         keyExtractor={(item) => item.id}
         columnWrapperStyle={boards.length > 0 ? styles.row : undefined}
         contentContainerStyle={contentStyle}
-        ListHeaderComponent={<AppButton label="New board" accessibilityHint="Creates a blank board and opens it" onPress={createBoard} />}
+        ListHeaderComponent={<View><AppButton label="New board" accessibilityHint="Creates a blank board and opens it" onPress={createBoard} /><Pressable accessibilityRole="button" accessibilityLabel="Customize new board" onPress={openCustomize} style={styles.customizeLink}><Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text></Pressable></View>}
         ListHeaderComponentStyle={styles.listHeader}
         ListEmptyComponent={
           <View style={[styles.empty, { borderColor: theme.border, backgroundColor: theme.muted }]}>
@@ -69,6 +77,36 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
         ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
       />
+
+      <Modal transparent visible={sheetVisible} animationType="slide" onRequestClose={() => setSheetVisible(false)}>
+        <Pressable style={sheetStyles.scrim} onPress={() => setSheetVisible(false)}>
+          <Pressable style={[sheetStyles.sheet, { backgroundColor: theme.surface, paddingBottom: insets.bottom + spacing.md }]} onPress={() => undefined}>
+            <View style={[sheetStyles.grabber, { backgroundColor: theme.border }]} />
+            <Text style={[sheetStyles.title, { color: theme.foreground }]}>Customize your board</Text>
+            <Text style={[sheetStyles.body, { color: theme.foreground }]}>Choose a canvas style before you start.</Text>
+            <Text style={[sheetStyles.label, { color: theme.foreground }]}>Canvas background</Text>
+            <View style={sheetStyles.choiceRow}>
+              <Choice label="Light" active={canvasBackground === 'light'} onPress={() => setCanvasBackground('light')} theme={theme} />
+              <Choice label="Dark" active={canvasBackground === 'dark'} onPress={() => setCanvasBackground('dark')} theme={theme} />
+            </View>
+            <AppButton label="Create board" onPress={createCustomizedBoard} />
+            <Pressable accessibilityRole="button" accessibilityLabel="Cancel customization" onPress={() => setSheetVisible(false)} style={sheetStyles.cancel}><Text style={[sheetStyles.link, { color: theme.primary }]}>Cancel</Text></Pressable>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
+
+function Choice({ label, active, onPress, theme }: { label: string; active: boolean; onPress: () => void; theme: { primary: string; foreground: string; border: string; muted: string; surface: string } }) {
+  return <Pressable accessibilityRole="radio" accessibilityState={{ selected: active }} onPress={onPress} style={[sheetStyles.choice, { borderColor: active ? theme.primary : theme.border, backgroundColor: active ? theme.muted : theme.surface }]}><Text style={[typography.bodyStrong, { color: theme.foreground }]}>{label}</Text></Pressable>;
+}
+
+const sheetStyles = StyleSheet.create({
+  scrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000055' },
+  sheet: { padding: spacing.lg, borderTopLeftRadius: radii.lg, borderTopRightRadius: radii.lg, gap: spacing.md },
+  grabber: { width: 44, height: 4, borderRadius: 2, alignSelf: 'center' },
+  title: { ...typography.title }, body: { ...typography.body, opacity: 0.75 }, label: { ...typography.bodyStrong, marginTop: spacing.sm },
+  choiceRow: { flexDirection: 'row', gap: spacing.sm }, choice: { flex: 1, minHeight: touchTarget, borderWidth: 2, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
+  cancel: { minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' }, link: { ...typography.bodyStrong },
+});
