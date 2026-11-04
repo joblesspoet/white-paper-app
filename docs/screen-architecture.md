@@ -29,6 +29,18 @@ AppRoot
 
 The central activity is editing a board. Tabs would add navigation weight without providing distinct top-level destinations. Home is the collection area; the editor is a focused full-screen workspace. We can add tabs later if templates, shared boards, and account settings become major areas.
 
+### Route map (implemented)
+
+Navigation is Expo Router file-based routing on a single native stack. `unstable_settings.anchor = 'index'` keeps Home underneath deep-linked routes, so back always returns Home.
+
+| Route | File | Screen |
+|---|---|---|
+| `/` | `app/index.tsx` | Home / Boards (own safe-area header) |
+| `/editor` | `app/editor.tsx` | Board editor |
+| `/settings` | `app/settings.tsx` | App settings |
+
+Sheets and flows in the map below become routes or modal routes in later slices; none exist yet.
+
 ## Screen 1: Home / Boards
 
 ### Purpose
