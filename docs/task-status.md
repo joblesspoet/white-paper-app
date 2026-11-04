@@ -1,10 +1,10 @@
 # Task status
 
 ## Current phase
-Canvas viewport implementation.
+Text and sticky-note objects implementation.
 
 ## Status
-`implemented-unverified` — Skia canvas viewport, pan/pinch gesture wiring, viewport state reporting, coordinate conversion, and basic pen ink strokes are implemented; runtime verification remains. Expo SDK 58 requires Reanimated 4.7.1 with react-native-worklets 0.13.1; both are installed to match the SDK and React Native 0.88.
+`implemented-unverified` — Ink tools remain implemented. Text and sticky-note creation, native editing, basic colors/sizing, viewport-aware placement, and empty-object cancellation are implemented; runtime verification remains. Expo SDK 58 requires Reanimated 4.7.1 with react-native-worklets 0.13.1; both are installed to match the SDK and React Native 0.88.
 
 ## Completed slices
 - Expo Router stack with Home, Editor, and Settings routes.
@@ -21,7 +21,7 @@ Canvas viewport implementation.
 ## Known issues
 - Runtime device verification and screenshot comparison were not available in this session.
 - Board state is in-memory only and resets on reload.
-- Drawing objects, persistence, and advanced editor tools remain intentionally out of scope.
+- Stroke persistence is in-memory only; text, shapes, selection, and advanced editor tools remain intentionally out of scope.
 
 ## Next task
-Next: implement drawing-tool options and undo/redo for ink strokes.
+Next: implement text and sticky-note objects.
