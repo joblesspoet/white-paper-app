@@ -1,137 +1,74 @@
+import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, Text, useColorScheme, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from '../src/components/AppButton';
-import { BoardIcon, SettingsIcon } from '../src/components/icons';
-import { colors, radii, spacing, touchTarget, typography } from '../src/theme';
+import { BoardCard, BoardSummary } from '../src/components/BoardCard';
+import { BoardIcon, PlusIcon, SettingsIcon } from '../src/components/icons';
+import { colors, darkColors, spacing } from '../src/theme';
+import { homeStyles as styles } from '../src/screens/home.styles';
 
-/**
- * Home placeholder. Navigation shell only — the board list, board creation and
- * persistence land in later slices.
- */
+const initialBoards: BoardSummary[] = [];
+
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isDark = useColorScheme() === 'dark';
+  const theme = isDark ? darkColors : colors;
+  const [boards, setBoards] = useState(initialBoards);
+  const columns = width >= 768 ? 4 : 2;
+  const horizontalPadding = width >= 768 ? spacing.xl : spacing.lg;
+  const contentStyle = useMemo(() => ({ paddingHorizontal: horizontalPadding, paddingBottom: spacing.xl + insets.bottom }), [horizontalPadding, insets.bottom]);
+
+  const createBoard = useCallback(() => {
+    const board = { id: String(Date.now()), title: 'Untitled board', updatedAt: 'Just now', objectCount: 0 };
+    setBoards((current) => [board, ...current]);
+    router.push('/editor');
+  }, [router]);
+
+  const renderBoard = useCallback(({ item }: { item: BoardSummary }) => (
+    <BoardCard board={item} onPress={() => router.push('/editor')} onMenuPress={() => undefined} />
+  ), [router]);
 
   return (
-    <SafeAreaView style={styles.root} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.wordmark}>FlowCanvas</Text>
-          <Text style={styles.subtitle}>Capture ideas naturally.</Text>
+    <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
+      <View style={[styles.header, { paddingHorizontal: horizontalPadding }]}>
+        <View>
+          <Text style={[styles.wordmark, { color: theme.foreground }]}>FlowCanvas</Text>
+          <Text style={[styles.subtitle, { color: theme.primary }]}>Your ideas, in motion.</Text>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open settings"
-          onPress={() => router.push('/settings')}
-          style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
-        >
-          <SettingsIcon />
+        <Pressable accessibilityRole="button" accessibilityLabel="Open settings" onPress={() => router.push('/settings')} style={styles.iconButton}>
+          <SettingsIcon color={theme.foreground} />
         </Pressable>
       </View>
 
-      <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: spacing.xl + insets.bottom }]}
+      <FlatList
+        key={columns}
+        data={boards}
+        numColumns={columns}
+        renderItem={renderBoard}
+        keyExtractor={(item) => item.id}
+        columnWrapperStyle={boards.length > 0 ? styles.row : undefined}
+        contentContainerStyle={contentStyle}
+        ListHeaderComponent={<AppButton label="New board" accessibilityHint="Creates a blank board and opens it" onPress={createBoard} />}
+        ListHeaderComponentStyle={styles.listHeader}
+        ListEmptyComponent={
+          <View style={[styles.empty, { borderColor: theme.border, backgroundColor: theme.muted }]}>
+            <View style={[styles.emptyIcon, { backgroundColor: isDark ? theme.darkSurface : colors.background }]}><BoardIcon size={44} color={theme.primary} /></View>
+            <Text style={[styles.emptyTitle, { color: theme.foreground }]}>Start with a blank canvas</Text>
+            <Text style={[styles.emptyBody, { color: theme.foreground }]}>Capture thoughts, sketch ideas, and turn them into something useful.</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Create your first board" onPress={createBoard} style={[styles.emptyButton, { backgroundColor: theme.accent }]}>
+              <PlusIcon />
+              <Text style={styles.emptyButtonText}>Create your first board</Text>
+            </Pressable>
+          </View>
+        }
+        ListFooterComponent={boards.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Import a board" style={styles.import}><Text style={[styles.importText, { color: theme.primary }]}>Import a board</Text></Pressable> : undefined}
         showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.notice}>
-          <BoardIcon size={28} />
-          <Text style={styles.noticeTitle}>No boards yet</Text>
-          <Text style={styles.noticeBody}>
-            The board grid, creation, and local storage arrive in the next slices.
-            For now this screen exercises the navigation shell.
-          </Text>
-        </View>
-
-        <View style={styles.actions}>
-          <AppButton
-            label="New board"
-            accessibilityHint="Opens the board editor placeholder"
-            onPress={() => router.push('/editor')}
-          />
-          <AppButton
-            label="Settings"
-            variant="secondary"
-            accessibilityHint="Opens the settings placeholder"
-            onPress={() => router.push('/settings')}
-          />
-        </View>
-
-        <Text style={styles.hint}>
-          Stack ready: Home → Board editor, Home → Settings, and back to Home.
-        </Text>
-      </ScrollView>
+        ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+      />
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.md,
-  },
-  headerText: {
-    flexShrink: 1,
-  },
-  wordmark: {
-    ...typography.display,
-    color: colors.foreground,
-  },
-  subtitle: {
-    ...typography.body,
-    marginTop: spacing.xs,
-    color: colors.primary,
-  },
-  iconButton: {
-    width: touchTarget,
-    height: touchTarget,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  pressed: {
-    opacity: 0.7,
-  },
-  content: {
-    paddingHorizontal: spacing.lg,
-    gap: spacing.lg,
-  },
-  notice: {
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    padding: spacing.lg,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.muted,
-  },
-  noticeTitle: {
-    ...typography.subtitle,
-    color: colors.foreground,
-  },
-  noticeBody: {
-    ...typography.body,
-    color: colors.foreground,
-    opacity: 0.85,
-  },
-  actions: {
-    gap: spacing.sm,
-  },
-  hint: {
-    ...typography.caption,
-    color: colors.primary,
-  },
-});

@@ -42,6 +42,16 @@ export function PlusIcon({ size = 24, color = colors.onAccent }: IconProps) {
   );
 }
 
+export function MoreIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx={5} cy={12} r={1.5} fill={color} />
+      <Circle cx={12} cy={12} r={1.5} fill={color} />
+      <Circle cx={19} cy={12} r={1.5} fill={color} />
+    </Svg>
+  );
+}
+
 export function ChevronRightIcon({ size = 24, color = colors.primary }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

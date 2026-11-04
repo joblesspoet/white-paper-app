@@ -23,7 +23,45 @@ export const colors = {
   destructive: '#DC2626',
   ring: '#0D9488',
   surface: '#FFFFFF',
+  darkBackground: '#0B2B28',
+  darkSurface: '#103B37',
+  darkForeground: '#E6F4F1',
+  darkBorder: '#1F5F58',
+  darkPrimary: '#2DD4BF',
+  darkAccent: '#FB923C',
 } as const;
+
+export type ThemeColors = {
+  primary: string;
+  onPrimary: string;
+  secondary: string;
+  accent: string;
+  onAccent: string;
+  background: string;
+  foreground: string;
+  muted: string;
+  border: string;
+  destructive: string;
+  ring: string;
+  surface: string;
+  darkBackground: string;
+  darkSurface: string;
+  darkForeground: string;
+  darkBorder: string;
+  darkPrimary: string;
+  darkAccent: string;
+};
+
+export const darkColors: ThemeColors = {
+  ...colors,
+  background: colors.darkBackground,
+  surface: colors.darkSurface,
+  foreground: colors.darkForeground,
+  border: colors.darkBorder,
+  primary: colors.darkPrimary,
+  accent: colors.darkAccent,
+  ring: colors.darkPrimary,
+};
 
 export const spacing = {
   xs: 4,
