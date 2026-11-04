@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, Text, TextInput, useColorScheme, useWindowDimens
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ChevronRightIcon, MoreIcon } from '../src/components/icons';
+import { CanvasViewport } from '../src/components/CanvasViewport';
 import { colors, darkColors, radii, spacing, touchTarget, typography } from '../src/theme';
 
 export default function BoardEditorScreen() {
@@ -18,6 +19,7 @@ export default function BoardEditorScreen() {
   const { width } = useWindowDimensions();
   const theme = useColorScheme() === 'dark' ? darkColors : colors;
   const tablet = width >= 768;
+  const [drawingEnabled, setDrawingEnabled] = useState(false);
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}>
@@ -35,26 +37,29 @@ export default function BoardEditorScreen() {
       </View>
 
       <View style={styles.workspace}>
-        {tablet && <ToolRail theme={theme} />}
-        <View style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
-          <Text style={[styles.canvasBody, { color: theme.foreground }]}>Use the tools below to start creating.</Text>
+        {tablet && <ToolRail theme={theme} onPenPress={() => setDrawingEnabled((value) => !value)} />}
+        <View style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}> 
+          <CanvasViewport dark={useColorScheme() === 'dark'} drawingEnabled={drawingEnabled} />
+          <View pointerEvents="none" style={styles.canvasGuidance}>
+            <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
+            <Text style={[styles.canvasBody, { color: theme.foreground }]}>Use the tools below to start creating.</Text>
+          </View>
         </View>
       </View>
 
-      {!tablet && <ToolDock theme={theme} bottom={insets.bottom} />}
+      {!tablet && <ToolDock theme={theme} bottom={insets.bottom} onPenPress={() => setDrawingEnabled((value) => !value)} />}
     </View>
   );
 }
 
-function ToolRail({ theme }: { theme: { foreground: string; border: string } }) {
-  return <View style={[styles.rail, { borderRightColor: theme.border }]}><Tool theme={theme} label="Select" icon="↖" /><Tool theme={theme} label="Pen" icon="✎" /><Tool theme={theme} label="Text" icon="T" /><Tool theme={theme} label="Shape" icon="□" /></View>;
+function ToolRail({ theme, onPenPress }: { theme: { foreground: string; border: string }; onPenPress: () => void }) {
+  return <View style={[styles.rail, { borderRightColor: theme.border }]}><Tool theme={theme} label="Select" icon="↖" /><Tool theme={theme} label="Pen" icon="✎" onPress={onPenPress} /><Tool theme={theme} label="Text" icon="T" /><Tool theme={theme} label="Shape" icon="□" /></View>;
 }
-function ToolDock({ theme, bottom }: { theme: { foreground: string; surface: string; border: string }; bottom: number }) {
-  return <View style={[styles.dock, { backgroundColor: theme.surface, borderColor: theme.border, paddingBottom: Math.max(spacing.sm, bottom) }]}><Tool theme={theme} label="Select" icon="↖" /><Tool theme={theme} label="Pen" icon="✎" /><Tool theme={theme} label="Text" icon="T" /><Tool theme={theme} label="Shape" icon="□" /></View>;
+function ToolDock({ theme, bottom, onPenPress }: { theme: { foreground: string; surface: string; border: string }; bottom: number; onPenPress: () => void }) {
+  return <View style={[styles.dock, { backgroundColor: theme.surface, borderColor: theme.border, paddingBottom: Math.max(spacing.sm, bottom) }]}><Tool theme={theme} label="Select" icon="↖" /><Tool theme={theme} label="Pen" icon="✎" onPress={onPenPress} /><Tool theme={theme} label="Text" icon="T" /><Tool theme={theme} label="Shape" icon="□" /></View>;
 }
-function Tool({ theme, label, icon }: { theme: { foreground: string }; label: string; icon: string }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} style={styles.tool}><Text style={[styles.toolIcon, { color: theme.foreground }]}>{icon}</Text><Text style={[styles.toolLabel, { color: theme.foreground }]}>{label}</Text></Pressable>;
+function Tool({ theme, label, icon, onPress }: { theme: { foreground: string }; label: string; icon: string; onPress?: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}><Text style={[styles.toolIcon, { color: theme.foreground }]}>{icon}</Text><Text style={[styles.toolLabel, { color: theme.foreground }]}>{label}</Text></Pressable>;
 }
 
 const styles = StyleSheet.create({
@@ -67,11 +72,13 @@ const styles = StyleSheet.create({
   actionText: { fontSize: 28 },
   workspace: { flex: 1, flexDirection: 'row' },
   rail: { width: 80, borderRightWidth: 1, alignItems: 'center', paddingTop: spacing.md, gap: spacing.sm },
-  canvas: { flex: 1, margin: spacing.md, borderWidth: 1, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+  canvas: { flex: 1, margin: spacing.md, borderWidth: 1, borderRadius: radii.md, overflow: 'hidden' },
+  canvasGuidance: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   canvasTitle: { ...typography.subtitle },
   canvasBody: { ...typography.body, opacity: 0.7 },
   dock: { minHeight: 76, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', borderTopWidth: 1, paddingTop: spacing.sm },
   tool: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
   toolIcon: { fontSize: 22, lineHeight: 26 },
   toolLabel: { ...typography.caption },
+  toolPressed: { opacity: 0.65 },
 });

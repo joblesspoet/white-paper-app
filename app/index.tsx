@@ -8,6 +8,7 @@ import { BoardCard, BoardSummary } from '../src/components/BoardCard';
 import { BoardIcon, PlusIcon, SettingsIcon } from '../src/components/icons';
 import { colors, darkColors, radii, spacing, touchTarget, typography } from '../src/theme';
 import { homeStyles as styles } from '../src/screens/home.styles';
+import { useBoards } from '../src/board-context';
 
 const initialBoards: BoardSummary[] = [];
 
@@ -17,27 +18,28 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDark = useColorScheme() === 'dark';
   const theme = isDark ? darkColors : colors;
-  const [boards, setBoards] = useState(initialBoards);
+  const { boards, createBoard } = useBoards();
   const [sheetVisible, setSheetVisible] = useState(false);
   const [canvasBackground, setCanvasBackground] = useState<'light' | 'dark'>(isDark ? 'dark' : 'light');
+  const [canvasStyle, setCanvasStyle] = useState<'blank' | 'dots'>('blank');
+  const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const columns = width >= 768 ? 4 : 2;
   const horizontalPadding = width >= 768 ? spacing.xl : spacing.lg;
   const contentStyle = useMemo(() => ({ paddingHorizontal: horizontalPadding, paddingBottom: spacing.xl + insets.bottom }), [horizontalPadding, insets.bottom]);
 
-  const createBoard = useCallback(() => {
-    const board = { id: String(Date.now()), title: 'Untitled board', updatedAt: 'Just now', objectCount: 0 };
-    setBoards((current) => [board, ...current]);
-    router.push('/editor');
-  }, [router]);
+  const createBoardNow = useCallback((settings?: { background: 'light' | 'dark'; style: 'blank' | 'dots'; orientation: 'portrait' | 'landscape' }) => {
+    const board = createBoard(settings);
+    router.push({ pathname: '/editor', params: { boardId: board.id } });
+  }, [createBoard, router]);
 
   const openCustomize = useCallback(() => setSheetVisible(true), []);
   const createCustomizedBoard = useCallback(() => {
     setSheetVisible(false);
-    createBoard();
-  }, [createBoard]);
+    createBoardNow();
+  }, [canvasBackground, canvasStyle, createBoardNow, orientation]);
 
   const renderBoard = useCallback(({ item }: { item: BoardSummary }) => (
-    <BoardCard board={item} onPress={() => router.push('/editor')} onMenuPress={() => undefined} />
+    <BoardCard board={item} onPress={() => router.push({ pathname: '/editor', params: { boardId: item.id } })} onMenuPress={() => undefined} />
   ), [router]);
 
   return (
@@ -60,14 +62,14 @@ export default function HomeScreen() {
         keyExtractor={(item) => item.id}
         columnWrapperStyle={boards.length > 0 ? styles.row : undefined}
         contentContainerStyle={contentStyle}
-        ListHeaderComponent={<View><AppButton label="New board" accessibilityHint="Creates a blank board and opens it" onPress={createBoard} /><Pressable accessibilityRole="button" accessibilityLabel="Customize new board" onPress={openCustomize} style={styles.customizeLink}><Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text></Pressable></View>}
+        ListHeaderComponent={<View><AppButton label="New board" accessibilityHint="Creates a blank board and opens it" onPress={() => createBoardNow()} /><Pressable accessibilityRole="button" accessibilityLabel="Customize new board" onPress={openCustomize} style={styles.customizeLink}><Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text></Pressable></View>}
         ListHeaderComponentStyle={styles.listHeader}
         ListEmptyComponent={
           <View style={[styles.empty, { borderColor: theme.border, backgroundColor: theme.muted }]}>
             <View style={[styles.emptyIcon, { backgroundColor: isDark ? theme.darkSurface : colors.background }]}><BoardIcon size={44} color={theme.primary} /></View>
             <Text style={[styles.emptyTitle, { color: theme.foreground }]}>Start with a blank canvas</Text>
             <Text style={[styles.emptyBody, { color: theme.foreground }]}>Capture thoughts, sketch ideas, and turn them into something useful.</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Create your first board" onPress={createBoard} style={[styles.emptyButton, { backgroundColor: theme.accent }]}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Create your first board" onPress={() => createBoardNow()} style={[styles.emptyButton, { backgroundColor: theme.accent }]}>
               <PlusIcon />
               <Text style={styles.emptyButtonText}>Create your first board</Text>
             </Pressable>

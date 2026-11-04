@@ -1,10 +1,10 @@
 # Task status
 
 ## Current phase
-New Board and Editor shell implementation.
+Canvas viewport implementation.
 
 ## Status
-`in progress` — Home-to-editor navigation and the responsive Editor shell are implemented; customization modal/state sharing remains.
+`implemented-unverified` — Skia canvas viewport, pan/pinch gesture wiring, viewport state reporting, coordinate conversion, and basic pen ink strokes are implemented; runtime verification remains. Expo SDK 58 requires Reanimated 4.7.1 with react-native-worklets 0.13.1; both are installed to match the SDK and React Native 0.88.
 
 ## Completed slices
 - Expo Router stack with Home, Editor, and Settings routes.
@@ -19,9 +19,9 @@ New Board and Editor shell implementation.
 - Visual previews used: `06-new-board-01-instant-creation.png`, `07-new-board-02-customize-light.png`, `08-new-board-03-customize-dark.png`, `09-new-board-04-title-rename.png`, and `10-editor-01-empty-board.png`.
 
 ## Known issues
-- New Board customization bottom sheet and explicit light/dark customization states are not yet implemented.
-- Board model/state is still local to Home and Editor currently uses the default title.
-- Drawing, persistence, canvas gestures, and advanced editor tools remain intentionally out of scope.
+- Runtime device verification and screenshot comparison were not available in this session.
+- Board state is in-memory only and resets on reload.
+- Drawing objects, persistence, and advanced editor tools remain intentionally out of scope.
 
 ## Next task
-Implement the optional New Board customization sheet, share the created board model with Editor, and validate the phone/tablet light/dark layouts against all available previews.
+Next: implement drawing-tool options and undo/redo for ink strokes.
