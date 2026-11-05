@@ -201,6 +201,27 @@ For text and sticky notes, tapping the object enters direct editing rather than 
 - Editor pans or temporarily zooms to keep the editing target visible.
 - Return focus predictably after dismissal.
 
+### Canvas objects (implemented)
+
+```ts
+type CanvasObject =
+  | { type: 'text'; colorKey: TextColorKey; fontSize: number; text: string; x, y, width, height, rotation }
+  | { type: 'sticky'; colorKey: StickyColorKey; fontSize: number; text: string; x, y, width, height, rotation };
+
+type CanvasDocument = { strokes: InkStroke[]; objects: CanvasObject[] };
+```
+
+- `src/canvas/document.ts` holds the object model, the palettes, the hit test, and one `applyCommand` reducer. Positions and sizes are canvas units, so panning and zooming never move or resize an object.
+- Tap-to-create with the text or sticky tool centres the object on the canvas point under the finger; the note is a fixed 112×112 standard size, a text object is 160 wide and grows downwards as the text wraps.
+- The in-place editor is a real `TextInput` positioned over the object and scaled with the viewport, so the caret sits where the text will land. Font size and colour are changed from the sheet that floats above the keyboard.
+- Committing: `Done`, a tap on the canvas, a tool change, the title field, back, or blur. All of them go through one path (`editingCommit`), and an empty object is discarded instead of stored.
+- Keyboard safety: when the keyboard appears the viewport is panned (never zoomed) so the edited object sits inside the band above the keyboard and the style sheet. The object keeps its board position.
+- Selection: in Select mode a touch selects, a drag moves (whole drag = one undo step), and a tap on the already selected object enters editing. The selection bar offers `Edit` and `Delete`.
+- Sticky pastels (`butter`, `blush`, `mint`, `sky`, `lilac`) always carry `#134E4A` text; text colours have a light and a dark variant. Both sets are asserted at 4.5:1 or better in `scripts/verify-objects.mts`.
+- Ink and objects share one history (`src/canvas/history.ts`): a drag or an eraser sweep is a single entry, and undo steps back through ink and notes in the order they were made.
+
+Not in this slice: shapes, connectors, images, OCR, persistence, alignment and resize handles.
+
 ## Screen 7: Image import and OCR flow
 
 ```text

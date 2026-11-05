@@ -1,11 +1,46 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, useColorScheme, useWindowDimensions, View } from 'react-native';
+import { useCallback, useEffect, useReducer, useRef, useState, type ComponentRef } from 'react';
+import {
+  Keyboard,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  useColorScheme,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBoards } from '../src/board-context';
+import {
+  DEFAULT_STICKY_COLOR,
+  DEFAULT_STICKY_FONT_SIZE,
+  DEFAULT_TEXT_COLOR,
+  DEFAULT_TEXT_FONT_SIZE,
+  OBJECT_PADDING,
+  createDocumentHistory,
+  createStickyObject,
+  createTextObject,
+  documentHasContent,
+  documentReducer,
+  editingCommit,
+  findObject,
+  keyboardOverlap,
+  keepObjectAboveKeyboard,
+  objectFill,
+  objectScreenRect,
+  objectTextColor,
+  textLineHeight,
+  withObjectStyle,
+  withObjectText,
+  type CanvasObject,
+  type DocumentCommand,
+} from '../src/canvas/document';
+import { canRedo as historyCanRedo, canUndo as historyCanUndo } from '../src/canvas/history';
 import type { FreehandTool } from '../src/canvas/ink';
-import { CanvasViewport, type CanvasObject, type InkTool } from '../src/components/CanvasViewport';
+import type { Point, Viewport } from '../src/canvas/viewport';
+import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
 import {
   ChevronRightIcon,
   EraserIcon,
@@ -17,6 +52,7 @@ import {
   TextIcon,
 } from '../src/components/icons';
 import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
+import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { colors, darkColors, radii, spacing, touchTarget, typography, type ThemeColors } from '../src/theme';
 
 const TOOLS = [
@@ -28,6 +64,14 @@ const TOOLS = [
   { tool: 'eraser', label: 'Eraser', Icon: EraserIcon },
 ] as const satisfies ReadonlyArray<{ tool: InkTool; label: string; Icon: typeof PenIcon }>;
 
+/** Zoomed in enough that ink is comfortable under a finger. */
+const INITIAL_VIEWPORT: Viewport = { x: 150, y: -80, scale: 2 };
+/** How long viewport reports may be batched before the editor re-renders. */
+const VIEWPORT_RENDER_INTERVAL = 60;
+
+/** The object being edited, plus whether it still needs inserting into the board. */
+type Editing = { object: CanvasObject; isNew: boolean };
+
 export default function BoardEditorScreen() {
   const router = useRouter();
   const { boardId } = useLocalSearchParams<{ boardId?: string }>();
@@ -36,22 +80,45 @@ export default function BoardEditorScreen() {
   const [title, setTitle] = useState(board?.title ?? 'Untitled board');
   useEffect(() => { if (board) setTitle(board.title); }, [board]);
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const theme = useColorScheme() === 'dark' ? darkColors : colors;
+  const { width, height: windowHeight } = useWindowDimensions();
+  const dark = useColorScheme() === 'dark';
+  const theme = dark ? darkColors : colors;
   const tablet = width >= 768;
+
+  const [history, dispatch] = useReducer(documentReducer, createDocumentHistory());
+  const document = history.present;
+  const canUndo = historyCanUndo(history);
+  const canRedo = historyCanRedo(history);
+
   const [activeTool, setActiveTool] = useState<InkTool>('select');
-  const [objects, setObjects] = useState<CanvasObject[]>([]);
-  const [editingObject, setEditingObject] = useState<CanvasObject | null>(null);
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const editingRef = useRef<Editing | null>(null);
+
+  const [textColorKey, setTextColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
+  const [textSize, setTextSize] = useState(DEFAULT_TEXT_FONT_SIZE);
+  const [stickyColorKey, setStickyColorKey] = useState<string>(DEFAULT_STICKY_COLOR);
+  const [stickySize, setStickySize] = useState(DEFAULT_STICKY_FONT_SIZE);
+
   const [color, setColor] = useState<string>(theme.foreground);
   const [strokeWidth, setStrokeWidth] = useState(4);
   const [opacity, setOpacity] = useState(1);
   const [eraserRadius, setEraserRadius] = useState(24);
-  const [optionsVisible, setOptionsVisible] = useState(false);
-  const [undoRequest, setUndoRequest] = useState(0);
-  const [redoRequest, setRedoRequest] = useState(0);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
-  const [hasInk, setHasInk] = useState(false);
+  const [inkOptionsVisible, setInkOptionsVisible] = useState(false);
+  const [objectOptionsVisible, setObjectOptionsVisible] = useState(false);
+
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [canvasRect, setCanvasRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const [sheetHeight, setSheetHeight] = useState(0);
+  const canvasRef = useRef<ComponentRef<typeof View> | null>(null);
+
+  // The live viewport lives in CanvasViewport's shared values. The editor keeps
+  // an exact copy for keyboard maths and a batched copy for the text overlay.
+  const viewportLive = useRef<Viewport>(INITIAL_VIEWPORT);
+  const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
+  const viewportFlushedAt = useRef(0);
+  const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [viewportRequest, setViewportRequest] = useState<ViewportRequest | null>(null);
 
   // Keep the default ink legible when the system theme changes without
   // overwriting a color the user picked.
@@ -59,104 +126,354 @@ export default function BoardEditorScreen() {
     setColor((current) => current === colors.foreground || current === colors.darkForeground ? theme.foreground : current);
   }, [theme.foreground]);
 
-  const pressTool = useCallback((tool: InkTool) => {
-    if (tool === 'select' || tool === 'text' || tool === 'sticky') {
-      setActiveTool(tool);
-      setOptionsVisible(false);
+  useEffect(() => () => {
+    if (viewportTimer.current) clearTimeout(viewportTimer.current);
+  }, []);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardWillShow', (event) => setKeyboardHeight(event.endCoordinates.height));
+    const shown = Keyboard.addListener('keyboardDidShow', (event) => setKeyboardHeight(event.endCoordinates.height));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardHeight(0));
+    const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+    return () => {
+      show.remove();
+      shown.remove();
+      hide.remove();
+      hidden.remove();
+    };
+  }, []);
+
+  const reportViewport = useCallback((next: Viewport) => {
+    viewportLive.current = next;
+    const now = Date.now();
+    if (now - viewportFlushedAt.current >= VIEWPORT_RENDER_INTERVAL) {
+      viewportFlushedAt.current = now;
+      setViewport(next);
       return;
     }
-    if (activeTool === tool) {
-      setOptionsVisible((visible) => !visible);
+    // A trailing update keeps the overlay aligned with the final gesture value.
+    if (viewportTimer.current) return;
+    viewportTimer.current = setTimeout(() => {
+      viewportTimer.current = null;
+      viewportFlushedAt.current = Date.now();
+      setViewport(viewportLive.current);
+    }, VIEWPORT_RENDER_INTERVAL);
+  }, []);
+
+  const requestViewport = useCallback((next: Viewport) => {
+    viewportLive.current = next;
+    setViewport(next);
+    setViewportRequest((current) => ({ key: (current?.key ?? 0) + 1, viewport: next }));
+  }, []);
+
+  const measureCanvas = useCallback(() => {
+    canvasRef.current?.measureInWindow((x, y, measuredWidth, measuredHeight) => {
+      setCanvasRect({ x, y, width: measuredWidth, height: measuredHeight });
+    });
+  }, []);
+
+  const setEditingState = useCallback((next: Editing | null) => {
+    editingRef.current = next;
+    setEditing(next);
+  }, []);
+
+  const runCommand = useCallback((command: DocumentCommand, transient?: boolean) => {
+    dispatch({ type: 'command', command, transient });
+  }, []);
+  const commitPending = useCallback(() => dispatch({ type: 'commit' }), []);
+  const closeObjectOptions = useCallback(() => setObjectOptionsVisible(false), []);
+
+  /**
+   * One commit path for every exit: Done, outside tap, tool change, back, and
+   * blur. An empty object is discarded rather than committed, so tapping the
+   * canvas and changing your mind leaves no object and no undo step behind.
+   */
+  const commitEditing = useCallback(() => {
+    const current = editingRef.current;
+    if (!current) return;
+    editingRef.current = null;
+    setEditing(null);
+    setObjectOptionsVisible(false);
+    Keyboard.dismiss();
+    const command = editingCommit(current.object, current.isNew);
+    if (!command) {
+      setSelectedObjectId(null);
       return;
+    }
+    dispatch({ type: 'command', command });
+    setSelectedObjectId(command.type === 'object.delete' ? null : current.object.id);
+  }, []);
+
+  const updateDraft = useCallback((patch: { text?: string; colorKey?: string; fontSize?: number }) => {
+    const current = editingRef.current;
+    if (!current) return;
+    let object = current.object;
+    if (patch.text !== undefined) object = withObjectText(object, patch.text);
+    object = withObjectStyle(object, { colorKey: patch.colorKey, fontSize: patch.fontSize });
+    setEditingState({ object, isNew: current.isNew });
+  }, [setEditingState]);
+
+  const startNewObject = useCallback((type: 'text' | 'sticky', point: Point) => {
+    // The first tap outside an open editor commits it instead of adding another object.
+    if (editingRef.current) {
+      commitEditing();
+      return;
+    }
+    const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const object = type === 'sticky'
+      ? createStickyObject({ id, point, colorKey: stickyColorKey, fontSize: stickySize })
+      : createTextObject({ id, point, colorKey: textColorKey, fontSize: textSize });
+    setSelectedObjectId(null);
+    setObjectOptionsVisible(false);
+    setEditingState({ object, isNew: true });
+  }, [commitEditing, setEditingState, stickyColorKey, stickySize, textColorKey, textSize]);
+
+  const startEditingExisting = useCallback((id: string) => {
+    const object = findObject(document, id);
+    if (!object) return;
+    setSelectedObjectId(id);
+    setObjectOptionsVisible(false);
+    setEditingState({ object, isNew: false });
+  }, [document, setEditingState]);
+
+  const deleteSelected = useCallback(() => {
+    if (!selectedObjectId) return;
+    dispatch({ type: 'command', command: { type: 'object.delete', id: selectedObjectId } });
+    setSelectedObjectId(null);
+  }, [selectedObjectId]);
+
+  // The keyboard must never cover the object being edited. Only the viewport
+  // moves; the object keeps its board position.
+  const editingId = editing?.object.id ?? null;
+  useEffect(() => {
+    const current = editingRef.current;
+    if (!current || keyboardHeight <= 0 || canvasRect.width === 0) return;
+    const rect = objectScreenRect(current.object, viewportLive.current);
+    const next = keepObjectAboveKeyboard({
+      object: {
+        x: canvasRect.x + rect.x,
+        y: canvasRect.y + rect.y,
+        width: rect.width,
+        height: rect.height,
+      },
+      canvas: canvasRect,
+      viewport: viewportLive.current,
+      // The style sheet sits above the keyboard and covers the canvas too.
+      bottomInset: keyboardOverlap(keyboardHeight, canvasRect, windowHeight) + sheetHeight + spacing.sm,
+    });
+    if (next.x !== viewportLive.current.x || next.y !== viewportLive.current.y) requestViewport(next);
+  }, [editingId, keyboardHeight, sheetHeight, canvasRect, windowHeight, requestViewport]);
+
+  // A selection can vanish through undo, redo, or a delete from elsewhere.
+  useEffect(() => {
+    if (selectedObjectId && !findObject(document, selectedObjectId)) setSelectedObjectId(null);
+  }, [document, selectedObjectId]);
+
+  const pressTool = useCallback((tool: InkTool) => {
+    if (editingRef.current) commitEditing();
+    if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') {
+      setObjectOptionsVisible(false);
+      if (activeTool === tool) {
+        setInkOptionsVisible((visible) => !visible);
+        return;
+      }
+      setActiveTool(tool);
+      setInkOptionsVisible(true);
+      return;
+    }
+    setInkOptionsVisible(false);
+    if (tool === 'text' || tool === 'sticky') {
+      // Pressing the active tool again shows its colour and size options.
+      setObjectOptionsVisible((visible) => (activeTool === tool ? !visible : true));
+    } else {
+      setObjectOptionsVisible(false);
     }
     setActiveTool(tool);
-    setOptionsVisible(true);
-  }, [activeTool]);
+  }, [activeTool, commitEditing]);
 
   const selectInkTool = useCallback((tool: FreehandTool) => {
     setActiveTool(tool);
-    setOptionsVisible(true);
+    setInkOptionsVisible(true);
   }, []);
 
-  const moveObject = useCallback((id: string, point: { x: number; y: number }) => setObjects((current) => current.map((item) => item.id === id ? { ...item, x: point.x - item.width / 2, y: point.y - item.height / 2 } : item)), []);
-  const createObject = useCallback((type: 'text' | 'sticky', point: { x: number; y: number }) => {
-    const object: CanvasObject = {
-      id: `${type}-${Date.now()}`,
-      type,
-      text: '',
-      x: point.x,
-      y: point.y,
-      width: type === 'sticky' ? 180 : 160,
-      height: type === 'sticky' ? 160 : 48,
-      rotation: 0,
-      color: theme.foreground,
-      backgroundColor: type === 'sticky' ? '#FDE68A' : undefined,
-      fontSize: type === 'sticky' ? 16 : 24,
-    };
-    setObjects((current) => [...current, object]);
-    setEditingObject(object);
-  }, [theme.foreground]);
+  /** An open edit is committed first; it is not the thing undo should remove. */
+  const undo = useCallback(() => {
+    if (editingRef.current) {
+      commitEditing();
+      return;
+    }
+    dispatch({ type: 'undo' });
+  }, [commitEditing]);
+  const redo = useCallback(() => {
+    if (editingRef.current) {
+      commitEditing();
+      return;
+    }
+    dispatch({ type: 'redo' });
+  }, [commitEditing]);
 
+  const selectedObject = selectedObjectId ? findObject(document, selectedObjectId) : null;
   const sheetTool: InkSheetTool = activeTool === 'eraser' ? 'eraser' : activeTool === 'highlighter' ? 'highlighter' : 'pen';
   const optionsBottom = tablet ? spacing.md : 84 + Math.max(spacing.sm, insets.bottom);
-  const showGuidance = !hasInk && objects.length === 0;
+  const showGuidance = !documentHasContent(document) && !editing;
+  const overlayRect = editing ? objectScreenRect(editing.object, viewport) : null;
+  const overlayFill = editing ? objectFill(editing.object) : undefined;
+  const overlayTextColor = editing ? objectTextColor(editing.object, dark) : theme.foreground;
+  const overlayLineHeight = editing ? textLineHeight(editing.object.fontSize) : 0;
+  const editingSheetBottom = keyboardHeight > 0 ? keyboardHeight + spacing.sm : insets.bottom + spacing.md;
+  const selectionBottom = insets.bottom + 84;
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}>
       <Stack.Screen options={{ headerShown: false }} />
       <View style={[styles.topBar, { borderBottomColor: theme.border }]}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back to boards" onPress={() => router.back()} style={styles.iconButton}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back to boards"
+          onPress={() => { commitEditing(); router.back(); }}
+          style={styles.iconButton}
+        >
           <ChevronRightIcon color={theme.foreground} />
         </Pressable>
-        <TextInput accessibilityLabel="Board title" value={title} onChangeText={(value) => { setTitle(value); if (boardId) updateTitle(boardId, value); }} style={[styles.title, { color: theme.foreground }]} />
+        <TextInput
+          accessibilityLabel="Board title"
+          value={title}
+          onChangeText={(value) => { setTitle(value); if (boardId) updateTitle(boardId, value); }}
+          onFocus={commitEditing}
+          style={[styles.title, { color: theme.foreground }]}
+        />
         <View style={styles.actions}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Undo" accessibilityState={{ disabled: !canUndo }} disabled={!canUndo} onPress={() => setUndoRequest((value) => value + 1)} style={styles.action}><Text style={[styles.actionText, { color: theme.foreground }]}>↶</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Redo" accessibilityState={{ disabled: !canRedo }} disabled={!canRedo} onPress={() => setRedoRequest((value) => value + 1)} style={styles.action}><Text style={[styles.actionText, { color: theme.foreground }]}>↷</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Undo" accessibilityState={{ disabled: !canUndo }} disabled={!canUndo} onPress={undo} style={styles.action}><Text style={[styles.actionText, { color: theme.foreground }]}>↶</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Redo" accessibilityState={{ disabled: !canRedo }} disabled={!canRedo} onPress={redo} style={styles.action}><Text style={[styles.actionText, { color: theme.foreground }]}>↷</Text></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="More board options" style={styles.iconButton}><MoreIcon color={theme.foreground} /></Pressable>
         </View>
       </View>
 
       <View style={styles.workspace}>
         {tablet && <ToolRail theme={theme} activeTool={activeTool} onToolPress={pressTool} />}
-        <View style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <View
+          ref={canvasRef}
+          onLayout={measureCanvas}
+          style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        >
           <CanvasViewport
-            dark={useColorScheme() === 'dark'}
-            initialViewport={{ x: 150, y: -80, scale: 2 }}
+            dark={dark}
+            initialViewport={INITIAL_VIEWPORT}
             activeTool={activeTool}
             color={color}
             width={strokeWidth}
             opacity={opacity}
             eraserRadius={eraserRadius}
-            undoRequest={undoRequest}
-            redoRequest={redoRequest}
-            objects={objects}
-            onObjectCreate={createObject}
-            onObjectMove={moveObject}
-            onHistoryChange={(undo, redo) => { setCanUndo(undo); setCanRedo(redo); }}
-            onInkChange={setHasInk}
+            document={document}
+            selectedObjectId={selectedObjectId}
+            editingObjectId={editingId}
+            viewportRequest={viewportRequest}
+            onViewportChange={reportViewport}
+            onCommand={runCommand}
+            onCommitPending={commitPending}
+            onObjectCreate={startNewObject}
+            onObjectSelect={setSelectedObjectId}
+            onObjectEdit={startEditingExisting}
+            onCanvasTouch={commitEditing}
           />
           {showGuidance && (
             <View pointerEvents="none" style={styles.canvasGuidance}>
               <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
-              <Text style={[styles.canvasBody, { color: theme.foreground }]}>Pick a pen, highlighter, or eraser below.</Text>
+              <Text style={[styles.canvasBody, { color: theme.foreground }]}>
+                Draw with a pen, or tap the text and sticky-note tools to add a note.
+              </Text>
             </View>
           )}
-          {editingObject && (
+          {editing && overlayRect && (
             <TextInput
+              multiline
               autoFocus
-              accessibilityLabel={`${editingObject.type === 'sticky' ? 'Sticky note' : 'Canvas text'} editor`}
-              value={editingObject.text}
-              onChangeText={(text) => { setEditingObject({ ...editingObject, text }); setObjects((current) => current.map((item) => item.id === editingObject.id ? { ...item, text } : item)); }}
-              onBlur={() => { if (!editingObject.text.trim()) setObjects((current) => current.filter((item) => item.id !== editingObject.id)); setEditingObject(null); }}
-              onSubmitEditing={() => { if (!editingObject.text.trim()) setObjects((current) => current.filter((item) => item.id !== editingObject.id)); setEditingObject(null); }}
-              placeholder={editingObject.type === 'sticky' ? 'Write a note' : 'Type something'}
-              style={[styles.objectEditor, { color: theme.foreground, backgroundColor: editingObject.backgroundColor ?? theme.surface }]}
+              accessibilityLabel={editing.object.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
+              value={editing.object.text}
+              onChangeText={(text) => updateDraft({ text })}
+              onBlur={commitEditing}
+              placeholder={editing.object.type === 'sticky' ? 'Write a note' : 'Type something'}
+              placeholderTextColor={`${overlayTextColor}80`}
+              selectionColor={theme.primary}
+              style={[
+                styles.objectEditor,
+                {
+                  left: overlayRect.x,
+                  top: overlayRect.y,
+                  width: overlayRect.width,
+                  minHeight: overlayRect.height,
+                  padding: OBJECT_PADDING * viewport.scale,
+                  borderRadius: radii.sm * viewport.scale,
+                  backgroundColor: overlayFill ?? 'transparent',
+                  color: overlayTextColor,
+                  fontSize: editing.object.fontSize * viewport.scale,
+                  lineHeight: overlayLineHeight * viewport.scale,
+                },
+              ]}
             />
           )}
         </View>
       </View>
 
-      {optionsVisible && (
+      {selectedObject && !editing && (
+        <View style={[styles.selectionBar, { bottom: selectionBottom, backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Text style={[styles.selectionLabel, { color: theme.foreground }]}>
+            {selectedObject.type === 'sticky' ? 'Sticky note selected' : 'Text selected'}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Edit text"
+            onPress={() => startEditingExisting(selectedObject.id)}
+            style={({ pressed }) => [styles.selectionAction, { borderColor: theme.border }, pressed && styles.pressed]}
+          >
+            <Text style={[styles.selectionActionText, { color: theme.foreground }]}>Edit</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Delete object"
+            onPress={deleteSelected}
+            style={({ pressed }) => [styles.selectionAction, { borderColor: theme.destructive }, pressed && styles.pressed]}
+          >
+            <Text style={[styles.selectionActionText, { color: theme.destructive }]}>Delete</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {editing && (
+        <ObjectOptionsSheet
+          theme={theme}
+          dark={dark}
+          kind={editing.object.type}
+          colorKey={editing.object.colorKey}
+          fontSize={editing.object.fontSize}
+          bottomOffset={editingSheetBottom}
+          doneLabel="Done"
+          doneHint="Commits the object and closes the keyboard"
+          showScrim={false}
+          onColorChange={(key) => updateDraft({ colorKey: key })}
+          onFontSizeChange={(size) => updateDraft({ fontSize: size })}
+          onDone={commitEditing}
+          onHeightChange={setSheetHeight}
+        />
+      )}
+
+      {!editing && objectOptionsVisible && (activeTool === 'text' || activeTool === 'sticky') && (
+        <ObjectOptionsSheet
+          theme={theme}
+          dark={dark}
+          kind={activeTool}
+          colorKey={activeTool === 'sticky' ? stickyColorKey : textColorKey}
+          fontSize={activeTool === 'sticky' ? stickySize : textSize}
+          bottomOffset={optionsBottom}
+          doneLabel="Done"
+          doneHint="Closes the style options"
+          onColorChange={(key) => (activeTool === 'sticky' ? setStickyColorKey(key) : setTextColorKey(key))}
+          onFontSizeChange={(size) => (activeTool === 'sticky' ? setStickySize(size) : setTextSize(size))}
+          onDone={closeObjectOptions}
+        />
+      )}
+
+      {!editing && inkOptionsVisible && (
         <InkOptionsSheet
           theme={theme}
           tool={sheetTool}
@@ -170,10 +487,10 @@ export default function BoardEditorScreen() {
           onWidthChange={setStrokeWidth}
           onOpacityChange={setOpacity}
           onEraserRadiusChange={setEraserRadius}
-          onClose={() => setOptionsVisible(false)}
+          onClose={() => setInkOptionsVisible(false)}
         />
       )}
-      {!tablet && <ToolDock theme={theme} bottom={insets.bottom} activeTool={activeTool} onToolPress={pressTool} />}
+      {!tablet && !editing && <ToolDock theme={theme} bottom={insets.bottom} activeTool={activeTool} onToolPress={pressTool} />}
     </View>
   );
 }
@@ -201,11 +518,12 @@ function ToolDock({ theme, bottom, activeTool, onToolPress }: { theme: ThemeColo
 function Tool({ theme, definition, onPress, selected }: { theme: ThemeColors; definition: typeof TOOLS[number]; onPress: () => void; selected: boolean }) {
   const { Icon, label, tool } = definition;
   const color = selected ? theme.primary : theme.foreground;
+  const hasOptions = tool !== 'select';
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityHint={tool === 'pen' || tool === 'highlighter' || tool === 'eraser' ? 'Opens ink options when selected again' : undefined}
+      accessibilityHint={hasOptions ? 'Opens the tool options when selected again' : undefined}
       accessibilityState={{ selected }}
       onPress={onPress}
       style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
@@ -237,5 +555,10 @@ const styles = StyleSheet.create({
   toolIconWrap: { width: 34, height: 30, borderWidth: 1, borderColor: 'transparent', borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
   toolLabel: { ...typography.caption, fontSize: 11, textAlign: 'center' },
   toolPressed: { opacity: 0.65 },
-  objectEditor: { position: 'absolute', left: spacing.md, right: spacing.md, top: spacing.md, minHeight: 52, padding: spacing.sm, borderRadius: radii.sm, zIndex: 10 },
+  objectEditor: { position: 'absolute', zIndex: 10, textAlignVertical: 'top' },
+  selectionBar: { position: 'absolute', left: spacing.md, right: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderWidth: 1, borderRadius: radii.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  selectionLabel: { ...typography.caption, flex: 1 },
+  selectionAction: { minHeight: touchTarget, minWidth: touchTarget, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.md },
+  selectionActionText: { ...typography.caption },
+  pressed: { opacity: 0.65 },
 });

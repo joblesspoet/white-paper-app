@@ -1,5 +1,5 @@
 import { Canvas, Circle, Group, Path, Rect, Skia } from '@shopify/react-native-skia';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -10,10 +10,19 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import {
+  OBJECT_PADDING,
+  objectAtPoint,
+  objectFill,
+  objectTextColor,
+  textLineHeight,
+  type CanvasDocument,
+  type CanvasObject,
+  type DocumentCommand,
+} from '../canvas/document';
+import {
   appendInkPoint,
   createInkStroke,
   DEFAULT_ERASER_RADIUS,
-  eraseStrokesAt,
   eraserRadiusForScale,
   inkPathData,
   MIN_POINT_DISTANCE_SCREEN,
@@ -36,7 +45,12 @@ export type { InkStroke } from '../canvas/ink';
 
 export type InkTool = 'select' | 'pen' | 'highlighter' | 'eraser' | 'text' | 'sticky';
 export type ViewportState = Viewport;
-export type CanvasObject = { id: string; type: 'text' | 'sticky'; text: string; x: number; y: number; width: number; height: number; rotation: number; color: string; backgroundColor?: string; fontSize: number; };
+
+/** Minimum finger travel before a touch on an object counts as a drag, not a tap. */
+const DRAG_THRESHOLD_SCREEN = 4;
+
+export type ViewportRequest = { key: number; viewport: Viewport };
+
 type CanvasViewportProps = {
   dark?: boolean;
   initialViewport?: Viewport;
@@ -45,68 +59,21 @@ type CanvasViewportProps = {
   width?: number;
   opacity?: number;
   eraserRadius?: number;
-  undoRequest?: number;
-  redoRequest?: number;
+  document: CanvasDocument;
+  selectedObjectId?: string | null;
+  /** Object currently open in the in-place text editor; it is hidden here. */
+  editingObjectId?: string | null;
+  /** Absolute viewport the editor asks for, for example to clear the keyboard. */
+  viewportRequest?: ViewportRequest | null;
   onViewportChange?: (viewport: ViewportState) => void;
-  onHistoryChange?: (canUndo: boolean, canRedo: boolean) => void;
-  onInkChange?: (hasInk: boolean) => void;
-  objects?: CanvasObject[];
+  onCommand: (command: DocumentCommand, transient?: boolean) => void;
+  onCommitPending: () => void;
   onObjectCreate?: (type: 'text' | 'sticky', point: Point) => void;
-  onObjectMove?: (id: string, point: Point) => void;
-  onObjectEdit?: (object: CanvasObject) => void;
+  onObjectSelect?: (id: string | null) => void;
+  onObjectEdit?: (id: string) => void;
+  /** A touch on the canvas while an object is being edited: commit the edit. */
+  onCanvasTouch?: () => void;
 };
-
-type InkState = {
-  strokes: InkStroke[];
-  active: InkStroke | null;
-  redo: InkStroke[];
-};
-
-type InkAction =
-  | { type: 'start'; stroke: InkStroke }
-  | { type: 'append'; point: Point; minDistance: number }
-  | { type: 'commit' }
-  | { type: 'erase'; point: Point; radius: number }
-  | { type: 'undo' }
-  | { type: 'redo' };
-
-const EMPTY_INK: InkState = { strokes: [], active: null, redo: [] };
-
-/**
- * Ink changes are one reducer so a stroke cannot be committed twice, and so
- * erasing or finishing a stroke clears redo in a single update.
- */
-function inkReducer(state: InkState, action: InkAction): InkState {
-  switch (action.type) {
-    case 'start':
-      return { ...state, active: action.stroke };
-    case 'append':
-      return state.active
-        ? { ...state, active: appendInkPoint(state.active, action.point, action.minDistance) }
-        : state;
-    case 'commit':
-      if (!state.active) return state;
-      return { strokes: [...state.strokes, state.active], active: null, redo: [] };
-    case 'erase': {
-      if (state.strokes.length === 0) return state;
-      const result = eraseStrokesAt(state.strokes, action.point, action.radius);
-      if (result.erasedIds.length === 0) return state;
-      return { ...state, strokes: result.strokes, redo: [] };
-    }
-    case 'undo': {
-      const stroke = state.strokes[state.strokes.length - 1];
-      if (!stroke) return state;
-      return { strokes: state.strokes.slice(0, -1), active: null, redo: [...state.redo, stroke] };
-    }
-    case 'redo': {
-      const stroke = state.redo[state.redo.length - 1];
-      if (!stroke) return state;
-      return { strokes: [...state.strokes, stroke], active: null, redo: state.redo.slice(0, -1) };
-    }
-    default:
-      return state;
-  }
-}
 
 export function CanvasViewport({
   dark = false,
@@ -116,15 +83,17 @@ export function CanvasViewport({
   width = 4,
   opacity = 1,
   eraserRadius = DEFAULT_ERASER_RADIUS,
-  undoRequest = 0,
-  redoRequest = 0,
+  document,
+  selectedObjectId = null,
+  editingObjectId = null,
+  viewportRequest = null,
   onViewportChange,
-  onHistoryChange,
-  onInkChange,
-  objects = [],
+  onCommand,
+  onCommitPending,
   onObjectCreate,
-  onObjectMove,
+  onObjectSelect,
   onObjectEdit,
+  onCanvasTouch,
 }: CanvasViewportProps) {
   const theme = dark ? darkColors : colors;
   const startViewport = initialViewport ?? IDENTITY_VIEWPORT;
@@ -137,30 +106,20 @@ export function CanvasViewport({
   const pinchAnchorX = useSharedValue(0);
   const pinchAnchorY = useSharedValue(0);
   const draggingObjectId = useSharedValue('');
+  const dragMoved = useSharedValue(false);
+  const tapOpensEditor = useSharedValue('');
+  const grabOffsetX = useSharedValue(0);
+  const grabOffsetY = useSharedValue(0);
   const eraserX = useSharedValue(-10000);
   const eraserY = useSharedValue(-10000);
-  const [ink, dispatch] = useReducer(inkReducer, EMPTY_INK);
+  /** The stroke being drawn is local: it only enters the document on release. */
+  const [activeStroke, setActiveStroke] = useState<InkStroke | null>(null);
+  const activeStrokeRef = useRef<InkStroke | null>(null);
   const [viewport, setViewport] = useState<Viewport>(startViewport);
   const lastViewportReport = useRef(0);
 
-  useEffect(() => {
-    onHistoryChange?.(ink.strokes.length > 0, ink.redo.length > 0);
-  }, [ink.strokes.length, ink.redo.length, onHistoryChange]);
-  useEffect(() => {
-    onInkChange?.(ink.strokes.length > 0 || ink.active !== null);
-  }, [ink.strokes.length, ink.active, onInkChange]);
-  useEffect(() => {
-    if (undoRequest > 0) dispatch({ type: 'undo' });
-  }, [undoRequest]);
-  useEffect(() => {
-    if (redoRequest > 0) dispatch({ type: 'redo' });
-  }, [redoRequest]);
-  useEffect(() => {
-    if (activeTool !== 'eraser') {
-      eraserX.value = -10000;
-      eraserY.value = -10000;
-    }
-  }, [activeTool, eraserX, eraserY]);
+  const editing = editingObjectId !== null;
+  const objects = document.objects;
 
   const report = useCallback((x: number, y: number, nextScale: number) => {
     onViewportChange?.({ x, y, scale: nextScale });
@@ -170,7 +129,7 @@ export function CanvasViewport({
     setViewport({ x, y, scale: nextScale });
   }, [onViewportChange]);
 
-  const commit = useCallback((x: number, y: number, nextScale: number) => {
+  const commitViewport = useCallback((x: number, y: number, nextScale: number) => {
     lastViewportReport.current = Date.now();
     setViewport({ x, y, scale: nextScale });
     onViewportChange?.({ x, y, scale: nextScale });
@@ -181,30 +140,74 @@ export function CanvasViewport({
     offsetX.value = next.x;
     offsetY.value = next.y;
     scale.value = next.scale;
-    commit(next.x, next.y, next.scale);
-  }, [commit, offsetX, offsetY, scale]);
+    commitViewport(next.x, next.y, next.scale);
+  }, [commitViewport, offsetX, offsetY, scale]);
+
+  useEffect(() => {
+    if (!viewportRequest) return;
+    offsetX.value = viewportRequest.viewport.x;
+    offsetY.value = viewportRequest.viewport.y;
+    scale.value = viewportRequest.viewport.scale;
+    commitViewport(viewportRequest.viewport.x, viewportRequest.viewport.y, viewportRequest.viewport.scale);
+    // `key` identifies a new request; the viewport object itself is not compared.
+  }, [viewportRequest?.key]);
+
+  useEffect(() => {
+    if (activeTool !== 'eraser') {
+      eraserX.value = -10000;
+      eraserY.value = -10000;
+    }
+  }, [activeTool, eraserX, eraserY]);
 
   const beginStroke = useCallback((point: Point) => {
     const tool: FreehandTool = activeTool === 'highlighter' ? 'highlighter' : 'pen';
-    dispatch({
-      type: 'start',
-      stroke: createInkStroke({
-        id: `ink-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        tool,
-        point,
-        color,
-        width,
-        opacity,
-      }),
+    const stroke = createInkStroke({
+      id: `ink-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      tool,
+      point,
+      color,
+      width,
+      opacity,
     });
+    activeStrokeRef.current = stroke;
+    setActiveStroke(stroke);
   }, [activeTool, color, opacity, width]);
   const addPoint = useCallback((point: Point, minDistance: number) => {
-    dispatch({ type: 'append', point, minDistance });
+    const current = activeStrokeRef.current;
+    if (!current) return;
+    const next = appendInkPoint(current, point, minDistance);
+    activeStrokeRef.current = next;
+    setActiveStroke(next);
   }, []);
-  const finishStroke = useCallback(() => dispatch({ type: 'commit' }), []);
+  /**
+   * The in-progress stroke lives in React state for rendering and in a ref for
+   * the gesture, because a running gesture keeps the callbacks from the render it
+   * started in. The ref also keeps the commit out of a state updater, which React
+   * may call twice.
+   */
+  const finishStroke = useCallback(() => {
+    const stroke = activeStrokeRef.current;
+    activeStrokeRef.current = null;
+    setActiveStroke(null);
+    if (stroke) onCommand({ type: 'ink.add', stroke });
+  }, [onCommand]);
   const eraseAt = useCallback((point: Point, currentScale: number) => {
-    dispatch({ type: 'erase', point, radius: eraserRadiusForScale(eraserRadius, currentScale) });
-  }, [eraserRadius]);
+    onCommand(
+      { type: 'ink.erase', point, radius: eraserRadiusForScale(eraserRadius, currentScale) },
+      true,
+    );
+  }, [eraserRadius, onCommand]);
+
+  const touchCanvas = useCallback(() => { onCanvasTouch?.(); }, [onCanvasTouch]);
+  const selectObject = useCallback((id: string | null) => { onObjectSelect?.(id); }, [onObjectSelect]);
+  const editObject = useCallback((id: string) => { onObjectEdit?.(id); }, [onObjectEdit]);
+  const createObject = useCallback((type: 'text' | 'sticky', point: Point) => {
+    onObjectCreate?.(type, point);
+  }, [onObjectCreate]);
+  const moveObject = useCallback((id: string, x: number, y: number) => {
+    onCommand({ type: 'object.move', id, x, y }, true);
+  }, [onCommand]);
+  const commitPending = useCallback(() => { onCommitPending(); }, [onCommitPending]);
 
   const drawGesture = Gesture.Pan()
     .enabled(activeTool === 'pen' || activeTool === 'highlighter')
@@ -251,8 +254,15 @@ export function CanvasViewport({
     .onFinalize(() => {
       eraserX.value = -10000;
       eraserY.value = -10000;
+      // The whole sweep is one undo step.
+      runOnJS(commitPending)();
     });
 
+  /**
+   * Select mode does three things with one gesture: a touch on empty canvas pans,
+   * a drag on an object moves it, and a tap on an already selected object opens
+   * the text editor. Keeping one gesture avoids tap/drag races.
+   */
   const selectGesture = Gesture.Pan()
     .enabled(activeTool === 'select')
     .maxPointers(1)
@@ -262,20 +272,28 @@ export function CanvasViewport({
         { x: event.x, y: event.y },
         { x: offsetX.value, y: offsetY.value, scale: scale.value },
       );
-      const hit = objects.slice().reverse().find((item) => point.x >= item.x && point.x <= item.x + item.width && point.y >= item.y && point.y <= item.y + item.height);
-      draggingObjectId.value = hit?.id ?? '';
+      const hit = objectAtPoint(objects, point);
+      draggingObjectId.value = hit ? hit.id : '';
+      dragMoved.value = false;
+      grabOffsetX.value = hit ? point.x - hit.x : 0;
+      grabOffsetY.value = hit ? point.y - hit.y : 0;
+      tapOpensEditor.value = hit && hit.id === selectedObjectId ? hit.id : '';
       startX.value = offsetX.value;
       startY.value = offsetY.value;
-      if (hit && onObjectMove) runOnJS(onObjectMove)(hit.id, point);
+      if (hit) runOnJS(selectObject)(hit.id);
+      else runOnJS(selectObject)(null);
     })
     .onUpdate((event) => {
       if (draggingObjectId.value !== '') {
-        if (onObjectMove) {
+        if (!dragMoved.value) {
+          dragMoved.value = Math.hypot(event.translationX, event.translationY) > DRAG_THRESHOLD_SCREEN;
+        }
+        if (dragMoved.value) {
           const point = screenToCanvas(
             { x: event.x, y: event.y },
             { x: offsetX.value, y: offsetY.value, scale: scale.value },
           );
-          runOnJS(onObjectMove)(draggingObjectId.value, point);
+          runOnJS(moveObject)(draggingObjectId.value, point.x - grabOffsetX.value, point.y - grabOffsetY.value);
         }
         return;
       }
@@ -284,21 +302,32 @@ export function CanvasViewport({
       runOnJS(report)(offsetX.value, offsetY.value, scale.value);
     })
     .onFinalize(() => {
-      if (draggingObjectId.value === '') runOnJS(commit)(offsetX.value, offsetY.value, scale.value);
-      draggingObjectId.value = '';
+      if (draggingObjectId.value !== '') {
+        const id = draggingObjectId.value;
+        const moved = dragMoved.value;
+        const opensEditor = tapOpensEditor.value;
+        draggingObjectId.value = '';
+        tapOpensEditor.value = '';
+        dragMoved.value = false;
+        if (moved) runOnJS(commitPending)();
+        else if (opensEditor !== '') runOnJS(editObject)(id);
+        return;
+      }
+      runOnJS(commitViewport)(offsetX.value, offsetY.value, scale.value);
     });
 
   const objectTap = Gesture.Tap()
     .enabled((activeTool === 'text' || activeTool === 'sticky') && !!onObjectCreate)
     .onEnd((event) => {
-      if (onObjectCreate) {
-        const point = screenToCanvas(
-          { x: event.x, y: event.y },
-          { x: offsetX.value, y: offsetY.value, scale: scale.value },
-        );
-        runOnJS(onObjectCreate)(activeTool as 'text' | 'sticky', point);
-      }
+      const point = screenToCanvas(
+        { x: event.x, y: event.y },
+        { x: offsetX.value, y: offsetY.value, scale: scale.value },
+      );
+      runOnJS(createObject)(activeTool as 'text' | 'sticky', point);
     });
+
+  /** While editing text, a canvas tap commits the edit instead of drawing. */
+  const dismissTap = Gesture.Tap().onEnd(() => { runOnJS(touchCanvas)(); });
 
   /**
    * Pinch is also the two-finger pan: the focal point moves with the fingers,
@@ -318,15 +347,17 @@ export function CanvasViewport({
       offsetY.value = event.focalY - pinchAnchorY.value * nextScale;
       runOnJS(report)(offsetX.value, offsetY.value, scale.value);
     })
-    .onFinalize(() => { runOnJS(commit)(offsetX.value, offsetY.value, scale.value); });
+    .onFinalize(() => { runOnJS(commitViewport)(offsetX.value, offsetY.value, scale.value); });
 
-  const primaryGesture = activeTool === 'eraser'
-    ? eraseGesture
-    : activeTool === 'pen' || activeTool === 'highlighter'
-      ? drawGesture
-      : activeTool === 'text' || activeTool === 'sticky'
-        ? objectTap
-        : selectGesture;
+  const primaryGesture = editing
+    ? dismissTap
+    : activeTool === 'eraser'
+      ? eraseGesture
+      : activeTool === 'pen' || activeTool === 'highlighter'
+        ? drawGesture
+        : activeTool === 'text' || activeTool === 'sticky'
+          ? objectTap
+          : selectGesture;
   const gesture = Gesture.Simultaneous(primaryGesture, pinchGesture);
 
   const transform = useDerivedValue(() => [
@@ -336,8 +367,8 @@ export function CanvasViewport({
   ]);
   const eraserRadiusCanvas = useDerivedValue(() => eraserRadiusForScale(eraserRadius, scale.value));
   const renderedStrokes = useMemo(
-    () => [...ink.strokes, ...(ink.active ? [ink.active] : [])],
-    [ink.strokes, ink.active],
+    () => (activeStroke ? [...document.strokes, activeStroke] : document.strokes),
+    [document.strokes, activeStroke],
   );
   const zoomLabel = `${Math.round(viewport.scale * 100)}%`;
 
@@ -365,7 +396,19 @@ export function CanvasViewport({
         </Canvas>
       </GestureDetector>
 
-      {objects.map((object) => <CanvasObjectView key={object.id} object={object} offsetX={offsetX} offsetY={offsetY} scale={scale} />)}
+      {document.objects.map((object) => (
+        <CanvasObjectView
+          key={object.id}
+          object={object}
+          dark={dark}
+          selectionColor={theme.primary}
+          selected={selectedObjectId === object.id}
+          hidden={editingObjectId === object.id}
+          offsetX={offsetX}
+          offsetY={offsetY}
+          scale={scale}
+        />
+      ))}
 
       <View style={styles.hud} pointerEvents="box-none">
         <View style={[styles.viewBadge, { backgroundColor: theme.surface, borderColor: theme.border }]} pointerEvents="none" accessibilityLabel={`Zoom ${zoomLabel}`}>
@@ -405,30 +448,55 @@ function InkStrokeView({ stroke, dark }: { stroke: InkStroke; dark: boolean }) {
 
 type CanvasObjectViewProps = {
   object: CanvasObject;
+  dark: boolean;
+  /** Theme-aware selection outline colour. */
+  selectionColor: string;
+  selected: boolean;
+  hidden: boolean;
   offsetX: { value: number };
   offsetY: { value: number };
   scale: { value: number };
 };
 
-function CanvasObjectView({ object, offsetX, offsetY, scale }: CanvasObjectViewProps) {
+/**
+ * Objects are native views on top of the Skia canvas, which keeps their text
+ * selectable by the platform text stack and makes them cheap to move: the frame
+ * follows the viewport shared values without a React re-render per frame.
+ */
+function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offsetX, offsetY, scale }: CanvasObjectViewProps) {
+  const lineHeight = textLineHeight(object.fontSize);
+  const fill = objectFill(object);
+  const textColor = objectTextColor(object, dark);
   const frame = useAnimatedStyle(() => ({
     left: object.x * scale.value + offsetX.value,
     top: object.y * scale.value + offsetY.value,
     width: object.width * scale.value,
-    minHeight: object.height * scale.value,
-    transform: [{ rotate: `${object.rotation}deg` }],
-  }), [object]);
-  const text = useAnimatedStyle(() => ({ fontSize: object.fontSize * scale.value }), [object]);
+    height: object.height * scale.value,
+    borderRadius: radii.sm * scale.value,
+    borderWidth: 1.5,
+    borderColor: selected ? selectionColor : 'transparent',
+  }), [object, selected, selectionColor]);
+  const text = useAnimatedStyle(() => ({
+    fontSize: object.fontSize * scale.value,
+    lineHeight: lineHeight * scale.value,
+    padding: OBJECT_PADDING * scale.value,
+  }), [object, lineHeight]);
+
+  if (hidden) return null;
+
   return (
-    <Animated.View pointerEvents="none" style={[styles.object, { backgroundColor: object.backgroundColor ?? 'transparent' }, frame]}>
-      <Animated.Text style={[{ color: object.color }, text]}>{object.text || (object.type === 'sticky' ? ' ' : 'Text')}</Animated.Text>
+    <Animated.View
+      pointerEvents="none"
+      style={[styles.object, { backgroundColor: fill ?? 'transparent' }, frame]}
+    >
+      <Animated.Text style={[{ color: textColor }, text]}>{object.text}</Animated.Text>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, overflow: 'hidden' },
-  object: { position: 'absolute', minWidth: 48, minHeight: 32, padding: 8 },
+  object: { position: 'absolute', overflow: 'hidden' },
   hud: { position: 'absolute', top: spacing.sm, right: spacing.sm, alignItems: 'flex-end', gap: spacing.xs },
   viewBadge: { borderWidth: 1, borderRadius: radii.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, alignItems: 'flex-end' },
   zoomText: { ...typography.bodyStrong },

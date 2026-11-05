@@ -42,12 +42,12 @@ Expo-managed app using Expo Router file-based routes on a single native stack.
 app/
   _layout.tsx     root stack, header theme, safe-area provider
   index.tsx       Home / Boards (placeholder)
-  editor.tsx      Board editor (placeholder)
+  editor.tsx      Board editor (canvas, tools, objects, undo/redo)
   settings.tsx    Settings (placeholder)
 src/
   theme.ts        design-system tokens
-  canvas/         pure viewport math and coordinate conversion
-  components/     shared UI (buttons, icon family, canvas)
+  canvas/         pure canvas logic: viewport, ink, document/objects, history, colours
+  components/     shared UI (buttons, icon family, canvas, option sheets)
 assets/           icons and splash assets
 docs/             planning, architecture, and task status
 design-system/    design system master file
@@ -58,6 +58,7 @@ prompts/          per-session task prompts
 npm install
 npm start          # Expo dev server (Expo Go, SDK 58)
 npm run typecheck  # tsc --noEmit
+npm test           # viewport, ink, and object/history checks (plain Node)
 ```
 
 Working state, decisions, and the next slice are tracked in [docs/task-status.md](docs/task-status.md).
