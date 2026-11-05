@@ -46,7 +46,8 @@ app/
   settings.tsx    Settings (placeholder)
 src/
   theme.ts        design-system tokens
-  components/     shared UI (buttons, icon family)
+  canvas/         pure viewport math and coordinate conversion
+  components/     shared UI (buttons, icon family, canvas)
 assets/           icons and splash assets
 docs/             planning, architecture, and task status
 design-system/    design system master file

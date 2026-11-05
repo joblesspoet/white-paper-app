@@ -27,7 +27,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run test:viewport && npm run test:ink",
+    "test:viewport": "node --no-warnings --experimental-strip-types scripts/verify-viewport.mts",
+    "test:ink": "node --no-warnings --experimental-strip-types scripts/verify-ink.mts"
   },
   "private": true
 }

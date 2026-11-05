@@ -130,6 +130,18 @@ type EditorMode =
 - Every mutation creates one undoable command.
 - Canvas remains usable in landscape and on tablets.
 
+### Canvas viewport model (implemented)
+```ts
+type Viewport = { x: number; y: number; scale: number };
+// screen = canvas * scale + offset
+// canvas = (screen - offset) / scale
+```
+- Zoom is clamped to 0.5×–4×.
+- One-finger drag pans in Select mode; during drawing/erasing/text placement, two fingers pan and pinch together.
+- Pinch zoom anchors the canvas point under the gesture focal point, so the board does not drift toward the screen center.
+- `Reset view` returns the viewport to the origin at 100%.
+- Temporary debug grid points and colored canvas-space markers prove that screen ↔ canvas conversion stays correct while panning and zooming.
+
 ### Editor states
 - Empty board guidance.
 - Normal editing.
