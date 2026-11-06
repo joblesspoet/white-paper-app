@@ -51,6 +51,7 @@ import type { Point, Viewport } from '../src/canvas/viewport';
 import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
 import {
   ChevronRightIcon,
+  EditIcon,
   EraserIcon,
   HighlighterIcon,
   MoreIcon,
@@ -61,6 +62,7 @@ import {
   SelectIcon,
   StickyIcon,
   TextIcon,
+  TrashIcon,
   UndoIcon,
 } from '../src/components/icons';
 import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
@@ -354,7 +356,7 @@ export default function BoardEditorScreen() {
   const overlayTextColor = editingTextObject ? objectTextColor(editingTextObject, dark) : theme.foreground;
   const overlayLineHeight = editingTextObject ? textLineHeight(editingTextObject.fontSize) : 0;
   const editingSheetBottom = keyboardHeight > 0 ? keyboardHeight + spacing.sm : insets.bottom + spacing.md;
-  const selectionBottom = insets.bottom + 84;
+  const selectedRect = selectedObject && !editing ? objectScreenRect(selectedObject, viewport) : null;
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}>
@@ -389,95 +391,108 @@ export default function BoardEditorScreen() {
           onLayout={measureCanvas}
           style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}
         >
-          <CanvasViewport
-            dark={dark}
-            initialViewport={INITIAL_VIEWPORT}
-            activeTool={activeTool}
-            color={color}
-            width={strokeWidth}
-            opacity={opacity}
-            eraserRadius={eraserRadius}
-            shapeKind={shapeKind}
-            shapeColorKey={shapeColorKey}
-            shapeFillKey={shapeFillKey}
-            shapeStrokeWidth={shapeStrokeWidth}
-            connectorStyle={connectorStyle}
-            connectorColorKey={connectorColorKey}
-            connectorStrokeWidth={connectorStrokeWidth}
-            document={document}
-            selectedObjectId={selectedObjectId}
-            editingObjectId={editingId}
-            viewportRequest={viewportRequest}
-            onViewportChange={reportViewport}
-            onCommand={runCommand}
-            onCommitPending={commitPending}
-            onObjectCreate={startNewObject}
-            onObjectSelect={setSelectedObjectId}
-            onObjectEdit={startEditingExisting}
-            onCanvasTouch={commitEditing}
-          />
-          {showGuidance && (
-            <View pointerEvents="none" style={styles.canvasGuidance}>
-              <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
-              <Text style={[styles.canvasBody, { color: theme.foreground }]}>
-                Draw with a pen, or tap the text and sticky-note tools to add a note.
-              </Text>
-            </View>
-          )}
-          {editingTextObject && overlayRect && (
-            <TextInput
-              multiline
-              autoFocus
-              accessibilityLabel={editingTextObject.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
-              value={editingTextObject.text}
-              onChangeText={(text) => updateDraft({ text })}
-              onBlur={commitEditing}
-              placeholder={editingTextObject.type === 'sticky' ? 'Write a note' : 'Type something'}
-              placeholderTextColor={`${overlayTextColor}80`}
-              selectionColor={theme.primary}
+          <View style={styles.canvasClip}>
+            <CanvasViewport
+              dark={dark}
+              initialViewport={INITIAL_VIEWPORT}
+              activeTool={activeTool}
+              color={color}
+              width={strokeWidth}
+              opacity={opacity}
+              eraserRadius={eraserRadius}
+              shapeKind={shapeKind}
+              shapeColorKey={shapeColorKey}
+              shapeFillKey={shapeFillKey}
+              shapeStrokeWidth={shapeStrokeWidth}
+              connectorStyle={connectorStyle}
+              connectorColorKey={connectorColorKey}
+              connectorStrokeWidth={connectorStrokeWidth}
+              document={document}
+              selectedObjectId={selectedObjectId}
+              editingObjectId={editingId}
+              viewportRequest={viewportRequest}
+              onViewportChange={reportViewport}
+              onCommand={runCommand}
+              onCommitPending={commitPending}
+              onObjectCreate={startNewObject}
+              onObjectSelect={setSelectedObjectId}
+              onObjectEdit={startEditingExisting}
+              onCanvasTouch={commitEditing}
+            />
+            {showGuidance && (
+              <View pointerEvents="none" style={styles.canvasGuidance}>
+                <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
+                <Text style={[styles.canvasBody, { color: theme.foreground }]}>
+                  Draw with a pen, or tap the text and sticky-note tools to add a note.
+                </Text>
+              </View>
+            )}
+            {editingTextObject && overlayRect && (
+              <TextInput
+                multiline
+                autoFocus
+                accessibilityLabel={editingTextObject.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
+                value={editingTextObject.text}
+                onChangeText={(text) => updateDraft({ text })}
+                onBlur={commitEditing}
+                placeholder={editingTextObject.type === 'sticky' ? 'Write a note' : 'Type something'}
+                placeholderTextColor={`${overlayTextColor}80`}
+                selectionColor={theme.primary}
+                style={[
+                  styles.objectEditor,
+                  {
+                    left: overlayRect.x,
+                    top: overlayRect.y,
+                    width: overlayRect.width,
+                    minHeight: overlayRect.height,
+                    padding: OBJECT_PADDING * viewport.scale,
+                    borderRadius: radii.sm * viewport.scale,
+                    backgroundColor: overlayFill ?? 'transparent',
+                    color: overlayTextColor,
+                    fontSize: editingTextObject.fontSize * viewport.scale,
+                    lineHeight: overlayLineHeight * viewport.scale,
+                  },
+                ]}
+              />
+            )}
+          </View>
+
+          {selectedObject && selectedRect && !editing && (
+            <View
+              pointerEvents="box-none"
+              accessibilityLabel={`${selectedObject.type} selected`}
               style={[
-                styles.objectEditor,
+                styles.selectionFrame,
                 {
-                  left: overlayRect.x,
-                  top: overlayRect.y,
-                  width: overlayRect.width,
-                  minHeight: overlayRect.height,
-                  padding: OBJECT_PADDING * viewport.scale,
-                  borderRadius: radii.sm * viewport.scale,
-                  backgroundColor: overlayFill ?? 'transparent',
-                  color: overlayTextColor,
-                  fontSize: editingTextObject.fontSize * viewport.scale,
-                  lineHeight: overlayLineHeight * viewport.scale,
+                  left: selectedRect.x,
+                  top: selectedRect.y,
+                  width: selectedRect.width,
+                  height: selectedRect.height,
                 },
               ]}
-            />
+            >
+              <View style={[styles.selectionActions, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit selected object"
+                  onPress={() => startEditingExisting(selectedObject.id)}
+                  style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
+                >
+                  <EditIcon size={18} color={theme.foreground} />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete selected object"
+                  onPress={deleteSelected}
+                  style={({ pressed }) => [styles.selectionAction, styles.selectionActionDelete, { borderLeftColor: theme.border }, pressed && styles.pressed]}
+                >
+                  <TrashIcon size={18} color={theme.destructive} />
+                </Pressable>
+              </View>
+            </View>
           )}
         </View>
       </View>
-
-      {selectedObject && !editing && (
-        <View style={[styles.selectionBar, { bottom: selectionBottom, backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[styles.selectionLabel, { color: theme.foreground }]}>
-            {selectedObject.type === 'sticky' ? 'Sticky note selected' : 'Text selected'}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Edit text"
-            onPress={() => startEditingExisting(selectedObject.id)}
-            style={({ pressed }) => [styles.selectionAction, { borderColor: theme.border }, pressed && styles.pressed]}
-          >
-            <Text style={[styles.selectionActionText, { color: theme.foreground }]}>Edit</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Delete object"
-            onPress={deleteSelected}
-            style={({ pressed }) => [styles.selectionAction, { borderColor: theme.destructive }, pressed && styles.pressed]}
-          >
-            <Text style={[styles.selectionActionText, { color: theme.destructive }]}>Delete</Text>
-          </Pressable>
-        </View>
-      )}
 
       {editingTextObject && (
         <ObjectOptionsSheet
@@ -609,7 +624,8 @@ const styles = StyleSheet.create({
   actionDisabled: { opacity: 0.3 },
   workspace: { flex: 1, flexDirection: 'row' },
   rail: { width: 84, borderRightWidth: 1, alignItems: 'center', paddingTop: spacing.md, gap: spacing.xs },
-  canvas: { flex: 1, margin: spacing.md, borderWidth: 1, borderRadius: radii.md, overflow: 'hidden' },
+  canvas: { flex: 1, margin: spacing.md, borderWidth: 1, borderRadius: radii.md },
+  canvasClip: { flex: 1, overflow: 'hidden', borderRadius: radii.md },
   canvasGuidance: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.lg },
   canvasTitle: { ...typography.subtitle },
   canvasBody: { ...typography.body, opacity: 0.7, textAlign: 'center' },
@@ -619,9 +635,10 @@ const styles = StyleSheet.create({
   toolLabel: { ...typography.caption, fontSize: 11, textAlign: 'center' },
   toolPressed: { opacity: 0.65 },
   objectEditor: { position: 'absolute', zIndex: 10, textAlignVertical: 'top' },
-  selectionBar: { position: 'absolute', left: spacing.md, right: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, borderWidth: 1, borderRadius: radii.md, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  selectionFrame: { position: 'absolute', zIndex: 20 },
+  selectionActions: { position: 'absolute', right: -1, top: -38, flexDirection: 'row', borderWidth: 1, borderRadius: radii.sm, overflow: 'hidden' },
+  selectionAction: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  selectionActionDelete: { borderLeftWidth: 1 },
   selectionLabel: { ...typography.caption, flex: 1 },
-  selectionAction: { minHeight: touchTarget, minWidth: touchTarget, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.md },
-  selectionActionText: { ...typography.caption },
   pressed: { opacity: 0.65 },
 });

@@ -173,6 +173,36 @@ export function StickyIcon({ size = 24, color = colors.foreground }: IconProps) 
   );
 }
 
+export function EditIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M4 20h4L19 9a2.12 2.12 0 0 0-3-3L5 17v3Z"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path d="m14 7 3 3" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+export function TrashIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path d="M10 11v5M14 11v5" stroke={color} strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 export function UndoIcon({ size = 24, color = colors.foreground }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

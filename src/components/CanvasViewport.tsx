@@ -1,5 +1,5 @@
 import { Canvas, Circle, Group, Oval, Path, Rect, Skia } from '@shopify/react-native-skia';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -522,7 +522,9 @@ export function CanvasViewport({
                 strokeWidth={1.5}
               />
             )}
-            {draftObject && <GeometricObjectView object={draftObject} dark={dark} selected={false} selectionColor={theme.primary} />}
+            {/* During creation the draft shape gets its selection border, but no
+                edit/delete controls are shown until the drag is committed. */}
+            {draftObject && <GeometricObjectView object={draftObject} dark={dark} selected selectionColor={theme.primary} />}
             {document.objects.filter(isGeometricObject).map((object) => (
               <GeometricObjectView
                 key={object.id}
@@ -669,27 +671,68 @@ function GeometricObjectView({
   }
   if (object.shape === 'ellipse') {
     return (
-      <Oval
+      <SelectableGeometry selected={selected} selectionColor={selectionColor} bounds={object} shape="ellipse">
+        {object.fillKey && <Oval x={object.x} y={object.y} width={object.width} height={object.height} color={stickyColorValue(object.fillKey)} style="fill" />}
+        <Oval
+          x={object.x}
+          y={object.y}
+          width={object.width}
+          height={object.height}
+          color={color}
+          style="stroke"
+          strokeWidth={object.strokeWidth}
+        />
+      </SelectableGeometry>
+    );
+  }
+  return (
+    <SelectableGeometry selected={selected} selectionColor={selectionColor} bounds={object} shape="rectangle">
+      {object.fillKey && <Rect x={object.x} y={object.y} width={object.width} height={object.height} color={stickyColorValue(object.fillKey)} style="fill" />}
+      <Rect
         x={object.x}
         y={object.y}
         width={object.width}
         height={object.height}
-        color={object.fillKey ? stickyColorValue(object.fillKey) : (selected ? selectionColor : color)}
-        style={object.fillKey ? 'fill' : 'stroke'}
+        color={color}
+        style="stroke"
         strokeWidth={object.strokeWidth}
       />
-    );
-  }
+    </SelectableGeometry>
+  );
+}
+
+/**
+ * Selection border that belongs to the object itself. It is drawn inside the
+ * same Skia group as the geometry, so it tracks the object's real bounds
+ * instead of floating above it as an absolutely positioned native view.
+ */
+function SelectableGeometry({
+  selected,
+  selectionColor,
+  bounds,
+  shape,
+  children,
+}: {
+  selected: boolean;
+  selectionColor: string;
+  bounds: { x: number; y: number; width: number; height: number };
+  shape: 'rectangle' | 'ellipse';
+  children: ReactNode;
+}) {
+  // A tiny gap keeps the object's own stroke visible inside the selection
+  // outline without adding a bulky frame around it.
+  const gap = 2;
+  const x = bounds.x - gap;
+  const y = bounds.y - gap;
+  const width = bounds.width + gap * 2;
+  const height = bounds.height + gap * 2;
   return (
-    <Rect
-      x={object.x}
-      y={object.y}
-      width={object.width}
-      height={object.height}
-      color={object.fillKey ? stickyColorValue(object.fillKey) : (selected ? selectionColor : color)}
-      style={object.fillKey ? 'fill' : 'stroke'}
-      strokeWidth={object.strokeWidth}
-    />
+    <Group>
+      {children}
+      {selected && (shape === 'ellipse'
+        ? <Oval x={x} y={y} width={width} height={height} color={selectionColor} style="stroke" strokeWidth={1.5} />
+        : <Rect x={x} y={y} width={width} height={height} color={selectionColor} style="stroke" strokeWidth={1.5} />)}
+    </Group>
   );
 }
 
