@@ -405,7 +405,9 @@ export function CanvasViewport({
       dragMoved.value = false;
       grabOffsetX.value = hit ? point.x - hit.x : 0;
       grabOffsetY.value = hit ? point.y - hit.y : 0;
-      tapOpensEditor.value = hit && hit.id === selectedObjectId ? hit.id : '';
+      // Only textual objects open an editor on a second tap; shapes and
+      // connectors remain selected without entering an edit state.
+      tapOpensEditor.value = hit && hit.id === selectedObjectId && isTextualObject(hit) ? hit.id : '';
       startX.value = offsetX.value;
       startY.value = offsetY.value;
       if (hit) runOnJS(selectObject)(hit.id);
@@ -631,7 +633,18 @@ function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offs
       pointerEvents="none"
       style={[styles.object, { backgroundColor: fill ?? 'transparent' }, frame]}
     >
-      <Animated.Text style={[{ color: textColor }, text]}>{object.text}</Animated.Text>
+      <Animated.Text
+        style={[
+          {
+            color: textColor,
+            fontWeight: object.fontWeight ?? 'normal',
+            fontStyle: object.fontStyle ?? 'normal',
+          },
+          text,
+        ]}
+      >
+        {object.text}
+      </Animated.Text>
     </Animated.View>
   );
 }

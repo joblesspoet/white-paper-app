@@ -139,6 +139,26 @@ const resizedSticky = withObjectStyle(stickyObject(), { fontSize: 20 });
 assert.equal(resizedSticky.height, stickyObject().height, 'sticky paper keeps its size');
 assert.equal(withObjectStyle(grown, {}), grown, 'no style change keeps the same object');
 
+// Bold and italic are stored on textual objects and re-measure the text block.
+const bolded = withObjectStyle(grown, { fontWeight: 'bold' }) as TextObject;
+assert.equal(bolded.fontWeight, 'bold');
+assert.equal(bolded.fontStyle, 'normal');
+assert.ok(bolded.height >= grown.height, 'bold text never shrinks its hit box');
+const slanted = withObjectStyle(bolded, { fontStyle: 'italic' }) as TextObject;
+assert.equal(slanted.fontStyle, 'italic');
+assert.equal(slanted.fontWeight, 'bold', 'weight survives a slant change');
+const resetWeight = withObjectStyle(slanted, { fontWeight: 'normal', fontStyle: 'normal' }) as TextObject;
+assert.equal(resetWeight.fontWeight, 'normal');
+assert.equal(resetWeight.fontStyle, 'normal');
+const boldNote = withObjectStyle(stickyObject(), { fontWeight: 'bold', fontStyle: 'italic' }) as ReturnType<typeof stickyObject>;
+assert.equal(boldNote.type, 'sticky');
+assert.equal(boldNote.fontWeight, 'bold');
+assert.equal(boldNote.fontStyle, 'italic');
+assert.equal(boldNote.height, stickyObject().height, 'bold sticky text keeps the paper size');
+const freshBold = createTextObject({ id: 'bold', point: { x: 0, y: 0 }, fontWeight: 'bold', fontStyle: 'italic' });
+assert.equal(freshBold.fontWeight, 'bold');
+assert.equal(freshBold.fontStyle, 'italic');
+
 // ----------------------------------------------------------------- palette
 
 // Sticky notes always use the dark note ink, and every pastel is readable with it.
@@ -234,6 +254,18 @@ assert.equal(styledObject.text, 'hello world');
 assert.equal(styledObject.colorKey, 'red');
 assert.equal(styledObject.fontSize, 24);
 
+// Weight and slant travel through the update command like the other style fields.
+const styledBold = applyCommand(styled, {
+  type: 'object.update',
+  id: 'text-1',
+  fontWeight: 'bold',
+  fontStyle: 'italic',
+});
+const boldObject = findObject(styledBold, 'text-1');
+assert.ok(boldObject && boldObject.type === 'text');
+assert.equal(boldObject.fontWeight, 'bold');
+assert.equal(boldObject.fontStyle, 'italic');
+
 const erased = applyCommand(document, { type: 'ink.add', stroke: stroke('s1') });
 const afterErase = applyCommand(erased, { type: 'ink.erase', point: { x: 0, y: 0 }, radius: 10 });
 assert.equal(afterErase.strokes.length, 0);
@@ -256,6 +288,10 @@ assert.equal(committed.object.colorKey, 'teal');
 const updated = editingCommit(textObject('edited'), false);
 assert.ok(updated && updated.type === 'object.update');
 assert.equal(updated.text, 'edited');
+const boldUpdate = editingCommit(textObject('edited', { fontWeight: 'bold', fontStyle: 'italic' }), false);
+assert.ok(boldUpdate && boldUpdate.type === 'object.update');
+assert.equal(boldUpdate.fontWeight, 'bold');
+assert.equal(boldUpdate.fontStyle, 'italic');
 
 // ------------------------------------------------------------ undo history
 

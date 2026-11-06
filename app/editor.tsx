@@ -39,6 +39,9 @@ import {
   withObjectText,
   type CanvasObject,
   type DocumentCommand,
+  type ObjectStylePatch,
+  type TextSlant,
+  type TextWeight,
 } from '../src/canvas/document';
 import {
   canRedo as historyCanRedo,
@@ -61,6 +64,7 @@ import {
   RedoIcon,
   SelectIcon,
   StickyIcon,
+  StyleIcon,
   TextIcon,
   TrashIcon,
   UndoIcon,
@@ -111,13 +115,18 @@ export default function BoardEditorScreen() {
 
   const [activeTool, setActiveTool] = useState<InkTool>('select');
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [stylingObjectId, setStylingObjectId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const editingRef = useRef<Editing | null>(null);
 
   const [textColorKey, setTextColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
   const [textSize, setTextSize] = useState(DEFAULT_TEXT_FONT_SIZE);
+  const [textBold, setTextBold] = useState(false);
+  const [textItalic, setTextItalic] = useState(false);
   const [stickyColorKey, setStickyColorKey] = useState<string>(DEFAULT_STICKY_COLOR);
   const [stickySize, setStickySize] = useState(DEFAULT_STICKY_FONT_SIZE);
+  const [stickyBold, setStickyBold] = useState(false);
+  const [stickyItalic, setStickyItalic] = useState(false);
   const [shapeKind, setShapeKind] = useState<'rectangle' | 'ellipse' | 'line'>('rectangle');
   const [shapeColorKey, setShapeColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
   const [shapeFillKey, setShapeFillKey] = useState<string | null>(null);
@@ -224,6 +233,7 @@ export default function BoardEditorScreen() {
     editingRef.current = null;
     setEditing(null);
     setObjectOptionsVisible(false);
+    setSheetHeight(0);
     Keyboard.dismiss();
     const command = editingCommit(current.object, current.isNew);
     if (!command) {
@@ -234,12 +244,17 @@ export default function BoardEditorScreen() {
     setSelectedObjectId(command.type === 'object.delete' ? null : current.object.id);
   }, []);
 
-  const updateDraft = useCallback((patch: { text?: string; colorKey?: string; fontSize?: number }) => {
+  const updateDraft = useCallback((patch: { text?: string; colorKey?: string; fontSize?: number; fontWeight?: TextWeight; fontStyle?: TextSlant }) => {
     const current = editingRef.current;
     if (!current) return;
     let object = current.object;
     if (patch.text !== undefined) object = withObjectText(object, patch.text);
-    object = withObjectStyle(object, { colorKey: patch.colorKey, fontSize: patch.fontSize });
+    object = withObjectStyle(object, {
+      colorKey: patch.colorKey,
+      fontSize: patch.fontSize,
+      fontWeight: patch.fontWeight,
+      fontStyle: patch.fontStyle,
+    });
     setEditingState({ object, isNew: current.isNew });
   }, [setEditingState]);
 
@@ -251,18 +266,37 @@ export default function BoardEditorScreen() {
     }
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const object = type === 'sticky'
-      ? createStickyObject({ id, point, colorKey: stickyColorKey, fontSize: stickySize })
-      : createTextObject({ id, point, colorKey: textColorKey, fontSize: textSize });
+      ? createStickyObject({
+          id,
+          point,
+          colorKey: stickyColorKey,
+          fontSize: stickySize,
+          fontWeight: stickyBold ? 'bold' : 'normal',
+          fontStyle: stickyItalic ? 'italic' : 'normal',
+        })
+      : createTextObject({
+          id,
+          point,
+          colorKey: textColorKey,
+          fontSize: textSize,
+          fontWeight: textBold ? 'bold' : 'normal',
+          fontStyle: textItalic ? 'italic' : 'normal',
+        });
     setSelectedObjectId(null);
     setObjectOptionsVisible(false);
+    setStylingObjectId(null);
     setEditingState({ object, isNew: true });
-  }, [commitEditing, setEditingState, stickyColorKey, stickySize, textColorKey, textSize]);
+  }, [commitEditing, setEditingState, stickyBold, stickyColorKey, stickyItalic, stickySize, textBold, textColorKey, textItalic, textSize]);
 
   const startEditingExisting = useCallback((id: string) => {
     const object = findObject(document, id);
-    if (!object) return;
+    // Capability check: only text and sticky notes own editable text. Tapping a
+    // selected shape or connector must not enter a phantom editing state.
+    if (!object || !isTextualObject(object)) return;
     setSelectedObjectId(id);
     setObjectOptionsVisible(false);
+    setStylingObjectId(null);
+    setSheetHeight(0);
     setEditingState({ object, isNew: false });
   }, [document, setEditingState]);
 
@@ -270,7 +304,29 @@ export default function BoardEditorScreen() {
     if (!selectedObjectId) return;
     dispatch({ type: 'command', command: { type: 'object.delete', id: selectedObjectId } });
     setSelectedObjectId(null);
+    setStylingObjectId(null);
   }, [selectedObjectId]);
+
+  /** Style is available for every selectable object, ink excepted. */
+  const toggleStyleSheet = useCallback(() => {
+    if (!selectedObjectId) return;
+    setStylingObjectId((current) => (current === selectedObjectId ? null : selectedObjectId));
+  }, [selectedObjectId]);
+
+  const updateStyledObject = useCallback((patch: ObjectStylePatch) => {
+    if (!stylingObjectId) return;
+    dispatch({ type: 'command', command: { type: 'object.update', id: stylingObjectId, ...patch } });
+  }, [stylingObjectId]);
+
+  // A style sheet belongs to the object it was opened for.
+  useEffect(() => {
+    if (stylingObjectId && (!selectedObjectId || stylingObjectId !== selectedObjectId)) {
+      setStylingObjectId(null);
+    }
+  }, [selectedObjectId, stylingObjectId]);
+  useEffect(() => {
+    if (stylingObjectId && !findObject(document, stylingObjectId)) setStylingObjectId(null);
+  }, [document, stylingObjectId]);
 
   // The keyboard must never cover the object being edited. Only the viewport
   // moves; the object keeps its board position.
@@ -301,6 +357,7 @@ export default function BoardEditorScreen() {
 
   const pressTool = useCallback((tool: InkTool) => {
     if (editingRef.current) commitEditing();
+    setStylingObjectId(null);
     if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') {
       setObjectOptionsVisible(false);
       setShapeOptionsVisible(false);
@@ -357,6 +414,12 @@ export default function BoardEditorScreen() {
   const overlayLineHeight = editingTextObject ? textLineHeight(editingTextObject.fontSize) : 0;
   const editingSheetBottom = keyboardHeight > 0 ? keyboardHeight + spacing.sm : insets.bottom + spacing.md;
   const selectedRect = selectedObject && !editing ? objectScreenRect(selectedObject, viewport) : null;
+  // Only text and sticky notes have editable text. Shapes and connectors
+  // expose delete only, so the Edit action is capability-driven.
+  const selectedIsTextual = selectedObject ? isTextualObject(selectedObject) : false;
+  const stylingObject = stylingObjectId ? findObject(document, stylingObjectId) : null;
+  const stylingTextObject = stylingObject && isTextualObject(stylingObject) ? stylingObject : null;
+  const stylingGeometricObject = stylingObject && !isTextualObject(stylingObject) ? stylingObject : null;
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}>
@@ -451,6 +514,8 @@ export default function BoardEditorScreen() {
                     color: overlayTextColor,
                     fontSize: editingTextObject.fontSize * viewport.scale,
                     lineHeight: overlayLineHeight * viewport.scale,
+                    fontWeight: editingTextObject.fontWeight ?? 'normal',
+                    fontStyle: editingTextObject.fontStyle ?? 'normal',
                   },
                 ]}
               />
@@ -472,13 +537,28 @@ export default function BoardEditorScreen() {
               ]}
             >
               <View style={[styles.selectionActions, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+                {selectedIsTextual && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit selected object"
+                    onPress={() => startEditingExisting(selectedObject.id)}
+                    style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
+                  >
+                    <EditIcon size={18} color={theme.foreground} />
+                  </Pressable>
+                )}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Edit selected object"
-                  onPress={() => startEditingExisting(selectedObject.id)}
-                  style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
+                  accessibilityLabel="Style selected object"
+                  onPress={toggleStyleSheet}
+                  style={({ pressed }) => [
+                    styles.selectionAction,
+                    selectedIsTextual && styles.selectionActionDelete,
+                    { borderLeftColor: theme.border },
+                    pressed && styles.pressed,
+                  ]}
                 >
-                  <EditIcon size={18} color={theme.foreground} />
+                  <StyleIcon size={18} color={theme.foreground} />
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
@@ -494,19 +574,31 @@ export default function BoardEditorScreen() {
         </View>
       </View>
 
-      {editingTextObject && (
+      {editingTextObject && editing?.isNew && (
         <ObjectOptionsSheet
           theme={theme}
           dark={dark}
           kind={editingTextObject.type}
           colorKey={editingTextObject.colorKey}
           fontSize={editingTextObject.fontSize}
+          fontWeight={editingTextObject.fontWeight ?? 'normal'}
+          fontStyle={editingTextObject.fontStyle ?? 'normal'}
           bottomOffset={editingSheetBottom}
           doneLabel="Done"
           doneHint="Commits the object and closes the keyboard"
           showScrim={false}
           onColorChange={(key) => updateDraft({ colorKey: key })}
           onFontSizeChange={(size) => updateDraft({ fontSize: size })}
+          onFontWeightChange={(weight) => {
+            updateDraft({ fontWeight: weight });
+            if (editingTextObject.type === 'sticky') setStickyBold(weight === 'bold');
+            else setTextBold(weight === 'bold');
+          }}
+          onFontStyleChange={(style) => {
+            updateDraft({ fontStyle: style });
+            if (editingTextObject.type === 'sticky') setStickyItalic(style === 'italic');
+            else setTextItalic(style === 'italic');
+          }}
           onDone={commitEditing}
           onHeightChange={setSheetHeight}
         />
@@ -519,11 +611,21 @@ export default function BoardEditorScreen() {
           kind={activeTool}
           colorKey={activeTool === 'sticky' ? stickyColorKey : textColorKey}
           fontSize={activeTool === 'sticky' ? stickySize : textSize}
+          fontWeight={activeTool === 'sticky' ? (stickyBold ? 'bold' : 'normal') : (textBold ? 'bold' : 'normal')}
+          fontStyle={activeTool === 'sticky' ? (stickyItalic ? 'italic' : 'normal') : (textItalic ? 'italic' : 'normal')}
           bottomOffset={optionsBottom}
           doneLabel="Done"
           doneHint="Closes the style options"
           onColorChange={(key) => (activeTool === 'sticky' ? setStickyColorKey(key) : setTextColorKey(key))}
           onFontSizeChange={(size) => (activeTool === 'sticky' ? setStickySize(size) : setTextSize(size))}
+          onFontWeightChange={(weight) => {
+            if (activeTool === 'sticky') setStickyBold(weight === 'bold');
+            else setTextBold(weight === 'bold');
+          }}
+          onFontStyleChange={(style) => {
+            if (activeTool === 'sticky') setStickyItalic(style === 'italic');
+            else setTextItalic(style === 'italic');
+          }}
           onDone={closeObjectOptions}
         />
       )}
@@ -547,6 +649,48 @@ export default function BoardEditorScreen() {
           onConnectorColor={setConnectorColorKey}
           onConnectorStrokeWidth={setConnectorStrokeWidth}
           onDone={() => setShapeOptionsVisible(false)}
+        />
+      )}
+
+      {!editing && stylingTextObject && (
+        <ObjectOptionsSheet
+          theme={theme}
+          dark={dark}
+          kind={stylingTextObject.type}
+          colorKey={stylingTextObject.colorKey}
+          fontSize={stylingTextObject.fontSize}
+          fontWeight={stylingTextObject.fontWeight ?? 'normal'}
+          fontStyle={stylingTextObject.fontStyle ?? 'normal'}
+          bottomOffset={optionsBottom}
+          doneLabel="Done"
+          doneHint="Closes the style options"
+          onColorChange={(key) => updateStyledObject({ colorKey: key })}
+          onFontSizeChange={(size) => updateStyledObject({ fontSize: size })}
+          onFontWeightChange={(weight) => updateStyledObject({ fontWeight: weight })}
+          onFontStyleChange={(style) => updateStyledObject({ fontStyle: style })}
+          onDone={() => setStylingObjectId(null)}
+        />
+      )}
+
+      {!editing && stylingGeometricObject && (
+        <ShapeOptionsSheet
+          theme={theme}
+          mode={stylingGeometricObject.type}
+          shapeKind={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.shape : shapeKind}
+          shapeColorKey={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.colorKey : shapeColorKey}
+          shapeFillKey={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.fillKey : shapeFillKey}
+          shapeStrokeWidth={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.strokeWidth : shapeStrokeWidth}
+          connectorStyle={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.style : connectorStyle}
+          connectorColorKey={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.colorKey : connectorColorKey}
+          connectorStrokeWidth={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.strokeWidth : connectorStrokeWidth}
+          onShapeKind={(value) => updateStyledObject({ shape: value })}
+          onShapeColor={(value) => updateStyledObject({ colorKey: value })}
+          onShapeFill={(value) => updateStyledObject({ fillKey: value })}
+          onShapeStrokeWidth={(value) => updateStyledObject({ strokeWidth: value })}
+          onConnectorStyle={(value) => updateStyledObject({ style: value })}
+          onConnectorColor={(value) => updateStyledObject({ colorKey: value })}
+          onConnectorStrokeWidth={(value) => updateStyledObject({ strokeWidth: value })}
+          onDone={() => setStylingObjectId(null)}
         />
       )}
 

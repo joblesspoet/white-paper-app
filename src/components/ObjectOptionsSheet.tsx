@@ -17,6 +17,8 @@ import {
   isCustomColor,
   stickyColorValue,
   textColorValue,
+  type TextSlant,
+  type TextWeight,
 } from '../canvas/document';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
@@ -27,6 +29,8 @@ type ObjectOptionsSheetProps = {
   kind: 'text' | 'sticky';
   colorKey: string;
   fontSize: number;
+  fontWeight: TextWeight;
+  fontStyle: TextSlant;
   /** Distance from the bottom of the screen, so the sheet clears the keyboard. */
   bottomOffset: number;
   doneLabel: string;
@@ -35,6 +39,8 @@ type ObjectOptionsSheetProps = {
   showScrim?: boolean;
   onColorChange: (key: string) => void;
   onFontSizeChange: (size: number) => void;
+  onFontWeightChange: (weight: TextWeight) => void;
+  onFontStyleChange: (style: TextSlant) => void;
   onDone: () => void;
   onHeightChange?: (height: number) => void;
 };
@@ -50,12 +56,16 @@ export function ObjectOptionsSheet({
   kind,
   colorKey,
   fontSize,
+  fontWeight,
+  fontStyle,
   bottomOffset,
   doneLabel,
   doneHint,
   showScrim = true,
   onColorChange,
   onFontSizeChange,
+  onFontWeightChange,
+  onFontStyleChange,
   onDone,
   onHeightChange,
 }: ObjectOptionsSheetProps) {
@@ -209,6 +219,54 @@ export function ObjectOptionsSheet({
               );
             })}
           </View>
+
+          <Text style={[styles.label, { color: theme.foreground }]}>Text style</Text>
+          <View style={styles.row}>
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityLabel="Bold"
+              accessibilityState={{ checked: fontWeight === 'bold' }}
+              onPress={() => onFontWeightChange(fontWeight === 'bold' ? 'normal' : 'bold')}
+              style={({ pressed }) => [
+                styles.chip,
+                { borderColor: fontWeight === 'bold' ? theme.primary : theme.border },
+                fontWeight === 'bold' && selectedChip,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.chipText,
+                  styles.boldGlyph,
+                  { color: fontWeight === 'bold' ? theme.surface : theme.foreground },
+                ]}
+              >
+                B
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityLabel="Italic"
+              accessibilityState={{ checked: fontStyle === 'italic' }}
+              onPress={() => onFontStyleChange(fontStyle === 'italic' ? 'normal' : 'italic')}
+              style={({ pressed }) => [
+                styles.chip,
+                { borderColor: fontStyle === 'italic' ? theme.primary : theme.border },
+                fontStyle === 'italic' && selectedChip,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.chipText,
+                  styles.italicGlyph,
+                  { color: fontStyle === 'italic' ? theme.surface : theme.foreground },
+                ]}
+              >
+                I
+              </Text>
+            </Pressable>
+          </View>
           </ScrollView>
         </View>
       </View>
@@ -232,5 +290,7 @@ const styles = StyleSheet.create({
   plus: { ...typography.bodyStrong, lineHeight: 20 },
   chip: { minWidth: touchTarget, minHeight: touchTarget, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
   chipText: { ...typography.bodyStrong },
+  boldGlyph: { fontWeight: 'bold' },
+  italicGlyph: { fontStyle: 'italic' },
   pressed: { opacity: 0.65 },
 });

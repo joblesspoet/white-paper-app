@@ -1,10 +1,12 @@
 # Task status
 
 ## Current phase
-Shapes and connectors.
+Selection capabilities and text styling.
 
 ## Status
 `implemented-unverified` — rectangle, ellipse, line, and line/arrow/elbow connector objects are implemented with canvas-space geometry, Skia rendering, drag creation, movement, deletion, and command-based undo/redo. Shape and connector options expose color, fill, border/stroke width, and connector style. Pure verification and typecheck pass; simulator touch testing and lint remain unavailable in this environment. Each board mutation is a create, update, delete, or batched command that knows how to apply and revert itself; the history stores commands instead of document snapshots. The undo and redo stacks are bounded at 100 entries, a new edit clears redo, and empty gestures record nothing. Toolbar undo/redo use arrow-return SVG icons with disabled states, action labels, and accessibility hints. Pen, text, and the shared shape palette expose the same 16 presets, sticky notes expose 15 pastels, and every tool now has a full-spectrum custom colour picker for anything the presets miss. The text and sticky-note slice already present in this tree continues to use the same chronological history. Typecheck, the pure-logic checks, and the iOS bundle pass; touch interaction could not be exercised in this environment (see Verification).
+
+Selection and editing are capability-aware: text and sticky notes expose text editing plus colour, size, bold, and italic style, shapes and connectors expose style and delete only, and ink is not selectable. The selection bar is icon-based and anchored to the selected object.
 
 ## Completed slices
 - Expo Router stack with Home, Editor, and Settings routes.
@@ -37,21 +39,23 @@ Shapes and connectors.
   - one commit path for `Done`, outside tap, tool change, title field, back, and blur;
   - empty objects are discarded instead of committed (an existing object whose text is cleared is deleted, undoably);
   - text colour (light/dark variants) and text size, sticky pastels with `#134E4A` note text;
-  - Select mode: touch selects, drag moves with the grab offset preserved, a tap on the selected object enters editing, and a selection bar offers `Edit` and `Delete`;
-  - the viewport pans (never zooms) when the keyboard appears so the edited object stays above the keyboard and the style sheet.
+  - Select mode: touch selects, drag moves with the grab offset preserved, a tap on the selected object enters editing, and a selection bar offers `Edit`, `Style`, and `Delete` icons;
+  - capabilities drive the actions: text and sticky notes expose text editing plus style, shapes and connectors expose style and delete only, and ink strokes are not selectable;
+   - text style includes colour, size, bold, and italic for both new and existing objects; style changes on existing objects go through `object.update` so they undo like every other edit;
+   - the viewport pans (never zooms) when the keyboard appears so the edited object stays above the keyboard and the style sheet.
 - Interactive controls use accessibility labels and 44pt minimum targets.
 
 ## Files changed
 - `src/canvas/history.ts` — command-based undo/redo: create/update/delete/batch entries, transient gesture batching and move coalescing, bounded stacks, redo clearing, stack predicates, and next-action labels.
-- `src/canvas/document.ts` — shape and connector object model, creation, geometry-aware hit testing, styling, and command integration alongside ink/text/sticky objects; `prepareDocumentCommand` builds inverse commands for all object mutations.
+- `src/canvas/document.ts` — shape and connector object model, creation, geometry-aware hit testing, styling, and command integration alongside ink/text/sticky objects; text weight/slant are stored and measured, and `prepareDocumentCommand` builds inverse commands for all object mutations.
 - `src/canvas/shapes.ts` — pure drag geometry, elbow routing, arrowheads, polyline hit testing, and stroke defaults.
 - `src/components/CanvasViewport.tsx` — shape/connector gestures and Skia rendering at all viewport scales.
 - `src/components/ShapeOptionsSheet.tsx` — shape type, fill, border color, connector style, and stroke controls.
 - `src/components/InkOptionsSheet.tsx` — pen and highlighter show the full theme-aware palette plus a custom-colour swatch and inline picker; the sheet scrolls on short screens.
-- `src/components/ObjectOptionsSheet.tsx` — text and sticky sheets share the same palette, custom swatch, and picker.
+- `src/components/ObjectOptionsSheet.tsx` — text and sticky sheets share the same palette, custom swatch, picker, text size, and bold/italic controls.
 - `src/components/ColorPicker.tsx` — HSV saturation/value field and hue strip built on `react-native-svg`, with a live hex readout and contrast warning.
-- `src/components/icons.tsx` — `UndoIcon` and `RedoIcon` use the standard arrow-return shapes.
-- `app/editor.tsx` — toolbar uses the new icons, disabled styling, and command-aware accessibility hints; selected pen colour remaps on theme changes.
+- `src/components/icons.tsx` — `UndoIcon` and `RedoIcon` use the standard arrow-return shapes; `EditIcon`, `StyleIcon`, and `TrashIcon` supply the selection actions.
+- `app/editor.tsx` — toolbar uses the new icons, disabled styling, and command-aware accessibility hints; selected pen colour remaps on theme changes; selection actions are capability-aware and the Style action edits text weight/slant or shape/connector properties.
 - `scripts/verify-history.mts`, `scripts/verify-objects.mts` (new/updated) and `package.json` — command-history, drag-coalescing, palette, contrast, and stack checks.
 - `docs/task-status.md` — this update.
 

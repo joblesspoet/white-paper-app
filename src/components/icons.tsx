@@ -188,6 +188,17 @@ export function EditIcon({ size = 24, color = colors.foreground }: IconProps) {
   );
 }
 
+export function StyleIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M4 7h16M4 12h16M4 17h16" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      <Circle cx={9} cy={7} r={2} fill={color} />
+      <Circle cx={15} cy={12} r={2} fill={color} />
+      <Circle cx={9} cy={17} r={2} fill={color} />
+    </Svg>
+  );
+}
+
 export function TrashIcon({ size = 24, color = colors.foreground }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

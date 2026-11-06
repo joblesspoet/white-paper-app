@@ -174,11 +174,20 @@ export const DEFAULT_CONNECTOR_STYLE: ConnectorStyle = 'arrow';
 
 // ------------------------------------------------------------ object model
 
+export type TextWeight = 'normal' | 'bold';
+export type TextSlant = 'normal' | 'italic';
+
 export type ObjectStylePatch = {
   colorKey?: string;
   fontSize?: number;
+  fontWeight?: TextWeight;
+  fontStyle?: TextSlant;
   fillKey?: string | null;
   strokeWidth?: number;
+  /** Change a shape's geometry kind (rectangle, ellipse, line). */
+  shape?: ShapeKind;
+  /** Change a connector's routing style (line, arrow, elbow). */
+  style?: ConnectorStyle;
 };
 
 type CanvasObjectBase = {
@@ -202,12 +211,16 @@ export type TextObject = CanvasObjectBase & {
   text: string;
   fontSize: number;
   colorKey: string;
+  fontWeight?: TextWeight;
+  fontStyle?: TextSlant;
 };
 export type StickyObject = CanvasObjectBase & {
   type: 'sticky';
   text: string;
   fontSize: number;
   colorKey: string;
+  fontWeight?: TextWeight;
+  fontStyle?: TextSlant;
 };
 export type ShapeObject = CanvasObjectBase &
   ShapeGeometry & {
@@ -265,10 +278,14 @@ export function measureTextBlock(
   text: string,
   fontSize: number,
   width: number,
+  fontWeight: TextWeight = 'normal',
+  fontStyle: TextSlant = 'normal',
 ): { lines: number; height: number } {
   'worklet';
   const usable = Math.max(fontSize, width - OBJECT_PADDING * 2);
-  const perLine = Math.max(1, Math.floor(usable / (fontSize * AVG_GLYPH_WIDTH_RATIO)));
+  // Bold glyphs are wider; italic is close enough to keep the same ratio.
+  const glyphRatio = AVG_GLYPH_WIDTH_RATIO * (fontWeight === 'bold' ? 1.08 : 1) * (fontStyle === 'italic' ? 1.02 : 1);
+  const perLine = Math.max(1, Math.floor(usable / (fontSize * glyphRatio)));
   const lines = text.length === 0
     ? 1
     : text.split('\n').reduce((total, line) => total + Math.max(1, Math.ceil(line.length / perLine)), 0);
@@ -281,6 +298,8 @@ export type CreateObjectInput = {
   point: Point;
   colorKey?: string;
   fontSize?: number;
+  fontWeight?: TextWeight;
+  fontStyle?: TextSlant;
 };
 
 export function createTextObject({
@@ -288,8 +307,10 @@ export function createTextObject({
   point,
   colorKey = DEFAULT_TEXT_COLOR,
   fontSize = DEFAULT_TEXT_FONT_SIZE,
+  fontWeight = 'normal',
+  fontStyle = 'normal',
 }: CreateObjectInput): TextObject {
-  const { height } = measureTextBlock('', fontSize, TEXT_WIDTH);
+  const { height } = measureTextBlock('', fontSize, TEXT_WIDTH, fontWeight, fontStyle);
   return {
     id,
     type: 'text',
@@ -301,6 +322,8 @@ export function createTextObject({
     rotation: 0,
     colorKey,
     fontSize,
+    fontWeight,
+    fontStyle,
   };
 }
 
@@ -309,6 +332,8 @@ export function createStickyObject({
   point,
   colorKey = DEFAULT_STICKY_COLOR,
   fontSize = DEFAULT_STICKY_FONT_SIZE,
+  fontWeight = 'normal',
+  fontStyle = 'normal',
 }: CreateObjectInput): StickyObject {
   return {
     id,
@@ -321,6 +346,8 @@ export function createStickyObject({
     rotation: 0,
     colorKey,
     fontSize,
+    fontWeight,
+    fontStyle,
   };
 }
 
@@ -409,39 +436,66 @@ export function withObjectText(object: CanvasObject, text: string): CanvasObject
   return {
     ...object,
     text,
-    height: measureTextBlock(text, object.fontSize, object.width).height,
+    height: measureTextBlock(text, object.fontSize, object.width, object.fontWeight, object.fontStyle).height,
   };
 }
 
-/** Apply colour and/or size, keeping the text hit box in step with the text. */
+/** Apply colour, size, weight, and slant, keeping the text hit box in step. */
 export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): CanvasObject {
   const colorKey = patch.colorKey ?? object.colorKey;
   if (object.type === 'text') {
     const fontSize = patch.fontSize ?? object.fontSize;
-    if (colorKey === object.colorKey && fontSize === object.fontSize) return object;
+    const fontWeight = patch.fontWeight ?? object.fontWeight ?? 'normal';
+    const fontStyle = patch.fontStyle ?? object.fontStyle ?? 'normal';
+    if (
+      colorKey === object.colorKey &&
+      fontSize === object.fontSize &&
+      fontWeight === (object.fontWeight ?? 'normal') &&
+      fontStyle === (object.fontStyle ?? 'normal')
+    ) {
+      return object;
+    }
     return {
       ...object,
       colorKey,
       fontSize,
-      height: measureTextBlock(object.text, fontSize, object.width).height,
+      fontWeight,
+      fontStyle,
+      height: measureTextBlock(object.text, fontSize, object.width, fontWeight, fontStyle).height,
     };
   }
   if (object.type === 'sticky') {
     const fontSize = patch.fontSize ?? object.fontSize;
-    if (colorKey === object.colorKey && fontSize === object.fontSize) return object;
-    return { ...object, colorKey, fontSize };
-  }
-  if (object.type === 'shape') {
-    const fillKey = patch.fillKey !== undefined ? patch.fillKey : object.fillKey;
-    const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
-    if (colorKey === object.colorKey && fillKey === object.fillKey && strokeWidth === object.strokeWidth) {
+    const fontWeight = patch.fontWeight ?? object.fontWeight ?? 'normal';
+    const fontStyle = patch.fontStyle ?? object.fontStyle ?? 'normal';
+    if (
+      colorKey === object.colorKey &&
+      fontSize === object.fontSize &&
+      fontWeight === (object.fontWeight ?? 'normal') &&
+      fontStyle === (object.fontStyle ?? 'normal')
+    ) {
       return object;
     }
-    return { ...object, colorKey, fillKey: object.shape === 'line' ? null : fillKey, strokeWidth };
+    return { ...object, colorKey, fontSize, fontWeight, fontStyle };
   }
+  if (object.type === 'shape') {
+    const shape = patch.shape ?? object.shape;
+    const fillKey = patch.fillKey !== undefined ? patch.fillKey : object.fillKey;
+    const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
+    if (
+      colorKey === object.colorKey &&
+      shape === object.shape &&
+      fillKey === object.fillKey &&
+      strokeWidth === object.strokeWidth
+    ) {
+      return object;
+    }
+    return { ...object, shape, colorKey, fillKey: shape === 'line' ? null : fillKey, strokeWidth };
+  }
+  const style = patch.style ?? object.style;
   const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
-  if (colorKey === object.colorKey && strokeWidth === object.strokeWidth) return object;
-  return { ...object, colorKey, strokeWidth };
+  if (colorKey === object.colorKey && style === object.style && strokeWidth === object.strokeWidth) return object;
+  return { ...object, style, colorKey, strokeWidth };
 }
 
 // --------------------------------------------------------------- rendering
@@ -649,8 +703,12 @@ export type DocumentCommand =
       text?: string;
       colorKey?: string;
       fontSize?: number;
+      fontWeight?: TextWeight;
+      fontStyle?: TextSlant;
       fillKey?: string | null;
       strokeWidth?: number;
+      shape?: ShapeKind;
+      style?: ConnectorStyle;
     }
   | { type: 'object.move'; id: string; x: number; y: number }
   | { type: 'object.delete'; id: string };
@@ -687,8 +745,12 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
         return withObjectStyle(next, {
           colorKey: command.colorKey,
           fontSize: command.fontSize,
+          fontWeight: command.fontWeight,
+          fontStyle: command.fontStyle,
           fillKey: command.fillKey,
           strokeWidth: command.strokeWidth,
+          shape: command.shape,
+          style: command.style,
         });
       });
     case 'object.move':
@@ -923,6 +985,8 @@ export function editingCommit(object: CanvasObject, isNew: boolean): DocumentCom
     text,
     colorKey: object.colorKey,
     fontSize: object.fontSize,
+    fontWeight: object.fontWeight,
+    fontStyle: object.fontStyle,
   };
 }
 
