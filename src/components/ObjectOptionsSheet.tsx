@@ -1,4 +1,12 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import {
   SIZE_LABELS,
@@ -6,9 +14,12 @@ import {
   STICKY_FONT_SIZES,
   TEXT_COLORS,
   TEXT_FONT_SIZES,
+  isCustomColor,
+  stickyColorValue,
   textColorValue,
 } from '../canvas/document';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { ColorPicker } from './ColorPicker';
 
 type ObjectOptionsSheetProps = {
   theme: ThemeColors;
@@ -52,6 +63,15 @@ export function ObjectOptionsSheet({
   const title = isSticky ? 'Sticky note' : 'Text';
   const sizes = isSticky ? STICKY_FONT_SIZES : TEXT_FONT_SIZES;
   const selectedChip = { backgroundColor: theme.primary, borderColor: theme.primary };
+  const { height: windowHeight } = useWindowDimensions();
+  const [customOpen, setCustomOpen] = useState(false);
+  const customColor = isCustomColor(colorKey);
+  const currentColor = customColor
+    ? colorKey
+    : isSticky
+      ? stickyColorValue(colorKey)
+      : textColorValue(colorKey, dark);
+  const maxSheetHeight = Math.max(240, windowHeight - bottomOffset - spacing.lg);
 
   return (
     <>
@@ -70,6 +90,12 @@ export function ObjectOptionsSheet({
           onLayout={(event) => onHeightChange?.(event.nativeEvent.layout.height)}
           style={[styles.sheet, { backgroundColor: theme.surface, borderColor: theme.border }]}
         >
+          <ScrollView
+            style={{ maxHeight: maxSheetHeight }}
+            contentContainerStyle={styles.sheetContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.foreground }]}>{title} options</Text>
             <Pressable
@@ -124,7 +150,39 @@ export function ObjectOptionsSheet({
                     </Pressable>
                   );
                 })}
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityLabel="Custom colour"
+              accessibilityState={{ selected: customColor }}
+              onPress={() => setCustomOpen((open) => !open)}
+              style={({ pressed }) => [
+                styles.swatch,
+                { borderColor: customColor ? theme.primary : theme.border },
+                pressed && styles.pressed,
+              ]}
+            >
+              <View
+                style={[
+                  styles.swatchFill,
+                  styles.swatchCenter,
+                  { backgroundColor: customColor ? colorKey : theme.muted },
+                ]}
+              >
+                {!customColor && <Text style={[styles.plus, { color: theme.foreground }]}>+</Text>}
+              </View>
+            </Pressable>
           </View>
+
+          {customOpen && (
+            <ColorPicker
+              theme={theme}
+              value={currentColor}
+              background={isSticky ? currentColor : theme.surface}
+              checkContrast={!isSticky}
+              onChange={onColorChange}
+              onClose={() => setCustomOpen(false)}
+            />
+          )}
 
           <Text style={[styles.label, { color: theme.foreground }]}>Text size</Text>
           <View style={styles.row}>
@@ -151,6 +209,7 @@ export function ObjectOptionsSheet({
               );
             })}
           </View>
+          </ScrollView>
         </View>
       </View>
     </>
@@ -159,7 +218,8 @@ export function ObjectOptionsSheet({
 
 const styles = StyleSheet.create({
   layer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: spacing.md },
-  sheet: { width: '100%', maxWidth: 460, borderWidth: 1, borderRadius: radii.md, padding: spacing.md, gap: spacing.sm },
+  sheet: { width: '100%', maxWidth: 460, borderWidth: 1, borderRadius: radii.md, padding: spacing.md },
+  sheetContent: { gap: spacing.sm },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { ...typography.bodyStrong },
   done: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: spacing.sm },
@@ -168,6 +228,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, alignItems: 'center' },
   swatch: { width: touchTarget, height: touchTarget, borderRadius: radii.sm, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   swatchFill: { width: 26, height: 26, borderRadius: 13 },
+  swatchCenter: { alignItems: 'center', justifyContent: 'center' },
+  plus: { ...typography.bodyStrong, lineHeight: 20 },
   chip: { minWidth: touchTarget, minHeight: touchTarget, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
   chipText: { ...typography.bodyStrong },
   pressed: { opacity: 0.65 },

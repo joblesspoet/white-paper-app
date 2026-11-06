@@ -155,3 +155,33 @@ export function StickyIcon({ size = 24, color = colors.foreground }: IconProps) 
     </Svg>
   );
 }
+
+export function UndoIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M9 14 4 9l5-5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path
+        d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+export function RedoIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="m15 14 5-5-5-5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path
+        d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}

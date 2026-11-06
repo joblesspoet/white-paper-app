@@ -1,5 +1,12 @@
-import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState, type ReactNode } from 'react';
+import {
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import {
   ERASER_SIZES,
@@ -7,13 +14,16 @@ import {
   INK_WIDTHS,
   type FreehandTool,
 } from '../canvas/ink';
-import { colors, radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { isCustomColor, PEN_COLORS, textColorValue } from '../canvas/document';
+import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { ColorPicker } from './ColorPicker';
 import { EraserIcon, HighlighterIcon, PenIcon } from './icons';
 
 export type InkSheetTool = FreehandTool | 'eraser';
 
 type InkOptionsSheetProps = {
   theme: ThemeColors;
+  dark: boolean;
   tool: InkSheetTool;
   color: string;
   width: number;
@@ -28,21 +38,13 @@ type InkOptionsSheetProps = {
   onClose: () => void;
 };
 
-const PALETTE = [
-  { name: 'Ink', value: colors.foreground },
-  { name: 'Teal', value: colors.primary },
-  { name: 'Orange', value: colors.accent },
-  { name: 'Blue', value: '#2563EB' },
-  { name: 'Red', value: colors.destructive },
-  { name: 'Amber', value: '#D97706' },
-] as const;
-
 /**
  * Compact ink options sheet: a small popover above the dock so the canvas keeps
  * most of the screen, with every choice visible instead of hidden in menus.
  */
 export function InkOptionsSheet({
   theme,
+  dark,
   tool,
   color,
   width,
@@ -56,6 +58,10 @@ export function InkOptionsSheet({
   onEraserRadiusChange,
   onClose,
 }: InkOptionsSheetProps) {
+  const { height: windowHeight } = useWindowDimensions();
+  const [customOpen, setCustomOpen] = useState(false);
+  const customColor = isCustomColor(color);
+  const maxSheetHeight = Math.max(240, windowHeight - bottomOffset - spacing.lg);
   const title = tool === 'eraser' ? 'Eraser' : tool === 'highlighter' ? 'Highlighter' : 'Pen';
   const selectedChip = { backgroundColor: theme.primary, borderColor: theme.primary };
   const selectedText = { color: theme.surface };
@@ -74,6 +80,12 @@ export function InkOptionsSheet({
           accessibilityLabel={`${title} options`}
           style={[styles.sheet, { backgroundColor: theme.surface, borderColor: theme.border }]}
         >
+          <ScrollView
+            style={{ maxHeight: maxSheetHeight }}
+            contentContainerStyle={styles.sheetContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.foreground }]}>{title} options</Text>
             <Pressable
@@ -144,26 +156,58 @@ export function InkOptionsSheet({
 
               <Text style={[styles.label, { color: theme.foreground }]}>Color</Text>
               <View style={styles.row}>
-                {PALETTE.map((entry) => {
-                  const selected = color === entry.value;
+                {PEN_COLORS.map((entry) => {
+                  const value = textColorValue(entry.key, dark);
+                  const selected = color === value;
                   return (
                     <Pressable
-                      key={entry.name}
+                      key={entry.key}
                       accessibilityRole="radio"
                       accessibilityLabel={`Ink color ${entry.name}`}
                       accessibilityState={{ selected }}
-                      onPress={() => onColorChange(entry.value)}
+                      onPress={() => onColorChange(value)}
                       style={({ pressed }) => [
                         styles.swatch,
                         { borderColor: selected ? theme.primary : theme.border },
                         pressed && styles.pressed,
                       ]}
                     >
-                      <View style={[styles.swatchFill, { backgroundColor: entry.value }]} />
+                      <View style={[styles.swatchFill, { backgroundColor: value }]} />
                     </Pressable>
                   );
                 })}
+                <Pressable
+                  accessibilityRole="radio"
+                  accessibilityLabel="Custom ink colour"
+                  accessibilityState={{ selected: customColor }}
+                  onPress={() => setCustomOpen((open) => !open)}
+                  style={({ pressed }) => [
+                    styles.swatch,
+                    { borderColor: customColor ? theme.primary : theme.border },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.swatchFill,
+                      styles.swatchCenter,
+                      { backgroundColor: customColor ? color : theme.muted },
+                    ]}
+                  >
+                    {!customColor && <Text style={[styles.plus, { color: theme.foreground }]}>+</Text>}
+                  </View>
+                </Pressable>
               </View>
+
+              {customOpen && (
+                <ColorPicker
+                  theme={theme}
+                  value={color}
+                  background={theme.surface}
+                  onChange={onColorChange}
+                  onClose={() => setCustomOpen(false)}
+                />
+              )}
 
               <Text style={[styles.label, { color: theme.foreground }]}>Width</Text>
               <View style={styles.row}>
@@ -216,6 +260,7 @@ export function InkOptionsSheet({
               </View>
             </>
           )}
+          </ScrollView>
         </View>
       </View>
     </>
@@ -256,7 +301,8 @@ function ToolChoice({
 
 const styles = StyleSheet.create({
   layer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: spacing.md },
-  sheet: { width: '100%', maxWidth: 460, borderWidth: 1, borderRadius: radii.md, padding: spacing.md, gap: spacing.sm },
+  sheet: { width: '100%', maxWidth: 460, borderWidth: 1, borderRadius: radii.md, padding: spacing.md },
+  sheetContent: { gap: spacing.sm },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { ...typography.bodyStrong },
   done: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: spacing.sm },
@@ -267,6 +313,8 @@ const styles = StyleSheet.create({
   toolChoiceText: { ...typography.caption },
   swatch: { width: touchTarget, height: touchTarget, borderRadius: radii.sm, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   swatchFill: { width: 26, height: 26, borderRadius: 13 },
+  swatchCenter: { alignItems: 'center', justifyContent: 'center' },
+  plus: { ...typography.bodyStrong, lineHeight: 20 },
   chip: { minWidth: touchTarget, minHeight: touchTarget, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
   chipText: { ...typography.caption },
   widthPreview: { width: 24, borderRadius: 6 },

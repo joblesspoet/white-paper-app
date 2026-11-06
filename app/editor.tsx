@@ -31,13 +31,20 @@ import {
   objectFill,
   objectScreenRect,
   objectTextColor,
+  textColorKeyForValue,
+  textColorValue,
   textLineHeight,
   withObjectStyle,
   withObjectText,
   type CanvasObject,
   type DocumentCommand,
 } from '../src/canvas/document';
-import { canRedo as historyCanRedo, canUndo as historyCanUndo } from '../src/canvas/history';
+import {
+  canRedo as historyCanRedo,
+  canUndo as historyCanUndo,
+  nextRedoLabel,
+  nextUndoLabel,
+} from '../src/canvas/history';
 import type { FreehandTool } from '../src/canvas/ink';
 import type { Point, Viewport } from '../src/canvas/viewport';
 import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
@@ -47,9 +54,11 @@ import {
   HighlighterIcon,
   MoreIcon,
   PenIcon,
+  RedoIcon,
   SelectIcon,
   StickyIcon,
   TextIcon,
+  UndoIcon,
 } from '../src/components/icons';
 import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
 import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
@@ -89,6 +98,8 @@ export default function BoardEditorScreen() {
   const document = history.present;
   const canUndo = historyCanUndo(history);
   const canRedo = historyCanRedo(history);
+  const undoLabel = nextUndoLabel(history);
+  const redoLabel = nextRedoLabel(history);
 
   const [activeTool, setActiveTool] = useState<InkTool>('select');
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
@@ -120,11 +131,14 @@ export default function BoardEditorScreen() {
   const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [viewportRequest, setViewportRequest] = useState<ViewportRequest | null>(null);
 
-  // Keep the default ink legible when the system theme changes without
-  // overwriting a color the user picked.
+  // Keep the selected ink colour readable when the system theme changes without
+  // overwriting a custom colour that is not part of the palette.
   useEffect(() => {
-    setColor((current) => current === colors.foreground || current === colors.darkForeground ? theme.foreground : current);
-  }, [theme.foreground]);
+    setColor((current) => {
+      const key = textColorKeyForValue(current);
+      return key ? textColorValue(key, dark) : current;
+    });
+  }, [dark]);
 
   useEffect(() => () => {
     if (viewportTimer.current) clearTimeout(viewportTimer.current);
@@ -343,8 +357,8 @@ export default function BoardEditorScreen() {
           style={[styles.title, { color: theme.foreground }]}
         />
         <View style={styles.actions}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Undo" accessibilityState={{ disabled: !canUndo }} disabled={!canUndo} onPress={undo} style={styles.action}><Text style={[styles.actionText, { color: theme.foreground }]}>↶</Text></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Redo" accessibilityState={{ disabled: !canRedo }} disabled={!canRedo} onPress={redo} style={styles.action}><Text style={[styles.actionText, { color: theme.foreground }]}>↷</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Undo" accessibilityHint={canUndo ? (undoLabel ? `Undo ${undoLabel}` : 'Reverts the last change') : 'Nothing to undo'} accessibilityState={{ disabled: !canUndo }} disabled={!canUndo} onPress={undo} style={[styles.action, !canUndo && styles.actionDisabled]}><UndoIcon size={22} color={theme.foreground} /></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Redo" accessibilityHint={canRedo ? (redoLabel ? `Redo ${redoLabel}` : 'Reapplies the last undone change') : 'Nothing to redo'} accessibilityState={{ disabled: !canRedo }} disabled={!canRedo} onPress={redo} style={[styles.action, !canRedo && styles.actionDisabled]}><RedoIcon size={22} color={theme.foreground} /></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="More board options" style={styles.iconButton}><MoreIcon color={theme.foreground} /></Pressable>
         </View>
       </View>
@@ -476,6 +490,7 @@ export default function BoardEditorScreen() {
       {!editing && inkOptionsVisible && (
         <InkOptionsSheet
           theme={theme}
+          dark={dark}
           tool={sheetTool}
           color={color}
           width={strokeWidth}
@@ -543,7 +558,7 @@ const styles = StyleSheet.create({
   title: { flex: 1, ...typography.bodyStrong, paddingVertical: spacing.sm },
   actions: { flexDirection: 'row', alignItems: 'center' },
   action: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  actionText: { fontSize: 28 },
+  actionDisabled: { opacity: 0.3 },
   workspace: { flex: 1, flexDirection: 'row' },
   rail: { width: 84, borderRightWidth: 1, alignItems: 'center', paddingTop: spacing.md, gap: spacing.xs },
   canvas: { flex: 1, margin: spacing.md, borderWidth: 1, borderRadius: radii.md, overflow: 'hidden' },

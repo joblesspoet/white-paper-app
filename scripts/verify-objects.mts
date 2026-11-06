@@ -2,11 +2,13 @@
 
 import assert from 'node:assert/strict';
 
-import { contrastRatio, isReadableOn } from '../src/canvas/colors.ts';
+import { contrastRatio, hexToHsv, hsvToHex, isHexColor, isReadableOn, readableTextColor } from '../src/canvas/colors.ts';
 import {
   DEFAULT_STICKY_FONT_SIZE,
   DEFAULT_TEXT_FONT_SIZE,
   EMPTY_DOCUMENT,
+  PEN_COLORS,
+  SHAPE_COLORS,
   STICKY_COLORS,
   STICKY_TEXT_COLOR,
   TEXT_COLORS,
@@ -18,6 +20,7 @@ import {
   documentReducer,
   editingCommit,
   findObject,
+  isCustomColor,
   keepObjectAboveKeyboard,
   keyboardOverlap,
   measureTextBlock,
@@ -25,6 +28,8 @@ import {
   objectFill,
   objectScreenRect,
   objectTextColor,
+  textColorKeyForValue,
+  textColorValue,
   textLineHeight,
   withObjectStyle,
   withObjectText,
@@ -162,6 +167,41 @@ for (const entry of TEXT_COLORS) {
 }
 assert.equal(objectFill(textObject()), undefined, 'text objects have no fill');
 
+// ------------------------------------------------------- custom colours
+
+// A custom hex is stored verbatim and survives theme changes unchanged.
+assert.equal(isHexColor('#FF00AA'), true);
+assert.equal(isHexColor('FF00AA'), false, 'the leading hash is required');
+assert.equal(isCustomColor('#FF00AA'), true);
+assert.equal(isCustomColor('teal'), false);
+assert.equal(textColorValue('#FF00AA', false), '#FF00AA');
+assert.equal(textColorValue('#FF00AA', true), '#FF00AA');
+assert.equal(textColorKeyForValue('#FF00AA'), null, 'custom colours are never remapped');
+
+const customText = { ...textObject(), colorKey: '#FF00AA' } as CanvasObject;
+assert.equal(objectTextColor(customText, false), '#FF00AA');
+assert.equal(objectTextColor(customText, true), '#FF00AA');
+
+// A custom note fill keeps its own ink legible instead of forcing teal on black.
+const darkNote = { ...stickyObject(), colorKey: '#111827' } as CanvasObject;
+assert.equal(objectFill(darkNote), '#111827');
+assert.equal(objectTextColor(darkNote, false), '#FFFFFF');
+const lightNote = { ...stickyObject(), colorKey: '#FFF7CC' } as CanvasObject;
+assert.equal(objectFill(lightNote), '#FFF7CC');
+assert.equal(objectTextColor(lightNote, false), STICKY_TEXT_COLOR);
+assert.ok(
+  isReadableOn(objectTextColor(darkNote, true), objectFill(darkNote)!),
+  'custom note ink must clear 4.5:1',
+);
+
+// The picker's HSV model round-trips the primaries exactly.
+assert.equal(hsvToHex(hexToHsv('#FF0000')), '#FF0000');
+assert.equal(hsvToHex(hexToHsv('#00FF00')), '#00FF00');
+assert.equal(hsvToHex(hexToHsv('#0000FF')), '#0000FF');
+assert.equal(hsvToHex({ h: 0, s: 0, v: 0 }), '#000000');
+assert.equal(hsvToHex({ h: 210, s: 0, v: 1 }), '#FFFFFF');
+assert.equal(readableTextColor('#111827', ['#134E4A', '#FFFFFF']), '#FFFFFF');
+
 // ------------------------------------------------------------- hit testing
 
 const lower = { ...stickyObject('lower'), id: 'lower', x: 0, y: 0 };
@@ -243,6 +283,19 @@ assert.equal(history.past.length, 1, 'the whole drag is one entry');
 assert.equal(findObject(history.present, 'text-1')?.x, 80);
 history = documentReducer(history, { type: 'undo' });
 assert.equal(findObject(history.present, 'text-1')?.x, dragged.x, 'undo returns the object to where the drag started');
+
+// A long drag is folded into one pending command, not one per pointer sample.
+let longDrag = createDocumentHistory(applyCommand(EMPTY_DOCUMENT, { type: 'object.insert', object: dragged }));
+for (let step = 1; step <= 50; step += 1) {
+  longDrag = run(longDrag, { type: 'object.move', id: 'text-1', x: 80 + step, y: 50 + step }, true);
+}
+assert.equal(longDrag.pending?.length, 1, 'consecutive moves of one object are coalesced');
+longDrag = documentReducer(longDrag, { type: 'commit' });
+assert.equal(longDrag.past.length, 1);
+longDrag = documentReducer(longDrag, { type: 'undo' });
+assert.equal(findObject(longDrag.present, 'text-1')?.x, dragged.x);
+longDrag = documentReducer(longDrag, { type: 'redo' });
+assert.equal(findObject(longDrag.present, 'text-1')?.x, 130);
 
 // Touching an object without moving it records nothing and keeps redo available.
 const tapped = textObject('tap');
@@ -357,5 +410,9 @@ close(tall.y + tallViewport.y + tall.height, canvas.y + canvas.height - keyboard
 assert.equal(DEFAULT_TEXT_FONT_SIZE, 18);
 assert.equal(freshSticky.text, '');
 assert.ok(STICKY_COLORS.length >= 3, 'stickies ship with a usable colour set');
+assert.ok(TEXT_COLORS.length >= 12, 'the shared canvas palette is complete');
+assert.equal(PEN_COLORS, TEXT_COLORS, 'pen and text expose the same colours');
+assert.equal(SHAPE_COLORS, TEXT_COLORS, 'shapes will expose the same colours');
+assert.ok(STICKY_COLORS.length >= 12, 'sticky notes ship with a full pastel range');
 
 console.log('object checks passed: creation, measuring, contrast, hit testing, commands, empty objects, keyboard panning, undo/redo');

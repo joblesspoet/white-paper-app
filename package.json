@@ -28,9 +28,10 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:viewport && npm run test:ink && npm run test:objects",
+    "test": "npm run test:viewport && npm run test:ink && npm run test:history && npm run test:objects",
     "test:viewport": "node --no-warnings --experimental-strip-types scripts/verify-viewport.mts",
     "test:ink": "node --no-warnings --experimental-strip-types scripts/verify-ink.mts",
+    "test:history": "node --no-warnings --experimental-strip-types scripts/verify-history.mts",
     "test:objects": "node --no-warnings --experimental-strip-types scripts/verify-objects.mts"
   },
   "private": true
