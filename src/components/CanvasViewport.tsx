@@ -1,4 +1,4 @@
-import { Canvas, Circle, Group, Path, Rect, Skia } from '@shopify/react-native-skia';
+import { Canvas, Circle, Group, Oval, Path, Rect, Skia } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -10,14 +10,29 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import {
+  DEFAULT_CONNECTOR_STROKE_WIDTH,
+  DEFAULT_SHAPE_STROKE_WIDTH,
+  MIN_SHAPE_SIZE_SCREEN,
   OBJECT_PADDING,
+  createConnectorObject,
+  createShapeObject,
+  geometryFromPoints,
+  isGeometricObject,
+  isTextualObject,
   objectAtPoint,
   objectFill,
   objectTextColor,
+  stickyColorValue,
+  textColorValue,
   textLineHeight,
   type CanvasDocument,
   type CanvasObject,
+  type ConnectorObject,
+  type ConnectorStyle,
   type DocumentCommand,
+  type ShapeKind,
+  type ShapeObject,
+  type TextualObject,
 } from '../canvas/document';
 import {
   appendInkPoint,
@@ -29,6 +44,13 @@ import {
   type FreehandTool,
   type InkStroke,
 } from '../canvas/ink';
+import {
+  arrowHeadPathData,
+  arrowHeadSize,
+  connectorPolyline,
+  linePoints,
+  polylinePathData,
+} from '../canvas/shapes';
 import {
   IDENTITY_VIEWPORT,
   MAX_ZOOM,
@@ -43,7 +65,15 @@ import { colors, darkColors, radii, spacing, touchTarget, typography } from '../
 export { canvasToScreen, screenToCanvas } from '../canvas/viewport';
 export type { InkStroke } from '../canvas/ink';
 
-export type InkTool = 'select' | 'pen' | 'highlighter' | 'eraser' | 'text' | 'sticky';
+export type InkTool =
+  | 'select'
+  | 'pen'
+  | 'highlighter'
+  | 'eraser'
+  | 'text'
+  | 'sticky'
+  | 'shape'
+  | 'connector';
 export type ViewportState = Viewport;
 
 /** Minimum finger travel before a touch on an object counts as a drag, not a tap. */
@@ -59,6 +89,15 @@ type CanvasViewportProps = {
   width?: number;
   opacity?: number;
   eraserRadius?: number;
+  /** Shape tool defaults, applied to the next shape that is drawn. */
+  shapeKind?: ShapeKind;
+  shapeColorKey?: string;
+  shapeFillKey?: string | null;
+  shapeStrokeWidth?: number;
+  /** Connector tool defaults, applied to the next connector that is drawn. */
+  connectorStyle?: ConnectorStyle;
+  connectorColorKey?: string;
+  connectorStrokeWidth?: number;
   document: CanvasDocument;
   selectedObjectId?: string | null;
   /** Object currently open in the in-place text editor; it is hidden here. */
@@ -83,6 +122,13 @@ export function CanvasViewport({
   width = 4,
   opacity = 1,
   eraserRadius = DEFAULT_ERASER_RADIUS,
+  shapeKind = 'rectangle',
+  shapeColorKey = 'ink',
+  shapeFillKey = null,
+  shapeStrokeWidth = DEFAULT_SHAPE_STROKE_WIDTH,
+  connectorStyle = 'arrow',
+  connectorColorKey = 'ink',
+  connectorStrokeWidth = DEFAULT_CONNECTOR_STROKE_WIDTH,
   document,
   selectedObjectId = null,
   editingObjectId = null,
@@ -115,6 +161,10 @@ export function CanvasViewport({
   /** The stroke being drawn is local: it only enters the document on release. */
   const [activeStroke, setActiveStroke] = useState<InkStroke | null>(null);
   const activeStrokeRef = useRef<InkStroke | null>(null);
+  /** A shape or connector being dragged is previewed locally until release. */
+  const [draftObject, setDraftObject] = useState<ShapeObject | ConnectorObject | null>(null);
+  const draftObjectRef = useRef<ShapeObject | ConnectorObject | null>(null);
+  const draftStartRef = useRef<Point | null>(null);
   const [viewport, setViewport] = useState<Viewport>(startViewport);
   const lastViewportReport = useRef(0);
 
@@ -198,6 +248,64 @@ export function CanvasViewport({
     );
   }, [eraserRadius, onCommand]);
 
+  /**
+   * Shape and connector drags use the same lifecycle as ink: the object is
+   * local state until the finger lifts, then it becomes one insert command.
+   */
+  const beginShape = useCallback((point: Point, tool: 'shape' | 'connector') => {
+    const id = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const object = tool === 'shape'
+      ? createShapeObject({
+          id,
+          shape: shapeKind,
+          start: point,
+          end: point,
+          colorKey: shapeColorKey,
+          fillKey: shapeFillKey,
+          strokeWidth: shapeStrokeWidth,
+        })
+      : createConnectorObject({
+          id,
+          style: connectorStyle,
+          start: point,
+          end: point,
+          colorKey: connectorColorKey,
+          strokeWidth: connectorStrokeWidth,
+        });
+    draftStartRef.current = point;
+    draftObjectRef.current = object;
+    setDraftObject(object);
+  }, [
+    connectorColorKey,
+    connectorStrokeWidth,
+    connectorStyle,
+    shapeColorKey,
+    shapeFillKey,
+    shapeKind,
+    shapeStrokeWidth,
+  ]);
+
+  const updateShape = useCallback((point: Point) => {
+    const current = draftObjectRef.current;
+    const start = draftStartRef.current;
+    if (!current || !start) return;
+    const next = { ...current, ...geometryFromPoints(start, point) } as ShapeObject | ConnectorObject;
+    draftObjectRef.current = next;
+    setDraftObject(next);
+  }, []);
+
+  const finishShape = useCallback((currentScale: number) => {
+    const draft = draftObjectRef.current;
+    draftObjectRef.current = null;
+    draftStartRef.current = null;
+    setDraftObject(null);
+    if (!draft) return;
+    // A tap, or a drag too small to see, should not leave a speck on the board.
+    if (Math.hypot(draft.width, draft.height) * currentScale < MIN_SHAPE_SIZE_SCREEN) return;
+    const id = `${draft.type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    onCommand({ type: 'object.insert', object: { ...draft, id } });
+  }, [onCommand]);
+
   const touchCanvas = useCallback(() => { onCanvasTouch?.(); }, [onCanvasTouch]);
   const selectObject = useCallback((id: string | null) => { onObjectSelect?.(id); }, [onObjectSelect]);
   const editObject = useCallback((id: string) => { onObjectEdit?.(id); }, [onObjectEdit]);
@@ -228,6 +336,26 @@ export function CanvasViewport({
       runOnJS(addPoint)(point, MIN_POINT_DISTANCE_SCREEN / scale.value);
     })
     .onFinalize(() => { runOnJS(finishStroke)(); });
+
+  const shapeGesture = Gesture.Pan()
+    .enabled(activeTool === 'shape' || activeTool === 'connector')
+    .maxPointers(1)
+    .minDistance(0)
+    .onStart((event) => {
+      const point = screenToCanvas(
+        { x: event.x, y: event.y },
+        { x: offsetX.value, y: offsetY.value, scale: scale.value },
+      );
+      runOnJS(beginShape)(point, activeTool as 'shape' | 'connector');
+    })
+    .onUpdate((event) => {
+      const point = screenToCanvas(
+        { x: event.x, y: event.y },
+        { x: offsetX.value, y: offsetY.value, scale: scale.value },
+      );
+      runOnJS(updateShape)(point);
+    })
+    .onFinalize(() => { runOnJS(finishShape)(scale.value); });
 
   const eraseGesture = Gesture.Pan()
     .enabled(activeTool === 'eraser')
@@ -357,7 +485,9 @@ export function CanvasViewport({
         ? drawGesture
         : activeTool === 'text' || activeTool === 'sticky'
           ? objectTap
-          : selectGesture;
+          : activeTool === 'shape' || activeTool === 'connector'
+            ? shapeGesture
+            : selectGesture;
   const gesture = Gesture.Simultaneous(primaryGesture, pinchGesture);
 
   const transform = useDerivedValue(() => [
@@ -392,11 +522,21 @@ export function CanvasViewport({
                 strokeWidth={1.5}
               />
             )}
+            {draftObject && <GeometricObjectView object={draftObject} dark={dark} selected={false} selectionColor={theme.primary} />}
+            {document.objects.filter(isGeometricObject).map((object) => (
+              <GeometricObjectView
+                key={object.id}
+                object={object}
+                dark={dark}
+                selected={selectedObjectId === object.id}
+                selectionColor={theme.primary}
+              />
+            ))}
           </Group>
         </Canvas>
       </GestureDetector>
 
-      {document.objects.map((object) => (
+      {document.objects.filter(isTextualObject).map((object) => (
         <CanvasObjectView
           key={object.id}
           object={object}
@@ -447,7 +587,7 @@ function InkStrokeView({ stroke, dark }: { stroke: InkStroke; dark: boolean }) {
 }
 
 type CanvasObjectViewProps = {
-  object: CanvasObject;
+  object: TextualObject;
   dark: boolean;
   /** Theme-aware selection outline colour. */
   selectionColor: string;
@@ -491,6 +631,65 @@ function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offs
     >
       <Animated.Text style={[{ color: textColor }, text]}>{object.text}</Animated.Text>
     </Animated.View>
+  );
+}
+
+function GeometricObjectView({
+  object,
+  dark,
+  selected,
+  selectionColor,
+}: {
+  object: ShapeObject | ConnectorObject;
+  dark: boolean;
+  selected: boolean;
+  selectionColor: string;
+}) {
+  const color = object.type === 'connector'
+    ? textColorValue(object.colorKey, dark)
+    : textColorValue(object.colorKey, dark);
+  const connectorPoints = object.type === 'connector'
+    ? connectorPolyline(object.style, object.x, object.y, object.width, object.height, object.direction)
+    : null;
+  const linePointPair = object.type === 'shape' && object.shape === 'line'
+    ? linePoints(object.x, object.y, object.width, object.height, object.direction)
+    : null;
+  if (object.type === 'connector' || object.shape === 'line') {
+    const linePointsList = object.type === 'connector' ? connectorPoints! : [linePointPair!.start, linePointPair!.end];
+    const path = Skia.Path.MakeFromSVGString(polylinePathData(linePointsList)) ?? Skia.Path.Make();
+    const arrowPath = object.type === 'connector' && object.style === 'arrow'
+      ? Skia.Path.MakeFromSVGString(arrowHeadPathData(linePointsList, arrowHeadSize(object.strokeWidth)))
+      : null;
+    return (
+      <>
+        <Path path={path} color={selected ? selectionColor : color} style="stroke" strokeWidth={object.strokeWidth} strokeCap="round" strokeJoin="round" />
+        {arrowPath && <Path path={arrowPath} color={selected ? selectionColor : color} style="fill" />}
+      </>
+    );
+  }
+  if (object.shape === 'ellipse') {
+    return (
+      <Oval
+        x={object.x}
+        y={object.y}
+        width={object.width}
+        height={object.height}
+        color={object.fillKey ? stickyColorValue(object.fillKey) : (selected ? selectionColor : color)}
+        style={object.fillKey ? 'fill' : 'stroke'}
+        strokeWidth={object.strokeWidth}
+      />
+    );
+  }
+  return (
+    <Rect
+      x={object.x}
+      y={object.y}
+      width={object.width}
+      height={object.height}
+      color={object.fillKey ? stickyColorValue(object.fillKey) : (selected ? selectionColor : color)}
+      style={object.fillKey ? 'fill' : 'stroke'}
+      strokeWidth={object.strokeWidth}
+    />
   );
 }
 

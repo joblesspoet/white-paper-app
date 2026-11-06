@@ -1,10 +1,10 @@
 # Task status
 
 ## Current phase
-Undo and redo.
+Shapes and connectors.
 
 ## Status
-`implemented` — undo/redo is now command-based. Each board mutation is a create, update, delete, or batched command that knows how to apply and revert itself; the history stores commands instead of document snapshots. The undo and redo stacks are bounded at 100 entries, a new edit clears redo, and empty gestures record nothing. Toolbar undo/redo use arrow-return SVG icons with disabled states, action labels, and accessibility hints. Pen, text, and the shared shape palette expose the same 16 presets, sticky notes expose 15 pastels, and every tool now has a full-spectrum custom colour picker for anything the presets miss. The text and sticky-note slice already present in this tree continues to use the same chronological history. Typecheck, the pure-logic checks, and the iOS bundle pass; touch interaction could not be exercised in this environment (see Verification).
+`implemented-unverified` — rectangle, ellipse, line, and line/arrow/elbow connector objects are implemented with canvas-space geometry, Skia rendering, drag creation, movement, deletion, and command-based undo/redo. Shape and connector options expose color, fill, border/stroke width, and connector style. Pure verification and typecheck pass; simulator touch testing and lint remain unavailable in this environment. Each board mutation is a create, update, delete, or batched command that knows how to apply and revert itself; the history stores commands instead of document snapshots. The undo and redo stacks are bounded at 100 entries, a new edit clears redo, and empty gestures record nothing. Toolbar undo/redo use arrow-return SVG icons with disabled states, action labels, and accessibility hints. Pen, text, and the shared shape palette expose the same 16 presets, sticky notes expose 15 pastels, and every tool now has a full-spectrum custom colour picker for anything the presets miss. The text and sticky-note slice already present in this tree continues to use the same chronological history. Typecheck, the pure-logic checks, and the iOS bundle pass; touch interaction could not be exercised in this environment (see Verification).
 
 ## Completed slices
 - Expo Router stack with Home, Editor, and Settings routes.
@@ -43,7 +43,10 @@ Undo and redo.
 
 ## Files changed
 - `src/canvas/history.ts` — command-based undo/redo: create/update/delete/batch entries, transient gesture batching and move coalescing, bounded stacks, redo clearing, stack predicates, and next-action labels.
-- `src/canvas/document.ts` — `prepareDocumentCommand` builds inverse commands for ink add/erase and object insert/update/move/delete; `documentsEqual` discards net-zero gestures; the shared canvas palette and expanded sticky pastels live here.
+- `src/canvas/document.ts` — shape and connector object model, creation, geometry-aware hit testing, styling, and command integration alongside ink/text/sticky objects; `prepareDocumentCommand` builds inverse commands for all object mutations.
+- `src/canvas/shapes.ts` — pure drag geometry, elbow routing, arrowheads, polyline hit testing, and stroke defaults.
+- `src/components/CanvasViewport.tsx` — shape/connector gestures and Skia rendering at all viewport scales.
+- `src/components/ShapeOptionsSheet.tsx` — shape type, fill, border color, connector style, and stroke controls.
 - `src/components/InkOptionsSheet.tsx` — pen and highlighter show the full theme-aware palette plus a custom-colour swatch and inline picker; the sheet scrolls on short screens.
 - `src/components/ObjectOptionsSheet.tsx` — text and sticky sheets share the same palette, custom swatch, and picker.
 - `src/components/ColorPicker.tsx` — HSV saturation/value field and hue strip built on `react-native-svg`, with a live hex readout and contrast warning.
@@ -64,7 +67,8 @@ The text, sticky-note, object sheet, and keyboard files listed in the previous s
 - Not verified: touch interaction. The undo/redo toolbar paths and canvas gestures were exercised through the pure command-history and object checks, but this environment has no way to inject taps into the simulator.
 
 ## Known issues
-- Shape objects are not implemented yet. The shared `SHAPE_COLORS` palette and matching contrast checks are ready for the shapes-and-connectors slice.
+- Touch interaction and visual rendering were not exercised on a simulator in this environment; verify shape and connector drags at 0.5×, 1×, 2×, and 4× zoom on device.
+- Shape option custom colors currently use the shared palette keys; custom color picker integration for shape borders/fills can be expanded later if needed.
 - The command history is in memory only; reloading the app clears both the board and its undo/redo stacks.
 - Text and sticky objects render as native views layered over the Skia canvas rather than as Skia primitives; they are not drawn into a future image/PDF export until that slice decides how to rasterise text.
 - Object height is estimated from an average glyph width, so a selection frame can be a few units taller or shorter than the rendered text.
@@ -82,4 +86,4 @@ The text, sticky-note, object sheet, and keyboard files listed in the previous s
 - Pure modules import each other with explicit `.ts` extensions so the Node verification scripts can load them without a bundler.
 
 ## Next task
-Next: text and sticky notes. Those objects are already present in this working tree from an earlier pass, so the next unimplemented slice is shapes and connectors.
+Next: selection and transforms for all current object types.

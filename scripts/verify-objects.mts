@@ -129,7 +129,7 @@ const grown = withObjectText(textObject(''), 'one\ntwo\nthree') as CanvasObject;
 assert.equal(grown.height, threeLines.height);
 const shrunk = withObjectText(grown, 'one');
 assert.equal(shrunk.height, oneLine.height);
-assert.equal(withObjectText(grown, grown.text), grown, 'editing to the same text is a no-op');
+assert.equal(withObjectText(grown, grown.text ?? ''), grown, 'editing to the same text is a no-op');
 
 // Font size changes re-measure text objects but leave the sticky paper alone.
 const bigger = withObjectStyle(grown, { fontSize: 24 }) as CanvasObject;

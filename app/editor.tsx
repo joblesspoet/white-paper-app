@@ -26,6 +26,7 @@ import {
   documentReducer,
   editingCommit,
   findObject,
+  isTextualObject,
   keyboardOverlap,
   keepObjectAboveKeyboard,
   objectFill,
@@ -53,7 +54,9 @@ import {
   EraserIcon,
   HighlighterIcon,
   MoreIcon,
+  ConnectorIcon,
   PenIcon,
+  ShapeIcon,
   RedoIcon,
   SelectIcon,
   StickyIcon,
@@ -62,12 +65,15 @@ import {
 } from '../src/components/icons';
 import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
 import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
+import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
 import { colors, darkColors, radii, spacing, touchTarget, typography, type ThemeColors } from '../src/theme';
 
 const TOOLS = [
   { tool: 'select', label: 'Select', Icon: SelectIcon },
   { tool: 'text', label: 'Text', Icon: TextIcon },
   { tool: 'sticky', label: 'Sticky note', Icon: StickyIcon },
+  { tool: 'shape', label: 'Shape', Icon: ShapeIcon },
+  { tool: 'connector', label: 'Connector', Icon: ConnectorIcon },
   { tool: 'pen', label: 'Pen', Icon: PenIcon },
   { tool: 'highlighter', label: 'Highlighter', Icon: HighlighterIcon },
   { tool: 'eraser', label: 'Eraser', Icon: EraserIcon },
@@ -110,6 +116,13 @@ export default function BoardEditorScreen() {
   const [textSize, setTextSize] = useState(DEFAULT_TEXT_FONT_SIZE);
   const [stickyColorKey, setStickyColorKey] = useState<string>(DEFAULT_STICKY_COLOR);
   const [stickySize, setStickySize] = useState(DEFAULT_STICKY_FONT_SIZE);
+  const [shapeKind, setShapeKind] = useState<'rectangle' | 'ellipse' | 'line'>('rectangle');
+  const [shapeColorKey, setShapeColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
+  const [shapeFillKey, setShapeFillKey] = useState<string | null>(null);
+  const [shapeStrokeWidth, setShapeStrokeWidth] = useState(4);
+  const [connectorStyle, setConnectorStyle] = useState<'line' | 'arrow' | 'elbow'>('arrow');
+  const [connectorColorKey, setConnectorColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
+  const [connectorStrokeWidth, setConnectorStrokeWidth] = useState(4);
 
   const [color, setColor] = useState<string>(theme.foreground);
   const [strokeWidth, setStrokeWidth] = useState(4);
@@ -117,6 +130,7 @@ export default function BoardEditorScreen() {
   const [eraserRadius, setEraserRadius] = useState(24);
   const [inkOptionsVisible, setInkOptionsVisible] = useState(false);
   const [objectOptionsVisible, setObjectOptionsVisible] = useState(false);
+  const [shapeOptionsVisible, setShapeOptionsVisible] = useState(false);
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [canvasRect, setCanvasRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -287,6 +301,7 @@ export default function BoardEditorScreen() {
     if (editingRef.current) commitEditing();
     if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') {
       setObjectOptionsVisible(false);
+      setShapeOptionsVisible(false);
       if (activeTool === tool) {
         setInkOptionsVisible((visible) => !visible);
         return;
@@ -296,7 +311,10 @@ export default function BoardEditorScreen() {
       return;
     }
     setInkOptionsVisible(false);
-    if (tool === 'text' || tool === 'sticky') {
+    if (tool === 'shape' || tool === 'connector') {
+      setObjectOptionsVisible(false);
+      setShapeOptionsVisible((visible) => (activeTool === tool ? !visible : true));
+    } else if (tool === 'text' || tool === 'sticky') {
       // Pressing the active tool again shows its colour and size options.
       setObjectOptionsVisible((visible) => (activeTool === tool ? !visible : true));
     } else {
@@ -330,10 +348,11 @@ export default function BoardEditorScreen() {
   const sheetTool: InkSheetTool = activeTool === 'eraser' ? 'eraser' : activeTool === 'highlighter' ? 'highlighter' : 'pen';
   const optionsBottom = tablet ? spacing.md : 84 + Math.max(spacing.sm, insets.bottom);
   const showGuidance = !documentHasContent(document) && !editing;
-  const overlayRect = editing ? objectScreenRect(editing.object, viewport) : null;
-  const overlayFill = editing ? objectFill(editing.object) : undefined;
-  const overlayTextColor = editing ? objectTextColor(editing.object, dark) : theme.foreground;
-  const overlayLineHeight = editing ? textLineHeight(editing.object.fontSize) : 0;
+  const editingTextObject = editing && isTextualObject(editing.object) ? editing.object : null;
+  const overlayRect = editingTextObject ? objectScreenRect(editingTextObject, viewport) : null;
+  const overlayFill = editingTextObject ? objectFill(editingTextObject) : undefined;
+  const overlayTextColor = editingTextObject ? objectTextColor(editingTextObject, dark) : theme.foreground;
+  const overlayLineHeight = editingTextObject ? textLineHeight(editingTextObject.fontSize) : 0;
   const editingSheetBottom = keyboardHeight > 0 ? keyboardHeight + spacing.sm : insets.bottom + spacing.md;
   const selectionBottom = insets.bottom + 84;
 
@@ -378,6 +397,13 @@ export default function BoardEditorScreen() {
             width={strokeWidth}
             opacity={opacity}
             eraserRadius={eraserRadius}
+            shapeKind={shapeKind}
+            shapeColorKey={shapeColorKey}
+            shapeFillKey={shapeFillKey}
+            shapeStrokeWidth={shapeStrokeWidth}
+            connectorStyle={connectorStyle}
+            connectorColorKey={connectorColorKey}
+            connectorStrokeWidth={connectorStrokeWidth}
             document={document}
             selectedObjectId={selectedObjectId}
             editingObjectId={editingId}
@@ -398,15 +424,15 @@ export default function BoardEditorScreen() {
               </Text>
             </View>
           )}
-          {editing && overlayRect && (
+          {editingTextObject && overlayRect && (
             <TextInput
               multiline
               autoFocus
-              accessibilityLabel={editing.object.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
-              value={editing.object.text}
+              accessibilityLabel={editingTextObject.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
+              value={editingTextObject.text}
               onChangeText={(text) => updateDraft({ text })}
               onBlur={commitEditing}
-              placeholder={editing.object.type === 'sticky' ? 'Write a note' : 'Type something'}
+              placeholder={editingTextObject.type === 'sticky' ? 'Write a note' : 'Type something'}
               placeholderTextColor={`${overlayTextColor}80`}
               selectionColor={theme.primary}
               style={[
@@ -420,7 +446,7 @@ export default function BoardEditorScreen() {
                   borderRadius: radii.sm * viewport.scale,
                   backgroundColor: overlayFill ?? 'transparent',
                   color: overlayTextColor,
-                  fontSize: editing.object.fontSize * viewport.scale,
+                  fontSize: editingTextObject.fontSize * viewport.scale,
                   lineHeight: overlayLineHeight * viewport.scale,
                 },
               ]}
@@ -453,13 +479,13 @@ export default function BoardEditorScreen() {
         </View>
       )}
 
-      {editing && (
+      {editingTextObject && (
         <ObjectOptionsSheet
           theme={theme}
           dark={dark}
-          kind={editing.object.type}
-          colorKey={editing.object.colorKey}
-          fontSize={editing.object.fontSize}
+          kind={editingTextObject.type}
+          colorKey={editingTextObject.colorKey}
+          fontSize={editingTextObject.fontSize}
           bottomOffset={editingSheetBottom}
           doneLabel="Done"
           doneHint="Commits the object and closes the keyboard"
@@ -484,6 +510,28 @@ export default function BoardEditorScreen() {
           onColorChange={(key) => (activeTool === 'sticky' ? setStickyColorKey(key) : setTextColorKey(key))}
           onFontSizeChange={(size) => (activeTool === 'sticky' ? setStickySize(size) : setTextSize(size))}
           onDone={closeObjectOptions}
+        />
+      )}
+
+      {!editing && shapeOptionsVisible && (activeTool === 'shape' || activeTool === 'connector') && (
+        <ShapeOptionsSheet
+          theme={theme}
+          mode={activeTool}
+          shapeKind={shapeKind}
+          shapeColorKey={shapeColorKey}
+          shapeFillKey={shapeFillKey}
+          shapeStrokeWidth={shapeStrokeWidth}
+          connectorStyle={connectorStyle}
+          connectorColorKey={connectorColorKey}
+          connectorStrokeWidth={connectorStrokeWidth}
+          onShapeKind={setShapeKind}
+          onShapeColor={setShapeColorKey}
+          onShapeFill={setShapeFillKey}
+          onShapeStrokeWidth={setShapeStrokeWidth}
+          onConnectorStyle={setConnectorStyle}
+          onConnectorColor={setConnectorColorKey}
+          onConnectorStrokeWidth={setConnectorStrokeWidth}
+          onDone={() => setShapeOptionsVisible(false)}
         />
       )}
 

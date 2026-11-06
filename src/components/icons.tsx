@@ -141,6 +141,23 @@ export function TextIcon({ size = 24, color = colors.foreground }: IconProps) {
   );
 }
 
+export function ShapeIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Rect x={4} y={4} width={16} height={16} rx={2} stroke={color} strokeWidth={2} />
+      <Circle cx={12} cy={12} r={4} stroke={color} strokeWidth={1.5} />
+    </Svg>
+  );
+}
+
+export function ConnectorIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M4 18 18 6M13 6h5v5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
 export function StickyIcon({ size = 24, color = colors.foreground }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

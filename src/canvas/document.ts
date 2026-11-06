@@ -1,13 +1,13 @@
 /**
- * Text and sticky-note canvas objects, plus the board document they live in.
+ * Canvas objects and the board document they live in.
  *
- * Objects are stored in canvas (document) coordinates and never in screen
- * coordinates, so panning and zooming cannot move or resize them. Every
- * mutation goes through `applyCommand`, which returns an unchanged document
- * when a command is a no-op: the undo history relies on that reference equality
- * to avoid empty undo steps.
+ * Text, sticky notes, shapes, and connectors are stored in canvas (document)
+ * coordinates and never in screen coordinates, so panning and zooming cannot
+ * move or resize them. Every mutation goes through `applyCommand`, which returns
+ * an unchanged document when a command is a no-op: the undo history relies on
+ * that reference equality to avoid empty undo steps.
  *
- * Not in this slice: shapes, connectors, images, persistence.
+ * Not in this slice: images, persistence, grouping, advanced transforms.
  */
 
 import { isHexColor, readableTextColor } from './colors.ts';
@@ -21,7 +21,39 @@ import {
   type HistoryCommand,
 } from './history.ts';
 import { eraseStrokesAt, type InkStroke } from './ink.ts';
+import {
+  DEFAULT_CONNECTOR_STROKE_WIDTH,
+  DEFAULT_SHAPE_STROKE_WIDTH,
+  connectorPolyline,
+  distanceToPolyline,
+  geometryFromPoints,
+  linePoints,
+  strokeHitTolerance,
+  type ConnectorStyle,
+  type LineDirection,
+  type ShapeGeometry,
+  type ShapeKind,
+} from './shapes.ts';
 import { canvasToScreen, type Point, type Viewport } from './viewport.ts';
+
+export {
+  CONNECTOR_STROKE_WIDTHS,
+  DEFAULT_CONNECTOR_STROKE_WIDTH,
+  DEFAULT_SHAPE_STROKE_WIDTH,
+  MIN_SHAPE_SIZE_SCREEN,
+  SHAPE_STROKE_WIDTHS,
+  STROKE_WIDTH_LABELS,
+  arrowHeadSize,
+  connectorPolyline,
+  geometryFromPoints,
+  linePoints,
+  polylinePathData,
+  arrowHeadPathData,
+  distanceToPolyline,
+  type ConnectorStyle,
+  type LineDirection,
+  type ShapeKind,
+} from './shapes.ts';
 
 // ---------------------------------------------------------------- palettes
 
@@ -128,11 +160,25 @@ export const STICKY_COLORS: readonly StickyColorToken[] = [
 /** Every pastel carries the same deep teal ink, which keeps 6.7:1 or better. */
 export const STICKY_TEXT_COLOR = '#134E4A';
 
+/**
+ * Shape fills reuse the sticky-note pastels: they are quiet enough to sit behind
+ * ink and text, and they are independent of the light/dark canvas theme.
+ * `null` means an unfilled outline.
+ */
+export const SHAPE_FILLS = STICKY_COLORS;
+export const DEFAULT_SHAPE_FILL: string | null = null;
+export const DEFAULT_SHAPE_COLOR: TextColorKey = 'ink';
+export const DEFAULT_CONNECTOR_COLOR: TextColorKey = 'ink';
+export const DEFAULT_SHAPE_KIND: ShapeKind = 'rectangle';
+export const DEFAULT_CONNECTOR_STYLE: ConnectorStyle = 'arrow';
+
 // ------------------------------------------------------------ object model
 
 export type ObjectStylePatch = {
   colorKey?: string;
   fontSize?: number;
+  fillKey?: string | null;
+  strokeWidth?: number;
 };
 
 type CanvasObjectBase = {
@@ -145,14 +191,46 @@ type CanvasObjectBase = {
   height: number;
   /** Reserved for the selection/transform slice; always 0 today. */
   rotation: number;
-  text: string;
-  fontSize: number;
+  /** Present only on textual objects; optional here for backwards-compatible inspection. */
+  text?: string;
+  /** Present only on textual objects; optional here for backwards-compatible inspection. */
+  fontSize?: number;
 };
 
-export type TextObject = CanvasObjectBase & { type: 'text'; colorKey: string };
-export type StickyObject = CanvasObjectBase & { type: 'sticky'; colorKey: string };
-export type CanvasObject = TextObject | StickyObject;
+export type TextObject = CanvasObjectBase & {
+  type: 'text';
+  text: string;
+  fontSize: number;
+  colorKey: string;
+};
+export type StickyObject = CanvasObjectBase & {
+  type: 'sticky';
+  text: string;
+  fontSize: number;
+  colorKey: string;
+};
+export type ShapeObject = CanvasObjectBase &
+  ShapeGeometry & {
+    type: 'shape';
+    shape: ShapeKind;
+    /** Border colour, stored as a palette key or custom `#rrggbb`. */
+    colorKey: string;
+    /** Fill colour, or `null` for an outline-only shape. */
+    fillKey: string | null;
+    strokeWidth: number;
+  };
+export type ConnectorObject = CanvasObjectBase &
+  ShapeGeometry & {
+    type: 'connector';
+    style: ConnectorStyle;
+    /** Line and arrow colour, stored as a palette key or custom `#rrggbb`. */
+    colorKey: string;
+    strokeWidth: number;
+  };
+export type CanvasObject = TextObject | StickyObject | ShapeObject | ConnectorObject;
 export type CanvasObjectType = CanvasObject['type'];
+export type TextualObject = TextObject | StickyObject;
+export type GeometricObject = ShapeObject | ConnectorObject;
 
 export const TEXT_WIDTH = 160;
 export const STICKY_WIDTH = 112;
@@ -246,12 +324,87 @@ export function createStickyObject({
   };
 }
 
+export type CreateShapeInput = {
+  id: string;
+  shape: ShapeKind;
+  /** Canvas-space point where the drag began. */
+  start: Point;
+  /** Canvas-space point where the drag currently ends. */
+  end: Point;
+  colorKey?: string;
+  fillKey?: string | null;
+  strokeWidth?: number;
+};
+
+export function createShapeObject({
+  id,
+  shape,
+  start,
+  end,
+  colorKey = DEFAULT_SHAPE_COLOR,
+  fillKey = DEFAULT_SHAPE_FILL,
+  strokeWidth = DEFAULT_SHAPE_STROKE_WIDTH,
+}: CreateShapeInput): ShapeObject {
+  const geometry = geometryFromPoints(start, end);
+  return {
+    id,
+    type: 'shape',
+    shape,
+    ...geometry,
+    rotation: 0,
+    colorKey,
+    // A line has no interior, so it never stores a fill.
+    fillKey: shape === 'line' ? null : fillKey,
+    strokeWidth,
+  };
+}
+
+export type CreateConnectorInput = {
+  id: string;
+  style?: ConnectorStyle;
+  start: Point;
+  end: Point;
+  colorKey?: string;
+  strokeWidth?: number;
+};
+
+export function createConnectorObject({
+  id,
+  style = DEFAULT_CONNECTOR_STYLE,
+  start,
+  end,
+  colorKey = DEFAULT_CONNECTOR_COLOR,
+  strokeWidth = DEFAULT_CONNECTOR_STROKE_WIDTH,
+}: CreateConnectorInput): ConnectorObject {
+  return {
+    id,
+    type: 'connector',
+    style,
+    ...geometryFromPoints(start, end),
+    rotation: 0,
+    colorKey,
+    strokeWidth,
+  };
+}
+
+/** Text and sticky notes are the only objects with an in-place text editor. */
+export function isTextualObject(object: CanvasObject): object is TextualObject {
+  'worklet';
+  return object.type === 'text' || object.type === 'sticky';
+}
+
+/** Shapes and connectors are rendered by Skia rather than as native views. */
+export function isGeometricObject(object: CanvasObject): object is GeometricObject {
+  'worklet';
+  return object.type === 'shape' || object.type === 'connector';
+}
+
 /**
  * Apply new text. Text objects grow and shrink with their content; a sticky
  * note keeps its standard paper size and clips nothing but its own box.
  */
 export function withObjectText(object: CanvasObject, text: string): CanvasObject {
-  if (object.text === text) return object;
+  if (!isTextualObject(object) || object.text === text) return object;
   if (object.type === 'sticky') return { ...object, text };
   return {
     ...object,
@@ -260,12 +413,12 @@ export function withObjectText(object: CanvasObject, text: string): CanvasObject
   };
 }
 
-/** Apply colour and/or text size, keeping the hit box in step with the text. */
+/** Apply colour and/or size, keeping the text hit box in step with the text. */
 export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): CanvasObject {
   const colorKey = patch.colorKey ?? object.colorKey;
-  const fontSize = patch.fontSize ?? object.fontSize;
-  if (colorKey === object.colorKey && fontSize === object.fontSize) return object;
   if (object.type === 'text') {
+    const fontSize = patch.fontSize ?? object.fontSize;
+    if (colorKey === object.colorKey && fontSize === object.fontSize) return object;
     return {
       ...object,
       colorKey,
@@ -273,18 +426,34 @@ export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): 
       height: measureTextBlock(object.text, fontSize, object.width).height,
     };
   }
-  return { ...object, colorKey, fontSize };
+  if (object.type === 'sticky') {
+    const fontSize = patch.fontSize ?? object.fontSize;
+    if (colorKey === object.colorKey && fontSize === object.fontSize) return object;
+    return { ...object, colorKey, fontSize };
+  }
+  if (object.type === 'shape') {
+    const fillKey = patch.fillKey !== undefined ? patch.fillKey : object.fillKey;
+    const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
+    if (colorKey === object.colorKey && fillKey === object.fillKey && strokeWidth === object.strokeWidth) {
+      return object;
+    }
+    return { ...object, colorKey, fillKey: object.shape === 'line' ? null : fillKey, strokeWidth };
+  }
+  const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
+  if (colorKey === object.colorKey && strokeWidth === object.strokeWidth) return object;
+  return { ...object, colorKey, strokeWidth };
 }
 
 // --------------------------------------------------------------- rendering
 
-/** Note paper colour, or undefined for a transparent text object. */
+/** Shape fill colour, or undefined for an outline-only shape. */
 export function objectFill(object: CanvasObject): string | undefined {
-  if (object.type !== 'sticky') return undefined;
-  return stickyColorValue(object.colorKey);
+  if (object.type === 'sticky') return stickyColorValue(object.colorKey);
+  if (object.type === 'shape' && object.fillKey) return stickyColorValue(object.fillKey);
+  return undefined;
 }
 
-/** Note text colour, resolved against the note's own paper colour. */
+/** Text or shape-stroke colour, resolved against the current theme. */
 export function objectTextColor(object: CanvasObject, dark: boolean): string {
   if (object.type === 'sticky') {
     if (isHexColor(object.colorKey)) {
@@ -322,9 +491,40 @@ export function stickyColorValue(key: string): string {
 
 export type ScreenRect = { x: number; y: number; width: number; height: number };
 
-/** True when a canvas-space point is inside the object's box. */
+/** True when a canvas-space point is inside an object's rendered area. */
 export function objectContainsPoint(object: CanvasObject, point: Point): boolean {
   'worklet';
+  if (object.type === 'shape') {
+    if (object.shape === 'ellipse') {
+      const radiusX = object.width / 2;
+      const radiusY = object.height / 2;
+      if (radiusX <= 0 || radiusY <= 0) return false;
+      const dx = (point.x - (object.x + radiusX)) / radiusX;
+      const dy = (point.y - (object.y + radiusY)) / radiusY;
+      return dx * dx + dy * dy <= 1;
+    }
+    if (object.shape === 'line') {
+      const { start, end } = linePoints(
+        object.x,
+        object.y,
+        object.width,
+        object.height,
+        object.direction,
+      );
+      return distanceToPolyline(point, [start, end]) <= strokeHitTolerance(object.strokeWidth);
+    }
+  }
+  if (object.type === 'connector') {
+    const points = connectorPolyline(
+      object.style,
+      object.x,
+      object.y,
+      object.width,
+      object.height,
+      object.direction,
+    );
+    return distanceToPolyline(point, points) <= strokeHitTolerance(object.strokeWidth);
+  }
   return (
     point.x >= object.x &&
     point.x <= object.x + object.width &&
@@ -333,11 +533,20 @@ export function objectContainsPoint(object: CanvasObject, point: Point): boolean
   );
 }
 
-/** Topmost object under a canvas-space point, or null. */
+/**
+ * Topmost object under a canvas-space point, or null. Text and sticky notes are
+ * native views layered above the Skia canvas, so they always win over shapes and
+ * connectors even when a shape was inserted later.
+ */
 export function objectAtPoint(objects: readonly CanvasObject[], point: Point): CanvasObject | null {
   'worklet';
   for (let index = objects.length - 1; index >= 0; index -= 1) {
-    if (objectContainsPoint(objects[index], point)) return objects[index];
+    const object = objects[index];
+    if (isTextualObject(object) && objectContainsPoint(object, point)) return object;
+  }
+  for (let index = objects.length - 1; index >= 0; index -= 1) {
+    const object = objects[index];
+    if (!isTextualObject(object) && objectContainsPoint(object, point)) return object;
   }
   return null;
 }
@@ -434,7 +643,15 @@ export type DocumentCommand =
   | { type: 'ink.add'; stroke: InkStroke }
   | { type: 'ink.erase'; point: Point; radius: number }
   | { type: 'object.insert'; object: CanvasObject }
-  | { type: 'object.update'; id: string; text?: string; colorKey?: string; fontSize?: number }
+  | {
+      type: 'object.update';
+      id: string;
+      text?: string;
+      colorKey?: string;
+      fontSize?: number;
+      fillKey?: string | null;
+      strokeWidth?: number;
+    }
   | { type: 'object.move'; id: string; x: number; y: number }
   | { type: 'object.delete'; id: string };
 
@@ -467,7 +684,12 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
       return mapObject(document, command.id, (object) => {
         let next = object;
         if (command.text !== undefined) next = withObjectText(next, command.text);
-        return withObjectStyle(next, { colorKey: command.colorKey, fontSize: command.fontSize });
+        return withObjectStyle(next, {
+          colorKey: command.colorKey,
+          fontSize: command.fontSize,
+          fillKey: command.fillKey,
+          strokeWidth: command.strokeWidth,
+        });
       });
     case 'object.move':
       return mapObject(document, command.id, (object) =>
@@ -689,6 +911,7 @@ export type DocumentHistory = History<CanvasDocument>;
  * whose text was cleared is deleted (undo brings it back).
  */
 export function editingCommit(object: CanvasObject, isNew: boolean): DocumentCommand | null {
+  if (!isTextualObject(object)) return null;
   const text = object.text.trim();
   if (text.length === 0) {
     return isNew ? null : { type: 'object.delete', id: object.id };
