@@ -24,6 +24,7 @@ import {
   createTextObject,
   documentHasContent,
   documentReducer,
+  duplicateObject,
   editingCommit,
   findObject,
   isTextualObject,
@@ -50,10 +51,12 @@ import {
   nextUndoLabel,
 } from '../src/canvas/history';
 import type { FreehandTool } from '../src/canvas/ink';
+import { canvasRectToScreen, selectionActionRail, selectionBounds } from '../src/canvas/selection';
 import type { Point, Viewport } from '../src/canvas/viewport';
 import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
 import {
   ChevronRightIcon,
+  DuplicateIcon,
   EditIcon,
   EraserIcon,
   HighlighterIcon,
@@ -114,7 +117,7 @@ export default function BoardEditorScreen() {
   const redoLabel = nextRedoLabel(history);
 
   const [activeTool, setActiveTool] = useState<InkTool>('select');
-  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [stylingObjectId, setStylingObjectId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const editingRef = useRef<Editing | null>(null);
@@ -240,11 +243,11 @@ export default function BoardEditorScreen() {
     Keyboard.dismiss();
     const command = editingCommit(current.object, current.isNew);
     if (!command) {
-      setSelectedObjectId(null);
+      setSelectedObjectIds([]);
       return;
     }
     dispatch({ type: 'command', command });
-    setSelectedObjectId(command.type === 'object.delete' ? null : current.object.id);
+    setSelectedObjectIds(command.type === 'object.delete' ? [] : [current.object.id]);
   }, []);
 
   const updateDraft = useCallback((patch: { text?: string; colorKey?: string; fontSize?: number; fontWeight?: TextWeight; fontStyle?: TextSlant }) => {
@@ -285,7 +288,7 @@ export default function BoardEditorScreen() {
           fontWeight: textBold ? 'bold' : 'normal',
           fontStyle: textItalic ? 'italic' : 'normal',
         });
-    setSelectedObjectId(null);
+    setSelectedObjectIds([]);
     setObjectOptionsVisible(false);
     setStylingObjectId(null);
     setEditingState({ object, isNew: true });
@@ -296,7 +299,7 @@ export default function BoardEditorScreen() {
     // Capability check: only text and sticky notes own editable text. Tapping a
     // selected shape or connector must not enter a phantom editing state.
     if (!object || !isTextualObject(object)) return;
-    setSelectedObjectId(id);
+    setSelectedObjectIds([id]);
     setObjectOptionsVisible(false);
     setStylingObjectId(null);
     setSheetHeight(0);
@@ -304,29 +307,58 @@ export default function BoardEditorScreen() {
   }, [document, setEditingState]);
 
   const deleteSelected = useCallback(() => {
-    if (!selectedObjectId) return;
-    dispatch({ type: 'command', command: { type: 'object.delete', id: selectedObjectId } });
-    setSelectedObjectId(null);
+    const ids = selectedObjectIds.filter((id) => findObject(document, id));
+    if (ids.length === 0) return;
+    const commands: DocumentCommand[] = ids.map((id) => ({ type: 'object.delete', id }));
+    dispatch({
+      type: 'commands',
+      commands,
+    });
+    setSelectedObjectIds([]);
     setStylingObjectId(null);
-  }, [selectedObjectId]);
+  }, [document, selectedObjectIds]);
 
-  /** Style is available for every selectable object, ink excepted. */
+  /**
+   * Copies every selected object at a fresh id, offset so the copies are
+   * immediately visible. One `commands` action keeps a multi-duplicate as a
+   * single undo step.
+   */
+  const duplicateSelected = useCallback(() => {
+    const originals = selectedObjectIds
+      .map((id) => findObject(document, id))
+      .filter((object): object is CanvasObject => Boolean(object));
+    if (originals.length === 0) return;
+    const stamp = Date.now();
+    const copies = originals.map((object, index) => duplicateObject(
+      object,
+      `${object.type}-${stamp}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+    ));
+    dispatch({
+      type: 'commands',
+      commands: copies.map((object) => ({ type: 'object.insert' as const, object })),
+    });
+    setSelectedObjectIds(copies.map((object) => object.id));
+    setStylingObjectId(null);
+  }, [document, selectedObjectIds]);
+
+  /** Style is available for one selected object at a time, ink excepted. */
   const toggleStyleSheet = useCallback(() => {
-    if (!selectedObjectId) return;
-    setStylingObjectId((current) => (current === selectedObjectId ? null : selectedObjectId));
-  }, [selectedObjectId]);
+    if (selectedObjectIds.length !== 1) return;
+    const id = selectedObjectIds[0];
+    setStylingObjectId((current) => (current === id ? null : id));
+  }, [selectedObjectIds]);
 
   const updateStyledObject = useCallback((patch: ObjectStylePatch) => {
     if (!stylingObjectId) return;
     dispatch({ type: 'command', command: { type: 'object.update', id: stylingObjectId, ...patch } });
   }, [stylingObjectId]);
 
-  // A style sheet belongs to the object it was opened for.
+  // A style sheet belongs to the one object it was opened for.
   useEffect(() => {
-    if (stylingObjectId && (!selectedObjectId || stylingObjectId !== selectedObjectId)) {
+    if (stylingObjectId && (selectedObjectIds.length !== 1 || selectedObjectIds[0] !== stylingObjectId)) {
       setStylingObjectId(null);
     }
-  }, [selectedObjectId, stylingObjectId]);
+  }, [selectedObjectIds, stylingObjectId]);
   useEffect(() => {
     if (stylingObjectId && !findObject(document, stylingObjectId)) setStylingObjectId(null);
   }, [document, stylingObjectId]);
@@ -355,12 +387,16 @@ export default function BoardEditorScreen() {
 
   // A selection can vanish through undo, redo, or a delete from elsewhere.
   useEffect(() => {
-    if (selectedObjectId && !findObject(document, selectedObjectId)) setSelectedObjectId(null);
-  }, [document, selectedObjectId]);
+    setSelectedObjectIds((current) => {
+      const next = current.filter((id) => findObject(document, id));
+      return next.length === current.length ? current : next;
+    });
+  }, [document]);
 
   const pressTool = useCallback((tool: InkTool) => {
     if (editingRef.current) commitEditing();
     setStylingObjectId(null);
+    if (tool !== 'select') setSelectedObjectIds([]);
     if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') {
       setObjectOptionsVisible(false);
       setShapeOptionsVisible(false);
@@ -406,7 +442,8 @@ export default function BoardEditorScreen() {
     dispatch({ type: 'redo' });
   }, [commitEditing]);
 
-  const selectedObject = selectedObjectId ? findObject(document, selectedObjectId) : null;
+  const selectedObjects = document.objects.filter((object) => selectedObjectIds.includes(object.id));
+  const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null;
   const sheetTool: InkSheetTool = activeTool === 'eraser' ? 'eraser' : activeTool === 'highlighter' ? 'highlighter' : 'pen';
   const optionsBottom = tablet ? spacing.md : 84 + Math.max(spacing.sm, insets.bottom);
   const showGuidance = !documentHasContent(document) && !editing;
@@ -416,10 +453,30 @@ export default function BoardEditorScreen() {
   const overlayTextColor = editingTextObject ? objectTextColor(editingTextObject, dark) : theme.foreground;
   const overlayLineHeight = editingTextObject ? textLineHeight(editingTextObject.fontSize) : 0;
   const editingSheetBottom = keyboardHeight > 0 ? keyboardHeight + spacing.sm : insets.bottom + spacing.md;
-  const selectedRect = selectedObject && !editing ? objectScreenRect(selectedObject, viewport) : null;
+  const selectedBounds = selectionBounds(selectedObjects);
+  const selectedRect = selectedBounds && !editing ? canvasRectToScreen(selectedBounds, viewport) : null;
   // Only text and sticky notes have editable text. Shapes and connectors
-  // expose delete only, so the Edit action is capability-driven.
+  // expose duplicate, style, and delete, so the Edit action is capability-driven.
   const selectedIsTextual = selectedObject ? isTextualObject(selectedObject) : false;
+  // The rail is vertical and sits beside the selection, so it never covers the
+  // rotate handle above the selection. Its action count decides its height.
+  const selectionActionCount = selectedObjects.length === 0
+    ? 0
+    : selectedObject
+      ? (selectedIsTextual ? 4 : 3)
+      : 2;
+  const canvasBorder = 1;
+  const actionRail = selectedRect && !editing && canvasRect.width > 0
+    ? selectionActionRail(
+      selectedRect,
+      selectionActionCount,
+      canvasRect.width - canvasBorder * 2,
+      canvasRect.height - canvasBorder * 2,
+    )
+    : null;
+  const selectionLabel = selectedObjects.length === 1
+    ? `${selectedObjects[0].type} selected`
+    : `${selectedObjects.length} objects selected`;
   const stylingObject = stylingObjectId ? findObject(document, stylingObjectId) : null;
   const stylingTextObject = stylingObject && isTextualObject(stylingObject) ? stylingObject : null;
   const stylingGeometricObject = stylingObject && !isTextualObject(stylingObject) ? stylingObject : null;
@@ -474,14 +531,14 @@ export default function BoardEditorScreen() {
               connectorColorKey={connectorColorKey}
               connectorStrokeWidth={connectorStrokeWidth}
               document={document}
-              selectedObjectId={selectedObjectId}
+              selectedObjectIds={selectedObjectIds}
               editingObjectId={editingId}
               viewportRequest={viewportRequest}
               onViewportChange={reportViewport}
               onCommand={runCommand}
               onCommitPending={commitPending}
               onObjectCreate={startNewObject}
-              onObjectSelect={setSelectedObjectId}
+              onSelectionChange={setSelectedObjectIds}
               onObjectEdit={startEditingExisting}
               onObjectMeasure={measureObject}
               onCanvasTouch={commitEditing}
@@ -520,59 +577,83 @@ export default function BoardEditorScreen() {
                     lineHeight: overlayLineHeight * viewport.scale,
                     fontWeight: editingTextObject.fontWeight ?? 'normal',
                     fontStyle: editingTextObject.fontStyle ?? 'normal',
+                    transform: [{ rotate: `${editingTextObject.rotation}deg` }],
                   },
                 ]}
               />
             )}
           </View>
 
-          {selectedObject && selectedRect && !editing && (
+          {selectedObjects.length > 0 && actionRail && (
             <View
-              pointerEvents="box-none"
-              accessibilityLabel={`${selectedObject.type} selected`}
+              accessibilityLabel={selectionLabel}
               style={[
-                styles.selectionFrame,
+                styles.selectionRail,
                 {
-                  left: selectedRect.x,
-                  top: selectedRect.y,
-                  width: selectedRect.width,
-                  height: selectedRect.height,
+                  left: actionRail.x,
+                  top: actionRail.y,
+                  width: actionRail.width,
+                  height: actionRail.height,
+                  backgroundColor: theme.surface,
+                  borderColor: theme.border,
                 },
               ]}
             >
-              <View style={[styles.selectionActions, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-                {selectedIsTextual && (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Edit selected object"
-                    onPress={() => startEditingExisting(selectedObject.id)}
-                    style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
-                  >
-                    <EditIcon size={18} color={theme.foreground} />
-                  </Pressable>
-                )}
+              {selectedIsTextual && selectedObject && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Edit selected object"
+                  accessibilityHint="Opens the object's text editor"
+                  onPress={() => startEditingExisting(selectedObject.id)}
+                  style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
+                >
+                  <EditIcon size={18} color={theme.foreground} />
+                </Pressable>
+              )}
+              {selectedObject && (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Style selected object"
+                  accessibilityHint="Opens the object's style options"
                   onPress={toggleStyleSheet}
                   style={({ pressed }) => [
                     styles.selectionAction,
-                    selectedIsTextual && styles.selectionActionDelete,
-                    { borderLeftColor: theme.border },
+                    selectedIsTextual && styles.selectionActionSeparator,
+                    { borderTopColor: theme.border },
                     pressed && styles.pressed,
                   ]}
                 >
                   <StyleIcon size={18} color={theme.foreground} />
                 </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Delete selected object"
-                  onPress={deleteSelected}
-                  style={({ pressed }) => [styles.selectionAction, styles.selectionActionDelete, { borderLeftColor: theme.border }, pressed && styles.pressed]}
-                >
-                  <TrashIcon size={18} color={theme.destructive} />
-                </Pressable>
-              </View>
+              )}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={selectedObjects.length === 1 ? 'Duplicate selected object' : 'Duplicate selected objects'}
+                accessibilityHint="Creates an offset copy in the same undo step"
+                onPress={duplicateSelected}
+                style={({ pressed }) => [
+                  styles.selectionAction,
+                  selectedObject && styles.selectionActionSeparator,
+                  { borderTopColor: theme.border },
+                  pressed && styles.pressed,
+                ]}
+              >
+                <DuplicateIcon size={18} color={theme.foreground} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={selectedObjects.length === 1 ? 'Delete selected object' : 'Delete selected objects'}
+                accessibilityHint="Removes the selection; undo restores it"
+                onPress={deleteSelected}
+                style={({ pressed }) => [
+                  styles.selectionAction,
+                  styles.selectionActionSeparator,
+                  { borderTopColor: theme.border },
+                  pressed && styles.pressed,
+                ]}
+              >
+                <TrashIcon size={18} color={theme.destructive} />
+              </Pressable>
             </View>
           )}
         </View>
@@ -783,10 +864,8 @@ const styles = StyleSheet.create({
   toolLabel: { ...typography.caption, fontSize: 11, textAlign: 'center' },
   toolPressed: { opacity: 0.65 },
   objectEditor: { position: 'absolute', zIndex: 10, textAlignVertical: 'top' },
-  selectionFrame: { position: 'absolute', zIndex: 20 },
-  selectionActions: { position: 'absolute', right: -1, top: -38, flexDirection: 'row', borderWidth: 1, borderRadius: radii.sm, overflow: 'hidden' },
-  selectionAction: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  selectionActionDelete: { borderLeftWidth: 1 },
-  selectionLabel: { ...typography.caption, flex: 1 },
+  selectionRail: { position: 'absolute', zIndex: 20, borderWidth: 1, borderRadius: radii.sm, overflow: 'hidden' },
+  selectionAction: { height: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  selectionActionSeparator: { borderTopWidth: 1 },
   pressed: { opacity: 0.65 },
 });

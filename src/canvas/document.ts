@@ -7,11 +7,12 @@
  * an unchanged document when a command is a no-op: the undo history relies on
  * that reference equality to avoid empty undo steps.
  *
- * Not in this slice: images, persistence, grouping, advanced transforms.
+ * Not in this slice: images, persistence, grouping, or cloud sync.
  */
 
 import { isHexColor, readableTextColor } from './colors.ts';
 import {
+  batchCommand,
   commitChange,
   createHistory,
   executeCommand,
@@ -198,7 +199,7 @@ type CanvasObjectBase = {
   /** Canvas-space size; text objects grow downwards as the text wraps. */
   width: number;
   height: number;
-  /** Reserved for the selection/transform slice; always 0 today. */
+  /** Clockwise rotation in degrees around the object's centre. */
   rotation: number;
   /** Present only on textual objects; optional here for backwards-compatible inspection. */
   text?: string;
@@ -498,6 +499,69 @@ export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): 
   return { ...object, style, colorKey, strokeWidth };
 }
 
+export type ObjectGeometryPatch = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  /** Clockwise degrees around the object's centre. */
+  rotation?: number;
+  /** Line/connector direction, preserved when a resize flips an axis. */
+  direction?: LineDirection;
+};
+
+/**
+ * Apply a geometry change. A text object re-wraps when its width changes and
+ * keeps the measured height otherwise, so moving text never undoes a layout
+ * correction. Sticky, shape, and connector boxes take the provided size.
+ */
+export function withObjectGeometry(object: CanvasObject, patch: ObjectGeometryPatch): CanvasObject {
+  const width = Math.max(1, patch.width ?? object.width);
+  const widthChanged = width !== object.width;
+  const height = Math.max(
+    1,
+    object.type === 'text' && widthChanged
+      ? measureTextBlock(object.text, object.fontSize, width, object.fontWeight, object.fontStyle).height
+      : patch.height ?? object.height,
+  );
+  const x = patch.x ?? object.x;
+  const y = patch.y ?? object.y;
+  const rotation = patch.rotation ?? object.rotation;
+  const direction =
+    object.type === 'shape' || object.type === 'connector'
+      ? patch.direction ?? object.direction
+      : undefined;
+  if (
+    x === object.x &&
+    y === object.y &&
+    width === object.width &&
+    height === object.height &&
+    rotation === object.rotation &&
+    direction === (object.type === 'shape' || object.type === 'connector' ? object.direction : undefined)
+  ) {
+    return object;
+  }
+  if (object.type === 'shape' || object.type === 'connector') {
+    return { ...object, x, y, width, height, rotation, direction: direction ?? object.direction };
+  }
+  return { ...object, x, y, width, height, rotation };
+}
+
+/** Canvas-space offset applied to a duplicated object. */
+export const DUPLICATE_OFFSET = 16;
+
+/**
+ * Copy an object at a fresh id, offset slightly so the duplicate is visible
+ * above the original and can be dragged away immediately.
+ */
+export function duplicateObject(
+  object: CanvasObject,
+  id: string,
+  offset = DUPLICATE_OFFSET,
+): CanvasObject {
+  return { ...object, id, x: object.x + offset, y: object.y + offset };
+}
+
 // --------------------------------------------------------------- rendering
 
 /** Shape fill colour, or undefined for an outline-only shape. */
@@ -545,16 +609,40 @@ export function stickyColorValue(key: string): string {
 
 export type ScreenRect = { x: number; y: number; width: number; height: number };
 
+/** Rotate a canvas-space point around a canvas-space centre by degrees. */
+export function rotatePoint(point: Point, centre: Point, degrees: number): Point {
+  'worklet';
+  if (degrees === 0) return point;
+  const radians = (degrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const dx = point.x - centre.x;
+  const dy = point.y - centre.y;
+  return {
+    x: centre.x + dx * cos - dy * sin,
+    y: centre.y + dx * sin + dy * cos,
+  };
+}
+
 /** True when a canvas-space point is inside an object's rendered area. */
 export function objectContainsPoint(object: CanvasObject, point: Point): boolean {
   'worklet';
+  // Hit testing happens in the object's unrotated frame, so a rotated object
+  // behaves exactly like its rendered version at every zoom level.
+  const local = object.rotation === 0
+    ? point
+    : rotatePoint(
+        point,
+        { x: object.x + object.width / 2, y: object.y + object.height / 2 },
+        -object.rotation,
+      );
   if (object.type === 'shape') {
     if (object.shape === 'ellipse') {
       const radiusX = object.width / 2;
       const radiusY = object.height / 2;
       if (radiusX <= 0 || radiusY <= 0) return false;
-      const dx = (point.x - (object.x + radiusX)) / radiusX;
-      const dy = (point.y - (object.y + radiusY)) / radiusY;
+      const dx = (local.x - (object.x + radiusX)) / radiusX;
+      const dy = (local.y - (object.y + radiusY)) / radiusY;
       return dx * dx + dy * dy <= 1;
     }
     if (object.shape === 'line') {
@@ -565,7 +653,7 @@ export function objectContainsPoint(object: CanvasObject, point: Point): boolean
         object.height,
         object.direction,
       );
-      return distanceToPolyline(point, [start, end]) <= strokeHitTolerance(object.strokeWidth);
+      return distanceToPolyline(local, [start, end]) <= strokeHitTolerance(object.strokeWidth);
     }
   }
   if (object.type === 'connector') {
@@ -577,13 +665,13 @@ export function objectContainsPoint(object: CanvasObject, point: Point): boolean
       object.height,
       object.direction,
     );
-    return distanceToPolyline(point, points) <= strokeHitTolerance(object.strokeWidth);
+    return distanceToPolyline(local, points) <= strokeHitTolerance(object.strokeWidth);
   }
   return (
-    point.x >= object.x &&
-    point.x <= object.x + object.width &&
-    point.y >= object.y &&
-    point.y <= object.y + object.height
+    local.x >= object.x &&
+    local.x <= object.x + object.width &&
+    local.y >= object.y &&
+    local.y <= object.y + object.height
   );
 }
 
@@ -711,6 +799,12 @@ export type DocumentCommand =
       style?: ConnectorStyle;
     }
   | { type: 'object.move'; id: string; x: number; y: number }
+  | {
+      type: 'objects.geometry';
+      updates: ReadonlyArray<{ id: string } & ObjectGeometryPatch>;
+      /** Accessibility/history verb, for example `Move` or `Rotate`. */
+      label?: string;
+    }
   | { type: 'object.delete'; id: string };
 
 function mapObject(
@@ -759,6 +853,18 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
           ? object
           : { ...object, x: command.x, y: command.y },
       );
+    case 'objects.geometry': {
+      const updates = new Map(command.updates.map((update) => [update.id, update]));
+      let changed = false;
+      const objects = document.objects.map((object) => {
+        const update = updates.get(object.id);
+        if (!update) return object;
+        const next = withObjectGeometry(object, update);
+        if (next !== object) changed = true;
+        return next;
+      });
+      return changed ? { ...document, objects } : document;
+    }
     case 'object.delete': {
       const objects = document.objects.filter((object) => object.id !== command.id);
       return objects.length === document.objects.length ? document : { ...document, objects };
@@ -854,6 +960,119 @@ function moveHistoryCommand(id: string, label: string, from: Point, to: Point): 
   };
 }
 
+type GeometryHistoryCommand = HistoryCommand<CanvasDocument> & {
+  geometry: { verb: string; before: CanvasObject[]; after: CanvasObject[] };
+};
+
+function sameObjectIds(left: readonly CanvasObject[], right: readonly CanvasObject[]): boolean {
+  if (left.length !== right.length) return false;
+  const ids = new Set(left.map((object) => object.id));
+  return right.every((object) => ids.has(object.id));
+}
+
+/**
+ * Restore only the transform fields from a snapshot. Text, colour, and style
+ * stay with the current object, and a move does not roll back a text height
+ * corrected by layout measurement.
+ */
+type GeometryField = 'x' | 'y' | 'width' | 'height' | 'rotation' | 'direction';
+
+function changedGeometryFields(before: CanvasObject, after: CanvasObject): GeometryField[] {
+  const fields: GeometryField[] = [];
+  if (before.x !== after.x) fields.push('x');
+  if (before.y !== after.y) fields.push('y');
+  if (before.width !== after.width) fields.push('width');
+  if (before.height !== after.height) fields.push('height');
+  if (before.rotation !== after.rotation) fields.push('rotation');
+  if (
+    (before.type === 'shape' || before.type === 'connector') &&
+    (after.type === 'shape' || after.type === 'connector') &&
+    before.direction !== after.direction
+  ) {
+    fields.push('direction');
+  }
+  return fields;
+}
+
+function withGeometryFields(
+  object: CanvasObject,
+  snapshot: CanvasObject,
+  fields: readonly GeometryField[],
+): CanvasObject {
+  let next = object;
+  for (const field of fields) {
+    if (field === 'direction') {
+      if (next.type !== 'shape' && next.type !== 'connector') continue;
+      if (snapshot.type !== 'shape' && snapshot.type !== 'connector') continue;
+      if (next.direction === snapshot.direction) continue;
+      next = { ...next, direction: snapshot.direction };
+      continue;
+    }
+    if (next[field] === snapshot[field]) continue;
+    next = { ...next, [field]: snapshot[field] };
+  }
+  return next;
+}
+
+/**
+ * One history entry for a whole selection transform. Every frame supplies the
+ * latest absolute geometry, and consecutive frames merge into this single
+ * command, so a resize, rotate, or multi-object drag is one undo step.
+ */
+function geometryHistoryCommand(
+  verb: string,
+  before: CanvasObject[],
+  after: CanvasObject[],
+): GeometryHistoryCommand {
+  const label = before.length === 1
+    ? `${verb} ${before[0].type}`
+    : `${verb} ${before.length} objects`;
+  const beforeById = new Map(before.map((object) => [object.id, object]));
+  const afterById = new Map(after.map((object) => [object.id, object]));
+  const fieldsById = new Map<string, GeometryField[]>();
+  for (const original of before) {
+    const next = afterById.get(original.id);
+    if (!next) continue;
+    const fields = changedGeometryFields(original, next);
+    if (fields.length > 0) fieldsById.set(original.id, fields);
+  }
+  return {
+    type: 'update',
+    label,
+    apply(current) {
+      let changed = false;
+      const objects = current.objects.map((object) => {
+        const snapshot = afterById.get(object.id);
+        const fields = fieldsById.get(object.id);
+        if (!snapshot || !fields) return object;
+        const next = withGeometryFields(object, snapshot, fields);
+        if (next !== object) changed = true;
+        return next;
+      });
+      return changed ? { ...current, objects } : current;
+    },
+    revert(current) {
+      let changed = false;
+      const objects = current.objects.map((object) => {
+        const snapshot = beforeById.get(object.id);
+        const fields = fieldsById.get(object.id);
+        if (!snapshot || !fields) return object;
+        const next = withGeometryFields(object, snapshot, fields);
+        if (next !== object) changed = true;
+        return next;
+      });
+      return changed ? { ...current, objects } : current;
+    },
+    geometry: { verb, before, after },
+    merge(next) {
+      const other = next as GeometryHistoryCommand;
+      if (!other.geometry || other.geometry.verb !== verb) return undefined;
+      if (!sameObjectIds(before, other.geometry.before)) return undefined;
+      return geometryHistoryCommand(verb, before, other.geometry.after);
+    },
+  };
+}
+
 /**
  * Turn a document command into an undoable history command. The inverse data
  * (a removed stroke, the previous object fields, an original index) is captured
@@ -938,6 +1157,20 @@ export function prepareDocumentCommand(
         { x: command.x, y: command.y },
       );
     }
+    case 'objects.geometry': {
+      const before: CanvasObject[] = [];
+      const after: CanvasObject[] = [];
+      for (const update of command.updates) {
+        const object = findObject(document, update.id);
+        if (!object) continue;
+        const next = withObjectGeometry(object, update);
+        if (next === object) continue;
+        before.push(object);
+        after.push(next);
+      }
+      if (after.length === 0) return null;
+      return geometryHistoryCommand(command.label ?? 'Transform', before, after);
+    }
     case 'object.delete': {
       const index = document.objects.findIndex((object) => object.id === command.id);
       if (index === -1) return null;
@@ -961,6 +1194,8 @@ export function prepareDocumentCommand(
 
 export type DocumentAction =
   | { type: 'command'; command: DocumentCommand; transient?: boolean }
+  /** Apply several commands as one undo step (multi-delete, multi-duplicate). */
+  | { type: 'commands'; commands: readonly DocumentCommand[] }
   | { type: 'commit' }
   | { type: 'undo' }
   | { type: 'redo' }
@@ -1001,6 +1236,18 @@ export function documentReducer(state: DocumentHistory, action: DocumentAction):
     case 'command': {
       const command = prepareDocumentCommand(state.present, action.command);
       return command ? executeCommand(state, command, action.transient ?? false) : state;
+    }
+    case 'commands': {
+      const prepared: HistoryCommand<CanvasDocument>[] = [];
+      let present = state.present;
+      for (const command of action.commands) {
+        const preparedCommand = prepareDocumentCommand(present, command);
+        if (!preparedCommand) continue;
+        prepared.push(preparedCommand);
+        present = preparedCommand.apply(present);
+      }
+      if (prepared.length === 0) return state;
+      return executeCommand(state, batchCommand(prepared), false);
     }
     case 'commit':
       return commitChange(state);

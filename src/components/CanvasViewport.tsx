@@ -35,6 +35,23 @@ import {
   type TextualObject,
 } from '../canvas/document';
 import {
+  MIN_RESIZE_SCREEN,
+  RESIZE_HANDLES,
+  ROTATE_HANDLE_OFFSET_SCREEN,
+  SELECTION_HANDLE_HIT_SCREEN,
+  SELECTION_HANDLE_SCREEN,
+  handleAtPoint,
+  objectsInRect,
+  pointerAngle,
+  resizeObject,
+  rotationFromPointer,
+  selectionCorners,
+  selectionHandlePositions,
+  type CanvasRect,
+  type ResizeHandle,
+  type SelectionHandle,
+} from '../canvas/selection';
+import {
   appendInkPoint,
   createInkStroke,
   DEFAULT_ERASER_RADIUS,
@@ -78,8 +95,18 @@ export type ViewportState = Viewport;
 
 /** Minimum finger travel before a touch on an object counts as a drag, not a tap. */
 const DRAG_THRESHOLD_SCREEN = 4;
+/** Hold this long on empty canvas to start a marquee selection. */
+const MARQUEE_HOLD_MS = 280;
 
 export type ViewportRequest = { key: number; viewport: Viewport };
+
+type TransformGesture = {
+  mode: 'move' | 'resize' | 'rotate';
+  objects: CanvasObject[];
+  start: Point;
+  handle: SelectionHandle | null;
+  rotationOffset: number;
+};
 
 type CanvasViewportProps = {
   dark?: boolean;
@@ -99,7 +126,7 @@ type CanvasViewportProps = {
   connectorColorKey?: string;
   connectorStrokeWidth?: number;
   document: CanvasDocument;
-  selectedObjectId?: string | null;
+  selectedObjectIds?: readonly string[];
   /** Object currently open in the in-place text editor; it is hidden here. */
   editingObjectId?: string | null;
   /** Absolute viewport the editor asks for, for example to clear the keyboard. */
@@ -108,7 +135,7 @@ type CanvasViewportProps = {
   onCommand: (command: DocumentCommand, transient?: boolean) => void;
   onCommitPending: () => void;
   onObjectCreate?: (type: 'text' | 'sticky', point: Point) => void;
-  onObjectSelect?: (id: string | null) => void;
+  onSelectionChange?: (ids: string[]) => void;
   onObjectEdit?: (id: string) => void;
   /** Real rendered text height, used to correct the object's estimated height. */
   onObjectMeasure?: (id: string, height: number) => void;
@@ -132,14 +159,14 @@ export function CanvasViewport({
   connectorColorKey = 'ink',
   connectorStrokeWidth = DEFAULT_CONNECTOR_STROKE_WIDTH,
   document,
-  selectedObjectId = null,
+  selectedObjectIds = [],
   editingObjectId = null,
   viewportRequest = null,
   onViewportChange,
   onCommand,
   onCommitPending,
   onObjectCreate,
-  onObjectSelect,
+  onSelectionChange,
   onObjectEdit,
   onObjectMeasure,
   onCanvasTouch,
@@ -157,8 +184,14 @@ export function CanvasViewport({
   const draggingObjectId = useSharedValue('');
   const dragMoved = useSharedValue(false);
   const tapOpensEditor = useSharedValue('');
-  const grabOffsetX = useSharedValue(0);
-  const grabOffsetY = useSharedValue(0);
+  const collapseSelectionId = useSharedValue('');
+  const gestureMode = useSharedValue<'pan' | 'move' | 'resize' | 'rotate' | 'marquee' | ''>('');
+  const touchStartCanvasX = useSharedValue(0);
+  const touchStartCanvasY = useSharedValue(0);
+  const marqueeStartX = useSharedValue(0);
+  const marqueeStartY = useSharedValue(0);
+  const marqueeEndX = useSharedValue(0);
+  const marqueeEndY = useSharedValue(0);
   const eraserX = useSharedValue(-10000);
   const eraserY = useSharedValue(-10000);
   /** The stroke being drawn is local: it only enters the document on release. */
@@ -168,11 +201,13 @@ export function CanvasViewport({
   const [draftObject, setDraftObject] = useState<ShapeObject | ConnectorObject | null>(null);
   const draftObjectRef = useRef<ShapeObject | ConnectorObject | null>(null);
   const draftStartRef = useRef<Point | null>(null);
+  const transformRef = useRef<TransformGesture | null>(null);
   const [viewport, setViewport] = useState<Viewport>(startViewport);
   const lastViewportReport = useRef(0);
 
   const editing = editingObjectId !== null;
   const objects = document.objects;
+  const selectedObjects = objects.filter((object) => selectedObjectIds.includes(object.id));
 
   const report = useCallback((x: number, y: number, nextScale: number) => {
     onViewportChange?.({ x, y, scale: nextScale });
@@ -310,15 +345,83 @@ export function CanvasViewport({
   }, [onCommand]);
 
   const touchCanvas = useCallback(() => { onCanvasTouch?.(); }, [onCanvasTouch]);
-  const selectObject = useCallback((id: string | null) => { onObjectSelect?.(id); }, [onObjectSelect]);
+  const selectObjects = useCallback((ids: string[]) => { onSelectionChange?.(ids); }, [onSelectionChange]);
   const editObject = useCallback((id: string) => { onObjectEdit?.(id); }, [onObjectEdit]);
   const createObject = useCallback((type: 'text' | 'sticky', point: Point) => {
     onObjectCreate?.(type, point);
   }, [onObjectCreate]);
-  const moveObject = useCallback((id: string, x: number, y: number) => {
-    onCommand({ type: 'object.move', id, x, y }, true);
-  }, [onCommand]);
   const commitPending = useCallback(() => { onCommitPending(); }, [onCommitPending]);
+
+  /** Snapshot the selection once so every pointer sample transforms from the same start state. */
+  const beginTransform = useCallback((
+    mode: 'move' | 'resize' | 'rotate',
+    handle: SelectionHandle | null,
+    point: Point,
+    ids: readonly string[],
+  ) => {
+    const snapshot = ids
+      .map((id) => document.objects.find((object) => object.id === id))
+      .filter((object): object is CanvasObject => Boolean(object));
+    if (snapshot.length === 0) {
+      transformRef.current = null;
+      return;
+    }
+    const first = snapshot[0];
+    const centre = { x: first.x + first.width / 2, y: first.y + first.height / 2 };
+    transformRef.current = {
+      mode,
+      objects: snapshot,
+      start: point,
+      handle,
+      rotationOffset: mode === 'rotate' ? first.rotation - pointerAngle(point, centre) : 0,
+    };
+  }, [document.objects]);
+
+  const updateTransform = useCallback((point: Point, currentScale: number) => {
+    const gesture = transformRef.current;
+    if (!gesture) return;
+    if (gesture.mode === 'move') {
+      const dx = point.x - gesture.start.x;
+      const dy = point.y - gesture.start.y;
+      onCommand({
+        type: 'objects.geometry',
+        label: 'Move',
+        updates: gesture.objects.map((object) => ({ id: object.id, x: object.x + dx, y: object.y + dy })),
+      }, true);
+      return;
+    }
+    const object = gesture.objects[0];
+    if (!object) return;
+    if (gesture.mode === 'resize' && gesture.handle && gesture.handle !== 'rotate') {
+      const geometry = resizeObject(
+        object,
+        gesture.handle as ResizeHandle,
+        point,
+        MIN_RESIZE_SCREEN / Math.max(currentScale, MIN_ZOOM),
+      );
+      onCommand({
+        type: 'objects.geometry',
+        label: 'Resize',
+        updates: [{ id: object.id, ...geometry }],
+      }, true);
+      return;
+    }
+    if (gesture.mode === 'rotate') {
+      const centre = { x: object.x + object.width / 2, y: object.y + object.height / 2 };
+      onCommand({
+        type: 'objects.geometry',
+        label: 'Rotate',
+        updates: [{
+          id: object.id,
+          rotation: rotationFromPointer(centre, point, gesture.rotationOffset),
+        }],
+      }, true);
+    }
+  }, [onCommand]);
+
+  const selectInMarquee = useCallback((rect: CanvasRect) => {
+    onSelectionChange?.(objectsInRect(document.objects, rect).map((object) => object.id));
+  }, [document.objects, onSelectionChange]);
 
   const drawGesture = Gesture.Pan()
     .enabled(activeTool === 'pen' || activeTool === 'highlighter')
@@ -390,9 +493,9 @@ export function CanvasViewport({
     });
 
   /**
-   * Select mode does three things with one gesture: a touch on empty canvas pans,
-   * a drag on an object moves it, and a tap on an already selected object opens
-   * the text editor. Keeping one gesture avoids tap/drag races.
+   * Select mode owns touch, move, resize, rotate, and pan with one gesture so a
+   * tap cannot race a drag. Pressing empty canvas and holding starts a marquee;
+   * the long-press gesture below switches this pan into marquee mode.
    */
   const selectGesture = Gesture.Pan()
     .enabled(activeTool === 'select')
@@ -403,21 +506,57 @@ export function CanvasViewport({
         { x: event.x, y: event.y },
         { x: offsetX.value, y: offsetY.value, scale: scale.value },
       );
-      const hit = objectAtPoint(objects, point);
-      draggingObjectId.value = hit ? hit.id : '';
-      dragMoved.value = false;
-      grabOffsetX.value = hit ? point.x - hit.x : 0;
-      grabOffsetY.value = hit ? point.y - hit.y : 0;
-      // Only textual objects open an editor on a second tap; shapes and
-      // connectors remain selected without entering an edit state.
-      tapOpensEditor.value = hit && hit.id === selectedObjectId && isTextualObject(hit) ? hit.id : '';
       startX.value = offsetX.value;
       startY.value = offsetY.value;
-      if (hit) runOnJS(selectObject)(hit.id);
-      else runOnJS(selectObject)(null);
+      touchStartCanvasX.value = point.x;
+      touchStartCanvasY.value = point.y;
+      marqueeStartX.value = point.x;
+      marqueeStartY.value = point.y;
+      marqueeEndX.value = point.x;
+      marqueeEndY.value = point.y;
+      dragMoved.value = false;
+      tapOpensEditor.value = '';
+      collapseSelectionId.value = '';
+      draggingObjectId.value = '';
+
+      const selected = objects.filter((object) => selectedObjectIds.includes(object.id));
+      const rotateOffset = ROTATE_HANDLE_OFFSET_SCREEN / scale.value;
+      const handle = selected.length === 1
+        ? handleAtPoint(selected, point, SELECTION_HANDLE_HIT_SCREEN / scale.value, rotateOffset)
+        : null;
+      if (handle) {
+        const mode = handle === 'rotate' ? 'rotate' : 'resize';
+        gestureMode.value = mode;
+        runOnJS(beginTransform)(mode, handle, point, selectedObjectIds);
+        return;
+      }
+
+      const hit = objectAtPoint(objects, point);
+      if (hit) {
+        const alreadySelected = selectedObjectIds.includes(hit.id);
+        draggingObjectId.value = hit.id;
+        gestureMode.value = 'move';
+        if (!alreadySelected) runOnJS(selectObjects)([hit.id]);
+        runOnJS(beginTransform)('move', null, point, alreadySelected ? selectedObjectIds : [hit.id]);
+        // A tap on one member of a multi-selection collapses to that object;
+        // a tap on the only selected text object opens its editor.
+        if (alreadySelected && selectedObjectIds.length > 1) collapseSelectionId.value = hit.id;
+        else if (alreadySelected && selectedObjectIds.length === 1 && isTextualObject(hit)) {
+          tapOpensEditor.value = hit.id;
+        }
+        return;
+      }
+
+      gestureMode.value = 'pan';
+      if (selectedObjectIds.length > 0) runOnJS(selectObjects)([]);
     })
     .onUpdate((event) => {
-      if (draggingObjectId.value !== '') {
+      if (gestureMode.value === 'marquee') {
+        marqueeEndX.value = touchStartCanvasX.value + event.translationX / scale.value;
+        marqueeEndY.value = touchStartCanvasY.value + event.translationY / scale.value;
+        return;
+      }
+      if (gestureMode.value === 'move') {
         if (!dragMoved.value) {
           dragMoved.value = Math.hypot(event.translationX, event.translationY) > DRAG_THRESHOLD_SCREEN;
         }
@@ -426,27 +565,76 @@ export function CanvasViewport({
             { x: event.x, y: event.y },
             { x: offsetX.value, y: offsetY.value, scale: scale.value },
           );
-          runOnJS(moveObject)(draggingObjectId.value, point.x - grabOffsetX.value, point.y - grabOffsetY.value);
+          runOnJS(updateTransform)(point, scale.value);
         }
         return;
       }
-      offsetX.value = startX.value + event.translationX;
-      offsetY.value = startY.value + event.translationY;
-      runOnJS(report)(offsetX.value, offsetY.value, scale.value);
-    })
-    .onFinalize(() => {
-      if (draggingObjectId.value !== '') {
-        const id = draggingObjectId.value;
-        const moved = dragMoved.value;
-        const opensEditor = tapOpensEditor.value;
-        draggingObjectId.value = '';
-        tapOpensEditor.value = '';
-        dragMoved.value = false;
-        if (moved) runOnJS(commitPending)();
-        else if (opensEditor !== '') runOnJS(editObject)(id);
+      if (gestureMode.value === 'resize' || gestureMode.value === 'rotate') {
+        const point = screenToCanvas(
+          { x: event.x, y: event.y },
+          { x: offsetX.value, y: offsetY.value, scale: scale.value },
+        );
+        runOnJS(updateTransform)(point, scale.value);
         return;
       }
-      runOnJS(commitViewport)(offsetX.value, offsetY.value, scale.value);
+      if (gestureMode.value === 'pan') {
+        offsetX.value = startX.value + event.translationX;
+        offsetY.value = startY.value + event.translationY;
+        runOnJS(report)(offsetX.value, offsetY.value, scale.value);
+      }
+    })
+    .onFinalize(() => {
+      const mode = gestureMode.value;
+      const hitId = draggingObjectId.value;
+      const moved = dragMoved.value;
+      const opensEditor = tapOpensEditor.value;
+      const collapseId = collapseSelectionId.value;
+      gestureMode.value = '';
+      draggingObjectId.value = '';
+      tapOpensEditor.value = '';
+      collapseSelectionId.value = '';
+      dragMoved.value = false;
+
+      if (mode === 'marquee') {
+        const rect: CanvasRect = {
+          x: Math.min(marqueeStartX.value, marqueeEndX.value),
+          y: Math.min(marqueeStartY.value, marqueeEndY.value),
+          width: Math.abs(marqueeEndX.value - marqueeStartX.value),
+          height: Math.abs(marqueeEndY.value - marqueeStartY.value),
+        };
+        if (rect.width >= 2 || rect.height >= 2) runOnJS(selectInMarquee)(rect);
+        return;
+      }
+      if (mode === 'move' || mode === 'resize' || mode === 'rotate') {
+        if (mode === 'move' && !moved) {
+          if (collapseId !== '') runOnJS(selectObjects)([collapseId]);
+          else if (opensEditor !== '' && hitId !== '') runOnJS(editObject)(hitId);
+        }
+        runOnJS(commitPending)();
+        return;
+      }
+      if (mode === 'pan') {
+        runOnJS(commitViewport)(offsetX.value, offsetY.value, scale.value);
+      }
+    });
+
+  /** Long-press on empty canvas turns the active pan into a marquee drag. */
+  const marqueeGesture = Gesture.LongPress()
+    .enabled(activeTool === 'select')
+    .numberOfPointers(1)
+    .minDuration(MARQUEE_HOLD_MS)
+    .maxDistance(8)
+    .onStart(() => {
+      if (gestureMode.value !== 'pan') return;
+      gestureMode.value = 'marquee';
+      marqueeStartX.value = touchStartCanvasX.value;
+      marqueeStartY.value = touchStartCanvasY.value;
+      marqueeEndX.value = touchStartCanvasX.value;
+      marqueeEndY.value = touchStartCanvasY.value;
+      offsetX.value = startX.value;
+      offsetY.value = startY.value;
+      // Undo any sub-threshold pan that landed before the hold completed.
+      runOnJS(commitViewport)(startX.value, startY.value, scale.value);
     });
 
   const objectTap = Gesture.Tap()
@@ -493,7 +681,7 @@ export function CanvasViewport({
           : activeTool === 'shape' || activeTool === 'connector'
             ? shapeGesture
             : selectGesture;
-  const gesture = Gesture.Simultaneous(primaryGesture, pinchGesture);
+  const gesture = Gesture.Simultaneous(primaryGesture, marqueeGesture, pinchGesture);
 
   const transform = useDerivedValue(() => [
     { translateX: offsetX.value },
@@ -501,6 +689,10 @@ export function CanvasViewport({
     { scale: scale.value },
   ]);
   const eraserRadiusCanvas = useDerivedValue(() => eraserRadiusForScale(eraserRadius, scale.value));
+  const marqueeX = useDerivedValue(() => Math.min(marqueeStartX.value, marqueeEndX.value));
+  const marqueeY = useDerivedValue(() => Math.min(marqueeStartY.value, marqueeEndY.value));
+  const marqueeWidth = useDerivedValue(() => Math.abs(marqueeEndX.value - marqueeStartX.value));
+  const marqueeHeight = useDerivedValue(() => Math.abs(marqueeEndY.value - marqueeStartY.value));
   const renderedStrokes = useMemo(
     () => (activeStroke ? [...document.strokes, activeStroke] : document.strokes),
     [document.strokes, activeStroke],
@@ -527,17 +719,9 @@ export function CanvasViewport({
                 strokeWidth={1.5}
               />
             )}
-            {/* During creation the draft shape gets its selection border, but no
-                edit/delete controls are shown until the drag is committed. */}
-            {draftObject && <GeometricObjectView object={draftObject} dark={dark} selected selectionColor={theme.primary} />}
+            {draftObject && <GeometricObjectView object={draftObject} dark={dark} />}
             {document.objects.filter(isGeometricObject).map((object) => (
-              <GeometricObjectView
-                key={object.id}
-                object={object}
-                dark={dark}
-                selected={selectedObjectId === object.id}
-                selectionColor={theme.primary}
-              />
+              <GeometricObjectView key={object.id} object={object} dark={dark} />
             ))}
           </Group>
         </Canvas>
@@ -548,8 +732,6 @@ export function CanvasViewport({
           key={object.id}
           object={object}
           dark={dark}
-          selectionColor={theme.primary}
-          selected={selectedObjectId === object.id}
           hidden={editingObjectId === object.id}
           offsetX={offsetX}
           offsetY={offsetY}
@@ -557,6 +739,43 @@ export function CanvasViewport({
           onMeasure={onObjectMeasure}
         />
       ))}
+
+      {/*
+        Text and sticky notes are native views above the drawing canvas, so the
+        selection frame and marquee get their own transparent Skia layer above
+        them. It never receives touches: the gesture detector below owns them.
+      */}
+      {activeTool === 'select' && !editing && (
+        <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
+          <Group transform={transform}>
+            {selectedObjects.length > 0 && (
+              <SelectionOverlay
+                objects={selectedObjects}
+                dark={dark}
+                scale={viewport.scale}
+              />
+            )}
+            <Rect
+              x={marqueeX}
+              y={marqueeY}
+              width={marqueeWidth}
+              height={marqueeHeight}
+              color={theme.primary}
+              opacity={0.12}
+              style="fill"
+            />
+            <Rect
+              x={marqueeX}
+              y={marqueeY}
+              width={marqueeWidth}
+              height={marqueeHeight}
+              color={theme.primary}
+              style="stroke"
+              strokeWidth={1.5 / Math.max(viewport.scale, 0.5)}
+            />
+          </Group>
+        </Canvas>
+      )}
 
       <View style={styles.hud} pointerEvents="box-none">
         <View style={[styles.viewBadge, { backgroundColor: theme.surface, borderColor: theme.border }]} pointerEvents="none" accessibilityLabel={`Zoom ${zoomLabel}`}>
@@ -597,9 +816,6 @@ function InkStrokeView({ stroke, dark }: { stroke: InkStroke; dark: boolean }) {
 type CanvasObjectViewProps = {
   object: TextualObject;
   dark: boolean;
-  /** Theme-aware selection outline colour. */
-  selectionColor: string;
-  selected: boolean;
   hidden: boolean;
   offsetX: { value: number };
   offsetY: { value: number };
@@ -612,7 +828,7 @@ type CanvasObjectViewProps = {
  * selectable by the platform text stack and makes them cheap to move: the frame
  * follows the viewport shared values without a React re-render per frame.
  */
-function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offsetX, offsetY, scale, onMeasure }: CanvasObjectViewProps) {
+function CanvasObjectView({ object, dark, hidden, offsetX, offsetY, scale, onMeasure }: CanvasObjectViewProps) {
   const lineHeight = textLineHeight(object.fontSize);
   const fill = objectFill(object);
   const textColor = objectTextColor(object, dark);
@@ -633,9 +849,8 @@ function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offs
     width: object.width * scale.value,
     height: object.height * scale.value,
     borderRadius: radii.sm * scale.value,
-    borderWidth: 1.5,
-    borderColor: selected ? selectionColor : 'transparent',
-  }), [object, selected, selectionColor]);
+    transform: [{ rotate: `${object.rotation}deg` }],
+  }), [object]);
   const text = useAnimatedStyle(() => ({
     fontSize: object.fontSize * scale.value,
     lineHeight: lineHeight * scale.value,
@@ -669,39 +884,41 @@ function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offs
 function GeometricObjectView({
   object,
   dark,
-  selected,
-  selectionColor,
 }: {
   object: ShapeObject | ConnectorObject;
   dark: boolean;
-  selected: boolean;
-  selectionColor: string;
 }) {
-  const color = object.type === 'connector'
-    ? textColorValue(object.colorKey, dark)
-    : textColorValue(object.colorKey, dark);
+  const color = textColorValue(object.colorKey, dark);
   const connectorPoints = object.type === 'connector'
     ? connectorPolyline(object.style, object.x, object.y, object.width, object.height, object.direction)
     : null;
   const linePointPair = object.type === 'shape' && object.shape === 'line'
     ? linePoints(object.x, object.y, object.width, object.height, object.direction)
     : null;
+  const origin = {
+    x: object.x + object.width / 2,
+    y: object.y + object.height / 2,
+  };
+  const transform = object.rotation === 0
+    ? undefined
+    : [{ rotate: (object.rotation * Math.PI) / 180 }];
+
+  let content: ReactNode;
   if (object.type === 'connector' || object.shape === 'line') {
     const linePointsList = object.type === 'connector' ? connectorPoints! : [linePointPair!.start, linePointPair!.end];
     const path = Skia.Path.MakeFromSVGString(polylinePathData(linePointsList)) ?? Skia.Path.Make();
     const arrowPath = object.type === 'connector' && object.style === 'arrow'
       ? Skia.Path.MakeFromSVGString(arrowHeadPathData(linePointsList, arrowHeadSize(object.strokeWidth)))
       : null;
-    return (
+    content = (
       <>
-        <Path path={path} color={selected ? selectionColor : color} style="stroke" strokeWidth={object.strokeWidth} strokeCap="round" strokeJoin="round" />
-        {arrowPath && <Path path={arrowPath} color={selected ? selectionColor : color} style="fill" />}
+        <Path path={path} color={color} style="stroke" strokeWidth={object.strokeWidth} strokeCap="round" strokeJoin="round" />
+        {arrowPath && <Path path={arrowPath} color={color} style="fill" />}
       </>
     );
-  }
-  if (object.shape === 'ellipse') {
-    return (
-      <SelectableGeometry selected={selected} selectionColor={selectionColor} bounds={object} shape="ellipse">
+  } else if (object.shape === 'ellipse') {
+    content = (
+      <>
         {object.fillKey && <Oval x={object.x} y={object.y} width={object.width} height={object.height} color={stickyColorValue(object.fillKey)} style="fill" />}
         <Oval
           x={object.x}
@@ -712,57 +929,107 @@ function GeometricObjectView({
           style="stroke"
           strokeWidth={object.strokeWidth}
         />
-      </SelectableGeometry>
+      </>
+    );
+  } else {
+    content = (
+      <>
+        {object.fillKey && <Rect x={object.x} y={object.y} width={object.width} height={object.height} color={stickyColorValue(object.fillKey)} style="fill" />}
+        <Rect
+          x={object.x}
+          y={object.y}
+          width={object.width}
+          height={object.height}
+          color={color}
+          style="stroke"
+          strokeWidth={object.strokeWidth}
+        />
+      </>
     );
   }
-  return (
-    <SelectableGeometry selected={selected} selectionColor={selectionColor} bounds={object} shape="rectangle">
-      {object.fillKey && <Rect x={object.x} y={object.y} width={object.width} height={object.height} color={stickyColorValue(object.fillKey)} style="fill" />}
-      <Rect
-        x={object.x}
-        y={object.y}
-        width={object.width}
-        height={object.height}
-        color={color}
-        style="stroke"
-        strokeWidth={object.strokeWidth}
-      />
-    </SelectableGeometry>
-  );
+
+  return <Group origin={origin} transform={transform}>{content}</Group>;
 }
 
 /**
- * Selection border that belongs to the object itself. It is drawn inside the
- * same Skia group as the geometry, so it tracks the object's real bounds
- * instead of floating above it as an absolutely positioned native view.
+ * The selection frame and handles live in the canvas group, so they track the
+ * object at every pan and zoom without a native overlay. A single object shows
+ * four resize corners and a rotate stem; a multi-selection shows the union box.
  */
-function SelectableGeometry({
-  selected,
-  selectionColor,
-  bounds,
-  shape,
-  children,
+function SelectionOverlay({
+  objects,
+  dark,
+  scale,
 }: {
-  selected: boolean;
-  selectionColor: string;
-  bounds: { x: number; y: number; width: number; height: number };
-  shape: 'rectangle' | 'ellipse';
-  children: ReactNode;
+  objects: CanvasObject[];
+  dark: boolean;
+  scale: number;
 }) {
-  // A tiny gap keeps the object's own stroke visible inside the selection
-  // outline without adding a bulky frame around it.
-  const gap = 2;
-  const x = bounds.x - gap;
-  const y = bounds.y - gap;
-  const width = bounds.width + gap * 2;
-  const height = bounds.height + gap * 2;
+  const theme = dark ? darkColors : colors;
+  const corners = selectionCorners(objects);
+  if (corners.length < 2) return null;
+  const safeScale = Math.max(scale, 0.5);
+  const strokeWidth = 1.5 / safeScale;
+  const handleSize = SELECTION_HANDLE_SCREEN / safeScale;
+  const handles = objects.length === 1
+    ? selectionHandlePositions(objects, ROTATE_HANDLE_OFFSET_SCREEN / safeScale)
+    : null;
+  const boxPath = Skia.Path.MakeFromSVGString(`${polylinePathData(corners)} Z`) ?? Skia.Path.Make();
+  const topMiddle = {
+    x: (corners[0].x + corners[1].x) / 2,
+    y: (corners[0].y + corners[1].y) / 2,
+  };
+  const stemPath = handles
+    ? Skia.Path.MakeFromSVGString(`M ${topMiddle.x} ${topMiddle.y} L ${handles.rotate.x} ${handles.rotate.y}`) ?? Skia.Path.Make()
+    : null;
+
   return (
-    <Group>
-      {children}
-      {selected && (shape === 'ellipse'
-        ? <Oval x={x} y={y} width={width} height={height} color={selectionColor} style="stroke" strokeWidth={1.5} />
-        : <Rect x={x} y={y} width={width} height={height} color={selectionColor} style="stroke" strokeWidth={1.5} />)}
-    </Group>
+    <>
+      <Path path={boxPath} color={theme.primary} style="stroke" strokeWidth={strokeWidth} />
+      {handles && stemPath && (
+        <Path path={stemPath} color={theme.primary} style="stroke" strokeWidth={strokeWidth} />
+      )}
+      {handles && (
+        <>
+          <Circle
+            cx={handles.rotate.x}
+            cy={handles.rotate.y}
+            r={handleSize / 2}
+            color={theme.surface}
+            style="fill"
+          />
+          <Circle
+            cx={handles.rotate.x}
+            cy={handles.rotate.y}
+            r={handleSize / 2}
+            color={theme.primary}
+            style="stroke"
+            strokeWidth={strokeWidth}
+          />
+        </>
+      )}
+      {handles && RESIZE_HANDLES.map((handle) => (
+        <Group key={handle}>
+          <Rect
+            x={handles[handle].x - handleSize / 2}
+            y={handles[handle].y - handleSize / 2}
+            width={handleSize}
+            height={handleSize}
+            color={theme.surface}
+            style="fill"
+          />
+          <Rect
+            x={handles[handle].x - handleSize / 2}
+            y={handles[handle].y - handleSize / 2}
+            width={handleSize}
+            height={handleSize}
+            color={theme.primary}
+            style="stroke"
+            strokeWidth={strokeWidth}
+          />
+        </Group>
+      ))}
+    </>
   );
 }
 

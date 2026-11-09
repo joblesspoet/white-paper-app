@@ -199,6 +199,15 @@ export function StyleIcon({ size = 24, color = colors.foreground }: IconProps) {
   );
 }
 
+export function DuplicateIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Rect x={8} y={8} width={12} height={12} rx={2} stroke={color} strokeWidth={2} />
+      <Path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke={color} strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 export function TrashIcon({ size = 24, color = colors.foreground }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
