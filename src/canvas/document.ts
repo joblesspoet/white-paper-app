@@ -963,7 +963,9 @@ export type DocumentAction =
   | { type: 'command'; command: DocumentCommand; transient?: boolean }
   | { type: 'commit' }
   | { type: 'undo' }
-  | { type: 'redo' };
+  | { type: 'redo' }
+  /** Correct a text object's height from the real rendered line count. */
+  | { type: 'measure'; id: string; height: number };
 
 export type DocumentHistory = History<CanvasDocument>;
 
@@ -1006,6 +1008,20 @@ export function documentReducer(state: DocumentHistory, action: DocumentAction):
       return undoHistory(state);
     case 'redo':
       return redoHistory(state);
+    case 'measure': {
+      const object = findObject(state.present, action.id);
+      if (!object || object.type !== 'text') return state;
+      const height = Math.max(1, Math.round(action.height));
+      if (Math.abs(object.height - height) < 1) return state;
+      // Measured layout is derived data, not an edit: it corrects the hit box
+      // without adding an undo step or clearing redo.
+      return {
+        ...state,
+        present: mapObject(state.present, action.id, (current) =>
+          current.type === 'text' ? { ...current, height } : current,
+        ),
+      };
+    }
     default:
       return state;
   }

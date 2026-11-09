@@ -307,6 +307,18 @@ assert.equal(canRedo(history), true);
 history = documentReducer(history, { type: 'redo' });
 assert.equal(history.present.objects.length, 1, 'redo restores it');
 
+// Real text layout corrects the estimated height without adding an undo step.
+const measuredHeight = 123;
+const measured = documentReducer(history, { type: 'measure', id: 'text-1', height: measuredHeight });
+assert.equal(findObject(measured.present, 'text-1')?.height, measuredHeight);
+assert.equal(measured.past.length, history.past.length, 'measuring is not an undoable edit');
+assert.equal(canRedo(measured), canRedo(history), 'measuring keeps redo available');
+assert.equal(
+  documentReducer(measured, { type: 'measure', id: 'text-1', height: measuredHeight }),
+  measured,
+  'the same measured height keeps the state',
+);
+
 // A drag hands in many transient moves but records one undo step from the grab point.
 const dragged = textObject('drag');
 history = createDocumentHistory(applyCommand(EMPTY_DOCUMENT, { type: 'object.insert', object: dragged }));

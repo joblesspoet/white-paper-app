@@ -75,7 +75,7 @@ The text, sticky-note, object sheet, and keyboard files listed in the previous s
 - Shape option custom colors currently use the shared palette keys; custom color picker integration for shape borders/fills can be expanded later if needed.
 - The command history is in memory only; reloading the app clears both the board and its undo/redo stacks.
 - Text and sticky objects render as native views layered over the Skia canvas rather than as Skia primitives; they are not drawn into a future image/PDF export until that slice decides how to rasterise text.
-- Object height is estimated from an average glyph width, so a selection frame can be a few units taller or shorter than the rendered text.
+- Object height starts from an average-glyph estimate, then the canvas measures the real rendered line count and corrects it, so bold/large text is not clipped.
 - Sticky notes keep their standard 112×112 size; resizing a note after typing is not implemented.
 - Editing blocks one-finger canvas gestures; two-finger pan/zoom still works while the keyboard is up.
 - Web export needs `react-dom` and `react-native-web`; it is not configured for this slice.

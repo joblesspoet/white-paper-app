@@ -219,6 +219,9 @@ export default function BoardEditorScreen() {
   const runCommand = useCallback((command: DocumentCommand, transient?: boolean) => {
     dispatch({ type: 'command', command, transient });
   }, []);
+  const measureObject = useCallback((id: string, height: number) => {
+    dispatch({ type: 'measure', id, height });
+  }, []);
   const commitPending = useCallback(() => dispatch({ type: 'commit' }), []);
   const closeObjectOptions = useCallback(() => setObjectOptionsVisible(false), []);
 
@@ -480,6 +483,7 @@ export default function BoardEditorScreen() {
               onObjectCreate={startNewObject}
               onObjectSelect={setSelectedObjectId}
               onObjectEdit={startEditingExisting}
+              onObjectMeasure={measureObject}
               onCanvasTouch={commitEditing}
             />
             {showGuidance && (

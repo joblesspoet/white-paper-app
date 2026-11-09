@@ -1,6 +1,6 @@
 import { Canvas, Circle, Group, Oval, Path, Rect, Skia } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View, type TextLayoutEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -110,6 +110,8 @@ type CanvasViewportProps = {
   onObjectCreate?: (type: 'text' | 'sticky', point: Point) => void;
   onObjectSelect?: (id: string | null) => void;
   onObjectEdit?: (id: string) => void;
+  /** Real rendered text height, used to correct the object's estimated height. */
+  onObjectMeasure?: (id: string, height: number) => void;
   /** A touch on the canvas while an object is being edited: commit the edit. */
   onCanvasTouch?: () => void;
 };
@@ -139,6 +141,7 @@ export function CanvasViewport({
   onObjectCreate,
   onObjectSelect,
   onObjectEdit,
+  onObjectMeasure,
   onCanvasTouch,
 }: CanvasViewportProps) {
   const theme = dark ? darkColors : colors;
@@ -551,6 +554,7 @@ export function CanvasViewport({
           offsetX={offsetX}
           offsetY={offsetY}
           scale={scale}
+          onMeasure={onObjectMeasure}
         />
       ))}
 
@@ -600,6 +604,7 @@ type CanvasObjectViewProps = {
   offsetX: { value: number };
   offsetY: { value: number };
   scale: { value: number };
+  onMeasure?: (id: string, height: number) => void;
 };
 
 /**
@@ -607,10 +612,21 @@ type CanvasObjectViewProps = {
  * selectable by the platform text stack and makes them cheap to move: the frame
  * follows the viewport shared values without a React re-render per frame.
  */
-function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offsetX, offsetY, scale }: CanvasObjectViewProps) {
+function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offsetX, offsetY, scale, onMeasure }: CanvasObjectViewProps) {
   const lineHeight = textLineHeight(object.fontSize);
   const fill = objectFill(object);
   const textColor = objectTextColor(object, dark);
+  const measuredHeight = useRef(object.height);
+  const handleTextLayout = useCallback((event: TextLayoutEvent) => {
+    // Only text objects grow with their content; a sticky note keeps its paper.
+    if (object.type !== 'text' || !onMeasure) return;
+    const lines = event.nativeEvent.lines.length;
+    if (lines === 0) return;
+    const height = lines * lineHeight + OBJECT_PADDING * 2;
+    if (Math.abs(measuredHeight.current - height) < 1) return;
+    measuredHeight.current = height;
+    onMeasure(object.id, height);
+  }, [lineHeight, object.id, object.type, onMeasure]);
   const frame = useAnimatedStyle(() => ({
     left: object.x * scale.value + offsetX.value,
     top: object.y * scale.value + offsetY.value,
@@ -634,6 +650,7 @@ function CanvasObjectView({ object, dark, selectionColor, selected, hidden, offs
       style={[styles.object, { backgroundColor: fill ?? 'transparent' }, frame]}
     >
       <Animated.Text
+        onTextLayout={handleTextLayout}
         style={[
           {
             color: textColor,
