@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from './AppButton';
 import { IMAGE_SOURCE_COPY, type ImageSource } from '../media/image-source';
@@ -13,11 +13,27 @@ type Props = {
 };
 
 export function ImageSourceSheet({ theme, errorMessage, onClose, onPick }: Props) {
+  const insets = useSafeAreaInsets();
   const sources: ImageSource[] = ['camera', 'library'];
   return (
-    <View style={[styles.layer, { backgroundColor: theme.background + 'E6' }]}>
-      <View style={[styles.sheet, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-        <View style={styles.header}>
+    <View style={styles.layer}>
+      <Pressable
+        style={styles.scrim}
+        onPress={onClose}
+        accessible={false}
+        importantForAccessibility="no-hide-descendants"
+      />
+      <View
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: theme.surface,
+            borderColor: theme.border,
+            paddingBottom: insets.bottom,
+          },
+        ]}
+      >
+        <View style={[styles.header, { borderBottomColor: theme.border }]}>
           <Text style={[styles.title, { color: theme.foreground }]}>Add image</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} style={styles.close}>
             <Text style={{ color: theme.foreground }}>Close</Text>
@@ -57,15 +73,17 @@ export function ImageSourceSheet({ theme, errorMessage, onClose, onPick }: Props
 
 const styles = StyleSheet.create({
   layer: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
+    flex: 1,
     justifyContent: 'flex-end',
   },
+  scrim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(19, 78, 74, 0.24)' },
   sheet: {
     width: '100%',
     borderTopLeftRadius: radii.lg,
     borderTopRightRadius: radii.lg,
-    borderWidth: 1,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
     maxHeight: '80%',
   },
   header: {
@@ -75,7 +93,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#99F6E4',
   },
   title: { ...typography.title },
   close: { padding: spacing.sm, minHeight: touchTarget, justifyContent: 'center' },

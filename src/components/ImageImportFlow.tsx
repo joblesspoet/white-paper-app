@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native';
 
 import { ImageCropScreen } from './ImageCropScreen';
 import { ImageSourceSheet } from './ImageSourceSheet';
@@ -19,8 +19,7 @@ import { imageImportErrorMessage, permissionDeniedMessage, type ImageSource } fr
 import { pickImage, type PickImageResult } from '../media/image-picker';
 import { toImageCrop, type PixelRect } from '../media/image-crop';
 import { createImageObject, type ImageCrop, type ImageObject, type Point } from '../canvas/document';
-import { radii, spacing, typography, type ThemeColors } from '../theme';
-
+import { spacing, typography, type ThemeColors } from '../theme';
 type FlowStep = 'source' | 'crop' | 'placing' | 'error';
 
 type Props = {
@@ -128,14 +127,20 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
         crop: cropMeta,
       });
       onPlace(placement);
-      setStep('source');
+      // The placed copy is stored durably, so the cache working copy is done
+      // with. Returning to the source sheet would make the user dismiss the
+      // flow again after every image.
+      void deleteFile(placedWorking.uri);
+      void deleteFile(working.uri);
       setWorking(null);
       setOriginal(null);
+      setStep('source');
+      onClose();
     } catch (error) {
       setErrorMessage(imageImportErrorMessage(error));
       setStep('crop');
     }
-  }, [working, original, boardId, rotation, point, onPlace]);
+  }, [working, original, boardId, rotation, point, onPlace, onClose]);
 
   const handleCancel = useCallback(() => {
     cleanupWorking();
@@ -149,36 +154,48 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
     onClose();
   }, [cleanupWorking, onClose]);
 
-  if (step === 'crop' && working) {
-    return (
-      <ImageCropScreen
-        theme={theme}
-        uri={working.uri}
-        width={working.width}
-        height={working.height}
-        initialRotation={0}
-        onDone={handleCropDone}
-        onCancel={handleCancel}
-      />
-    );
-  }
+  /** Android back / swipe: step back to the source sheet, or close the flow. */
+  const handleRequestClose = useCallback(() => {
+    if (step === 'placing') return;
+    if (step === 'crop') handleCancel();
+    else handleClose();
+  }, [step, handleCancel, handleClose]);
 
-  if (step === 'placing') {
-    return (
-      <View style={[styles.container, { backgroundColor: theme.background }]}>
-        <ActivityIndicator color={theme.primary} />
-        <Text style={[styles.text, { color: theme.foreground }]}>Preparing image…</Text>
-      </View>
-    );
-  }
-
+  // The whole flow lives in a Modal so it owns a window above the editor's top
+  // bar and action island; as a sibling view the chrome drew over the sheet and
+  // the crop stage was squeezed into the remaining flex space.
   return (
-    <ImageSourceSheet
-      theme={theme}
-      errorMessage={errorMessage}
-      onClose={handleClose}
-      onPick={startPick}
-    />
+    <Modal
+      visible
+      transparent
+      animationType="slide"
+      onRequestClose={handleRequestClose}
+      statusBarTranslucent
+    >
+      {step === 'crop' && working ? (
+        <ImageCropScreen
+          theme={theme}
+          uri={working.uri}
+          width={working.width}
+          height={working.height}
+          initialRotation={0}
+          onDone={handleCropDone}
+          onCancel={handleCancel}
+        />
+      ) : step === 'placing' ? (
+        <View style={[styles.container, { backgroundColor: theme.background }]}>
+          <ActivityIndicator color={theme.primary} />
+          <Text style={[styles.text, { color: theme.foreground }]}>Preparing image…</Text>
+        </View>
+      ) : (
+        <ImageSourceSheet
+          theme={theme}
+          errorMessage={errorMessage}
+          onClose={handleClose}
+          onPick={startPick}
+        />
+      )}
+    </Modal>
   );
 }
 

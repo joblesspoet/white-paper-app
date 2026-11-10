@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { SHAPE_COLORS, SHAPE_FILLS } from '../canvas/document';
+import { isCustomColor, SHAPE_COLORS, SHAPE_FILLS } from '../canvas/document';
 import { CONNECTOR_STROKE_WIDTHS, SHAPE_STROKE_WIDTHS, STROKE_WIDTH_LABELS, type ConnectorStyle, type ShapeKind } from '../canvas/shapes';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
-import { EllipseIcon, LineIcon, RectangleIcon } from './icons';
+import { ColorPicker } from './ColorPicker';
+import { EllipseIcon, LineIcon, PlusIcon, RectangleIcon } from './icons';
 
 type Props = {
   theme: ThemeColors;
@@ -42,6 +44,12 @@ export function ShapeOptionsSheet({
   const shape = mode === 'shape';
   const widths = shape ? SHAPE_STROKE_WIDTHS : CONNECTOR_STROKE_WIDTHS;
   const { height: windowHeight } = useWindowDimensions();
+  const [customTarget, setCustomTarget] = useState<'fill' | 'stroke' | null>(null);
+
+  const customFill = shapeFillKey ? isCustomColor(shapeFillKey) : false;
+  const strokeColorKey = shape ? shapeColorKey : connectorColorKey;
+  const customStroke = isCustomColor(strokeColorKey);
+
   // The sheet sits above the dock; cap it so the stroke row scrolls into view
   // on short screens instead of running off the bottom.
   const maxSheetHeight = Math.max(240, windowHeight - bottomOffset - spacing.lg);
@@ -58,23 +66,159 @@ export function ShapeOptionsSheet({
             <Text style={[styles.title, { color: theme.foreground }]}>{shape ? 'Shape options' : 'Connector options'}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Done" onPress={onDone} style={styles.done}><Text style={{ color: theme.primary }}>Done</Text></Pressable>
           </View>
-          {shape ? <>
-            <Text style={[styles.label, { color: theme.foreground }]}>Shape</Text>
-            <View style={styles.row}>{SHAPE_CHOICES.map(({ kind, label, Icon }) => (
-              <ShapeChoice key={kind} label={label} Icon={Icon} selected={shapeKind === kind} theme={theme} onPress={() => onShapeKind(kind)} />
-            ))}</View>
-            <Text style={[styles.label, { color: theme.foreground }]}>Fill</Text>
-            <View style={styles.row}><Choice label="None" selected={shapeFillKey === null} theme={theme} onPress={() => onShapeFill(null)} />{SHAPE_FILLS.slice(0, 8).map((entry) => <Pressable key={entry.key} accessibilityRole="radio" accessibilityLabel={`Fill ${entry.name}`} onPress={() => onShapeFill(entry.key)} style={[styles.swatch, { backgroundColor: entry.fill, borderColor: shapeFillKey === entry.key ? theme.primary : theme.border }]} />)}</View>
-            <Text style={[styles.label, { color: theme.foreground }]}>Border color</Text>
-            <View style={styles.row}>{SHAPE_COLORS.map((entry) => <Pressable key={entry.key} accessibilityRole="radio" accessibilityLabel={`Border color ${entry.name}`} onPress={() => onShapeColor(entry.key)} style={[styles.swatch, { backgroundColor: entry.light, borderColor: shapeColorKey === entry.key ? theme.primary : theme.border }]} />)}</View>
-          </> : <>
-            <Text style={[styles.label, { color: theme.foreground }]}>Connector style</Text>
-            <View style={styles.row}>{(['line', 'arrow', 'elbow'] as ConnectorStyle[]).map((value) => <Choice key={value} label={value} selected={connectorStyle === value} theme={theme} onPress={() => onConnectorStyle(value)} />)}</View>
-            <Text style={[styles.label, { color: theme.foreground }]}>Color</Text>
-            <View style={styles.row}>{SHAPE_COLORS.map((entry) => <Pressable key={entry.key} accessibilityRole="radio" accessibilityLabel={`Connector color ${entry.name}`} onPress={() => onConnectorColor(entry.key)} style={[styles.swatch, { backgroundColor: entry.light, borderColor: connectorColorKey === entry.key ? theme.primary : theme.border }]} />)}</View>
-          </>}
-          <Text style={[styles.label, { color: theme.foreground }]}>Stroke</Text>
-          <View style={styles.row}>{widths.map((value, index) => <Choice key={value} label={STROKE_WIDTH_LABELS[index]} selected={(shape ? shapeStrokeWidth : connectorStrokeWidth) === value} theme={theme} onPress={() => shape ? onShapeStrokeWidth(value) : onConnectorStrokeWidth(value)} />)}</View>
+          {customTarget === 'fill' ? (
+            <ColorPicker
+              theme={theme}
+              value={customFill && shapeFillKey ? shapeFillKey : '#BBF7D0'}
+              background={theme.background}
+              checkContrast={false}
+              onChange={(hex) => onShapeFill(hex)}
+              onClose={() => setCustomTarget(null)}
+            />
+          ) : customTarget === 'stroke' ? (
+            <ColorPicker
+              theme={theme}
+              value={customStroke ? strokeColorKey : '#134E4A'}
+              background={theme.background}
+              checkContrast={false}
+              onChange={(hex) => (shape ? onShapeColor(hex) : onConnectorColor(hex))}
+              onClose={() => setCustomTarget(null)}
+            />
+          ) : (
+            <>
+              {shape ? (
+                <>
+                  <Text style={[styles.label, { color: theme.foreground }]}>Shape</Text>
+                  <View style={styles.row}>
+                    {SHAPE_CHOICES.map(({ kind, label, Icon }) => (
+                      <ShapeChoice key={kind} label={label} Icon={Icon} selected={shapeKind === kind} theme={theme} onPress={() => onShapeKind(kind)} />
+                    ))}
+                  </View>
+                  <Text style={[styles.label, { color: theme.foreground }]}>Fill</Text>
+                  <View style={styles.row}>
+                    <Choice label="None" selected={shapeFillKey === null} theme={theme} onPress={() => onShapeFill(null)} />
+                    {SHAPE_FILLS.slice(0, 8).map((entry) => (
+                      <Pressable
+                        key={entry.key}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`Fill ${entry.name}`}
+                        onPress={() => onShapeFill(entry.key)}
+                        style={[
+                          styles.swatch,
+                          {
+                            backgroundColor: entry.fill,
+                            borderColor: shapeFillKey === entry.key ? theme.primary : theme.border,
+                          },
+                        ]}
+                      />
+                    ))}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={customFill ? `Custom fill ${shapeFillKey}` : 'Choose custom fill color'}
+                      onPress={() => setCustomTarget('fill')}
+                      style={[
+                        styles.swatch,
+                        styles.customSwatch,
+                        {
+                          borderColor: customFill ? theme.primary : theme.border,
+                          backgroundColor: customFill && shapeFillKey ? shapeFillKey : theme.muted,
+                        },
+                      ]}
+                    >
+                      {!customFill && <PlusIcon size={16} color={theme.foreground} />}
+                    </Pressable>
+                  </View>
+                  <Text style={[styles.label, { color: theme.foreground }]}>Border color</Text>
+                  <View style={styles.row}>
+                    {SHAPE_COLORS.map((entry) => (
+                      <Pressable
+                        key={entry.key}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`Border color ${entry.name}`}
+                        onPress={() => onShapeColor(entry.key)}
+                        style={[
+                          styles.swatch,
+                          {
+                            backgroundColor: entry.light,
+                            borderColor: shapeColorKey === entry.key ? theme.primary : theme.border,
+                          },
+                        ]}
+                      />
+                    ))}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={customStroke ? `Custom border color ${shapeColorKey}` : 'Choose custom border color'}
+                      onPress={() => setCustomTarget('stroke')}
+                      style={[
+                        styles.swatch,
+                        styles.customSwatch,
+                        {
+                          borderColor: customStroke ? theme.primary : theme.border,
+                          backgroundColor: customStroke ? shapeColorKey : theme.muted,
+                        },
+                      ]}
+                    >
+                      {!customStroke && <PlusIcon size={16} color={theme.foreground} />}
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Text style={[styles.label, { color: theme.foreground }]}>Connector style</Text>
+                  <View style={styles.row}>
+                    {(['line', 'arrow', 'elbow'] as ConnectorStyle[]).map((value) => (
+                      <Choice key={value} label={value} selected={connectorStyle === value} theme={theme} onPress={() => onConnectorStyle(value)} />
+                    ))}
+                  </View>
+                  <Text style={[styles.label, { color: theme.foreground }]}>Color</Text>
+                  <View style={styles.row}>
+                    {SHAPE_COLORS.map((entry) => (
+                      <Pressable
+                        key={entry.key}
+                        accessibilityRole="radio"
+                        accessibilityLabel={`Connector color ${entry.name}`}
+                        onPress={() => onConnectorColor(entry.key)}
+                        style={[
+                          styles.swatch,
+                          {
+                            backgroundColor: entry.light,
+                            borderColor: connectorColorKey === entry.key ? theme.primary : theme.border,
+                          },
+                        ]}
+                      />
+                    ))}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={customStroke ? `Custom connector color ${connectorColorKey}` : 'Choose custom connector color'}
+                      onPress={() => setCustomTarget('stroke')}
+                      style={[
+                        styles.swatch,
+                        styles.customSwatch,
+                        {
+                          borderColor: customStroke ? theme.primary : theme.border,
+                          backgroundColor: customStroke ? connectorColorKey : theme.muted,
+                        },
+                      ]}
+                    >
+                      {!customStroke && <PlusIcon size={16} color={theme.foreground} />}
+                    </Pressable>
+                  </View>
+                </>
+              )}
+              <Text style={[styles.label, { color: theme.foreground }]}>Stroke</Text>
+              <View style={styles.row}>
+                {widths.map((value, index) => (
+                  <Choice
+                    key={value}
+                    label={STROKE_WIDTH_LABELS[index]}
+                    selected={(shape ? shapeStrokeWidth : connectorStrokeWidth) === value}
+                    theme={theme}
+                    onPress={() => (shape ? onShapeStrokeWidth(value) : onConnectorStrokeWidth(value))}
+                  />
+                ))}
+              </View>
+            </>
+          )}
         </ScrollView>
       </View>
     </View>
@@ -102,4 +246,5 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, alignItems: 'center' },
   choice: { minWidth: touchTarget, minHeight: touchTarget, paddingHorizontal: spacing.sm, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
   swatch: { width: touchTarget, height: touchTarget, borderRadius: radii.sm, borderWidth: 2 },
+  customSwatch: { alignItems: 'center', justifyContent: 'center' },
 });

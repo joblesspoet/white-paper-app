@@ -88,6 +88,9 @@ import { ImageImportFlow } from '../src/components/ImageImportFlow';
 import { insertMediaAsset, type MediaAssetRecord } from '../src/persistence/repository';
 import { cropMetadata } from '../src/media/asset-store';
 import type { ImageObject } from '../src/canvas/document';
+import { InkingQuickTray } from '../src/components/InkingQuickTray';
+import { QuickCreationSheet, type InsertToolRequest } from '../src/components/QuickCreationSheet';
+import { ActionIsland, ACTION_ISLAND_HEIGHT } from '../src/components/ActionIsland';
 import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
 import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
@@ -180,6 +183,9 @@ export default function BoardEditorScreen() {
 
   const [imageFlowOpen, setImageFlowOpen] = useState(false);
   const [imageFlowId, setImageFlowId] = useState<string | null>(null);
+  const [quickCreationOpen, setQuickCreationOpen] = useState(false);
+  const [inkTrayOpen, setInkTrayOpen] = useState(false);
+  const [lastInkingTool, setLastInkingTool] = useState<FreehandTool | 'eraser'>('pen');
 
   const insertMediaAssetRow = useCallback(async (asset: MediaAssetRecord) => {
     if (!boardId) return;
@@ -614,6 +620,8 @@ export default function BoardEditorScreen() {
     });
   }, [document]);
 
+  const isInkingTool = activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser';
+
   const pressTool = useCallback((tool: InkTool) => {
     if (editingRef.current) commitEditing();
     setStylingObjectId(null);
@@ -621,14 +629,24 @@ export default function BoardEditorScreen() {
     if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') {
       setObjectOptionsVisible(false);
       setShapeOptionsVisible(false);
-      if (activeTool === tool) {
-        setInkOptionsVisible((visible) => !visible);
-        return;
-      }
+      setLastInkingTool(tool);
+      // The phone gets the compact tray under the Draw anchor; the tablet has
+      // no island, so its rail opens the full ink sheet instead.
+      const retap = activeTool === tool;
       setActiveTool(tool);
-      setInkOptionsVisible(true);
+      if (tablet) {
+        setInkTrayOpen(false);
+        if (retap) setInkOptionsVisible((visible) => !visible);
+        else setInkOptionsVisible(true);
+      } else {
+        setInkOptionsVisible(false);
+        if (retap) setInkTrayOpen((open) => !open);
+        else setInkTrayOpen(true);
+      }
       return;
     }
+    setInkTrayOpen(false);
+    setInkOptionsVisible(false);
     if (tool === 'shape' || tool === 'connector') {
       setObjectOptionsVisible(false);
       setShapeOptionsVisible((visible) => (activeTool === tool ? !visible : true));
@@ -639,9 +657,42 @@ export default function BoardEditorScreen() {
       setImageFlowOpen(true);
       return;
     }
-    setInkOptionsVisible(false);
     setActiveTool(tool);
-  }, [activeTool, boardId, commitEditing]);
+  }, [activeTool, boardId, commitEditing, tablet]);
+
+  const toggleInking = useCallback(() => {
+    if (editingRef.current) commitEditing();
+    setStylingObjectId(null);
+    setSelectedObjectIds([]);
+    setObjectOptionsVisible(false);
+    setShapeOptionsVisible(false);
+    if (activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser') {
+      setInkTrayOpen((open) => !open);
+    } else {
+      setActiveTool(lastInkingTool);
+      setInkTrayOpen(true);
+    }
+  }, [activeTool, commitEditing, lastInkingTool]);
+
+  const handleSelectInsert = useCallback((request: InsertToolRequest) => {
+    if (request.type === 'sticky') {
+      if (request.colorKey) setStickyColorKey(request.colorKey);
+      pressTool('sticky');
+    } else if (request.type === 'text') {
+      if (request.colorKey) setTextColorKey(request.colorKey);
+      pressTool('text');
+    } else if (request.type === 'shape') {
+      setShapeKind(request.shape);
+      pressTool('shape');
+    } else if (request.type === 'connector') {
+      setConnectorStyle(request.style);
+      pressTool('connector');
+    } else if (request.type === 'image') {
+      if (!boardId) return;
+      setImageFlowId(`${boardId}-${Date.now()}`);
+      setImageFlowOpen(true);
+    }
+  }, [boardId, pressTool]);
 
   const selectInkTool = useCallback((tool: FreehandTool) => {
     setActiveTool(tool);
@@ -667,7 +718,8 @@ export default function BoardEditorScreen() {
   const selectedObjects = document.objects.filter((object) => selectedObjectIds.includes(object.id));
   const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null;
   const sheetTool: InkSheetTool = activeTool === 'eraser' ? 'eraser' : activeTool === 'highlighter' ? 'highlighter' : 'pen';
-  const optionsBottom = tablet ? spacing.md : 84 + Math.max(spacing.sm, insets.bottom);
+  const islandBottom = Math.max(spacing.md, insets.bottom + spacing.xs);
+  const optionsBottom = tablet ? spacing.md : ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom;
   const showGuidance = !documentHasContent(document) && !editing;
   const editingTextObject = editing && isTextualObject(editing.object) ? editing.object : null;
   const overlayRect = editingTextObject ? objectScreenRect(editingTextObject, viewport) : null;
@@ -1012,7 +1064,69 @@ export default function BoardEditorScreen() {
           onClose={() => setInkOptionsVisible(false)}
         />
       )}
-      {!tablet && !editing && <ToolDock theme={theme} bottom={insets.bottom} activeTool={activeTool} onToolPress={pressTool} />}
+      {!tablet && !editing && isInkingTool && inkTrayOpen && (
+        <InkingQuickTray
+          theme={theme}
+          dark={dark}
+          activeTool={lastInkingTool}
+          color={color}
+          strokeWidth={strokeWidth}
+          eraserRadius={eraserRadius}
+          bottomOffset={ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom}
+          onToolChange={(tool) => {
+            setLastInkingTool(tool);
+            // Switching inside the tray keeps the tray open; only its
+            // "more options" button opens the full ink sheet.
+            setInkOptionsVisible(false);
+            setActiveTool(tool);
+          }}
+          onColorChange={setColor}
+          onWidthChange={setStrokeWidth}
+          onEraserRadiusChange={setEraserRadius}
+          onOpenFullOptions={() => {
+            setInkTrayOpen(false);
+            setInkOptionsVisible(true);
+          }}
+        />
+      )}
+      {!tablet && !editing && (
+        <ActionIsland
+          theme={theme}
+          bottom={islandBottom}
+          activeTool={activeTool}
+          inkTool={lastInkingTool}
+          inkColor={color}
+          stickyColorKey={stickyColorKey}
+          insertOpen={quickCreationOpen}
+          onSelect={() => pressTool('select')}
+          onDraw={toggleInking}
+          onSticky={() => pressTool('sticky')}
+          onInsert={() => {
+            setInkTrayOpen(false);
+            setInkOptionsVisible(false);
+            setObjectOptionsVisible(false);
+            setShapeOptionsVisible(false);
+            setQuickCreationOpen(true);
+          }}
+        />
+      )}
+      {!tablet && !editing && (
+        <QuickCreationSheet
+          theme={theme}
+          dark={dark}
+          visible={quickCreationOpen}
+          onClose={() => setQuickCreationOpen(false)}
+          onSelectInsert={handleSelectInsert}
+          onOpenShapeOptions={(kind) => {
+            pressTool(kind);
+            setShapeOptionsVisible(true);
+          }}
+          onOpenObjectOptions={(kind) => {
+            pressTool(kind);
+            setObjectOptionsVisible(true);
+          }}
+        />
+      )}
       {imageFlowOpen && imageFlowId && boardId && (
         <ImageImportFlow
           key={imageFlowId}
@@ -1036,41 +1150,28 @@ export default function BoardEditorScreen() {
 function ToolRail({ theme, activeTool, onToolPress }: { theme: ThemeColors; activeTool: InkTool; onToolPress: (tool: InkTool) => void }) {
   return (
     <View style={[styles.rail, { borderRightColor: theme.border }]}>
-      {TOOLS.map((definition) => (
-        <Tool key={definition.tool} theme={theme} definition={definition} selected={activeTool === definition.tool} onPress={() => onToolPress(definition.tool)} />
-      ))}
+      {TOOLS.map((definition) => {
+        const { Icon, label, tool } = definition;
+        const selected = activeTool === tool;
+        const color = selected ? theme.primary : theme.foreground;
+        return (
+          <Pressable
+            key={tool}
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            accessibilityHint={tool !== 'select' ? 'Opens the tool options when selected again' : undefined}
+            accessibilityState={{ selected }}
+            onPress={() => onToolPress(tool)}
+            style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+          >
+            <View style={[styles.toolIconWrap, selected && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+              <Icon size={22} color={color} />
+            </View>
+            <Text style={[styles.toolLabel, { color }]} numberOfLines={1}>{label}</Text>
+          </Pressable>
+        );
+      })}
     </View>
-  );
-}
-
-function ToolDock({ theme, bottom, activeTool, onToolPress }: { theme: ThemeColors; bottom: number; activeTool: InkTool; onToolPress: (tool: InkTool) => void }) {
-  return (
-    <View style={[styles.dock, { backgroundColor: theme.surface, borderColor: theme.border, paddingBottom: Math.max(spacing.sm, bottom) }]}>
-      {TOOLS.map((definition) => (
-        <Tool key={definition.tool} theme={theme} definition={definition} selected={activeTool === definition.tool} onPress={() => onToolPress(definition.tool)} />
-      ))}
-    </View>
-  );
-}
-
-function Tool({ theme, definition, onPress, selected }: { theme: ThemeColors; definition: typeof TOOLS[number]; onPress: () => void; selected: boolean }) {
-  const { Icon, label, tool } = definition;
-  const color = selected ? theme.primary : theme.foreground;
-  const hasOptions = tool !== 'select';
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityHint={hasOptions ? 'Opens the tool options when selected again' : undefined}
-      accessibilityState={{ selected }}
-      onPress={onPress}
-      style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-    >
-      <View style={[styles.toolIconWrap, selected && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-        <Icon size={22} color={color} />
-      </View>
-      <Text style={[styles.toolLabel, { color }]} numberOfLines={1}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -1089,7 +1190,7 @@ const styles = StyleSheet.create({
   canvasGuidance: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.lg },
   canvasTitle: { ...typography.subtitle },
   canvasBody: { ...typography.body, opacity: 0.7, textAlign: 'center' },
-  dock: { minHeight: 76, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', borderTopWidth: 1, paddingTop: spacing.sm },
+  /** Tablet tool rail entries (the phone layout uses ActionIsland). */
   tool: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2, gap: 2 },
   toolIconWrap: { width: 34, height: 30, borderWidth: 1, borderColor: 'transparent', borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
   toolLabel: { ...typography.caption, fontSize: 11, textAlign: 'center' },

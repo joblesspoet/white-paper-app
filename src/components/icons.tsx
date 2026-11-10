@@ -182,6 +182,16 @@ export function ConnectorIcon({ size = 24, color = colors.foreground }: IconProp
   );
 }
 
+/** Elbow connector: a right-angled run that turns at a corner. */
+export function ElbowIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M4 4v11a2 2 0 0 0 2 2h13" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M15 13l4 4-4 4" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
 export function StickyIcon({ size = 24, color = colors.foreground }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

@@ -14,6 +14,10 @@ Image import (Milestone 3).
 - Durability and relaunch: board document and media asset records persist in SQLite; relaunch recovery from an on-disk database restores original/placed asset links and crop metadata identically (`documentsEqual`). Corrupt image rows are skipped without damaging the board.
 - Next task is local OCR.
 
+`implemented-unverified` — three defects in the image and inking surfaces are fixed. (1) The crop screen crashed the app on the first drag: `react-native-worklets/plugin` is auto-enabled by `babel-preset-expo`, so every `Gesture.Pan()/Pinch()/Tap()` callback in `src/components/ImageCropScreen.tsx` was workletized onto the UI thread while it called plain JS (`setTransform`, `rotatedSize`, `clampCropTransform`), which Reanimated aborts fatally. Those three gestures now declare `.runOnJS(true)`, matching how `CanvasViewport` already wraps its JS calls in `runOnJS`. (2) The image flow was a sibling view inside the editor root, so the editor top bar and action island drew over the "Add image" sheet and the crop stage was squeezed into the leftover flex space. `ImageImportFlow` now renders in its own `Modal` (`transparent`, `slide`, `statusBarTranslucent`, `onRequestClose`), and the sheet and crop screen carry safe-area insets. (3) The inking tray was a single row of ~480pt of controls and always overflowed a phone; it is now two centred rows that fit a 320pt screen with the same 44pt targets.
+
+`implemented-unverified` — the phone tool dock is now a two-tier action island. Tier one is a four-anchor capsule — Select, Draw, Note, and a filled Insert button — each a 48pt target with a selected tint, an accessibility label and hint, and a live indicator (the Draw anchor shows the inking tool it will resume plus the current pen colour; the Note anchor shows the current pastel). The nine former flat tools no longer need a slot: Draw opens the compact inking tray, Note opens the note style sheet, and Insert opens a slide-up "Insert object" sheet holding Text block, Sticky note, the note and text quick-colour rows with custom pickers, Shapes (rectangle, ellipse, line), Connectors (arrow, line, elbow), and a Photo card that enters the existing image flow. Every sheet stacks above the pill at `ACTION_ISLAND_HEIGHT` instead of covering it. The island and sheets are flat — depth comes from a 1px border, never a drop shadow — and the 15-swatch rows that overflowed the old dock are replaced by six pastels, six text colours, and a `+` that opens the full HSV picker. The two-tier dock is phone-only; the tablet tool rail, undo/redo, the drawing engine, and SQLite persistence are unchanged.
+
 `implemented-unverified` — boards now live in an on-device SQLite store instead of React state. `expo-sqlite` opens `flowcanvas.db` with WAL and foreign keys enabled, runs append-only migrations tracked by `PRAGMA user_version`, and defines versioned tables for boards, pages, canvas objects (including ink strokes), and media references. Home reads the board list from SQLite, board creation and title edits are written through a serialized queue, and the editor loads a board's document plus viewport on open. Document changes autosave after a 700 ms quiet period, viewport changes after 900 ms, and both flush when the app backgrounds or the editor closes. A corrupt object row is skipped, a store written by a newer schema is refused instead of damaged, and a failed read or write leaves the in-memory board editable with an alert banner. Pure verification runs the real SQL and migrations against Node's built-in SQLite, including an on-disk close/reopen restart; the native expo-sqlite binding and device kill/relaunch have not been exercised in this environment.
 
 `implemented-unverified` — selection and transforms work for every current object type: rotation-aware hit testing, a single-object bounding box with four corner resize handles and a rotate handle, long-press marquee multi-selection, move, resize, rotate, duplicate, delete, and object inspector actions. All gesture points are converted from screen to canvas space, and handle sizes and minimum resize limits use the current zoom, so pan and zoom cannot skew a transform. Every transform merges its pointer samples into one undo entry; multi-duplicate and multi-delete use one batched history command. Pure verification and typecheck pass; simulator touch testing remains unavailable in this environment.
@@ -23,6 +27,19 @@ Image import (Milestone 3).
 Selection and editing are capability-aware: text and sticky notes expose text editing plus colour, size, bold, and italic style, shapes and connectors expose duplicate, style, and delete, images expose duplicate and delete with proportional scaling, and ink is not selectable. A single selection shows `Edit` (textual only), `Style` (textual/geometric), `Duplicate`, and `Delete`; an image selection shows `Duplicate` and `Delete`; a multi-selection shows `Duplicate` and `Delete`. Every action has an explicit accessibility label and hint.
 
 ## Completed slices
+- Two-tier action island and quick creation sheet (`src/components/ActionIsland.tsx`, `src/components/QuickCreationSheet.tsx`, `src/components/InkingQuickTray.tsx`):
+  - tier one is a four-anchor capsule pill — `Select`, `Draw`, `Note`, and a filled primary `Insert` button — replacing the nine-button dock; every anchor is a 48pt target with `accessibilityLabel`/`accessibilityHint`/`accessibilityState`;
+  - the pill reports expansion to assistive tech (`expanded` on Insert) and tints the active anchor instead of only recolouring an icon;
+  - `Draw` resumes the last inking tool (`pen`, `highlighter`, or `eraser`), shows that tool's icon plus a dot in the current pen colour, and toggles the compact inking tray;
+  - `Note` arms the sticky tool and opens the note style sheet, with a dot in the current pastel;
+  - `Insert` opens the tier-two sheet: Text block, Sticky note, note and text quick-colour rows (six presets each plus a `+` that opens the shared HSV picker), Shapes (rectangle, ellipse, line), Connectors (arrow, line, elbow), and a Photo card that hands off to the existing image import flow;
+  - each section carries a `Styles` action that arms the tool and opens the full style sheet, so the sheet stays a pickup point rather than a second options screen;
+  - the sheet is a real `Modal` (`transparent`, `animationType="slide"`, `statusBarTranslucent`, `onRequestClose`) with a safe-area bottom inset, a dimmed backdrop that dismisses it, and a scroll cap of 80% of the window height;
+  - a custom colour is drafted locally while the picker is open and applied when it is confirmed, so dragging the HSV field cannot fire an insert per pointer sample;
+  - the colour picker state is cleared whenever the sheet closes, so a half-finished custom pick is never waiting on the next open;
+  - `ACTION_ISLAND_HEIGHT` is the single source of truth for stacking the ink tray, note, and shape style sheets above the pill;
+  - flat design is enforced here: no drop shadows on the island, the sheet, or the inking tray — depth is a 1px border;
+  - small tray controls (24–36pt chips) keep their compact look but carry vertical `hitSlop` so their tap targets reach the 44pt minimum.
 - Image capture and import (`src/media/`, `src/components/Image*`):
   - `expo-image-picker`, `expo-image-manipulator`, and `expo-file-system` handle device camera/library access, resizing, rotation, and file operations;
   - iOS photo/camera usage descriptions and Android permissions configured in `app.json`;
@@ -50,7 +67,7 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - Expo Router stack with Home, Editor, and Settings routes.
 - Editor native header replaced with an in-app safe-area top bar.
 - Editable board title field, back navigation, undo/redo controls, and overflow affordance.
-- Responsive phone floating bottom tool dock and tablet vertical tool rail.
+- Two-tier phone action island and insert sheet; tablet keeps the vertical tool rail.
 - Canvas viewport: pure viewport model in `src/canvas/viewport.ts` with 0.5×–4× zoom, focal-point anchoring, and a `Reset view` action.
 - Pen, highlighter, eraser, and a compact ink options sheet.
 - Full shared colour palette (`src/canvas/document.ts`):
@@ -98,6 +115,12 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - Interactive controls use accessibility labels and 44pt minimum targets.
 
 ## Files changed
+- `src/components/ActionIsland.tsx` (new) — tier-one capsule pill with the four anchors, live ink and pastel indicators, and the exported `ACTION_ISLAND_HEIGHT` stacking constant.
+- `src/components/QuickCreationSheet.tsx` (new, rewritten) — tier-two slide-up insert sheet: text/notes, shapes, connectors, media, custom colour drafting, and the `InsertToolRequest` type the editor consumes.
+- `src/components/InkingQuickTray.tsx` (new) — compact inking tray behind the Draw anchor: tool segment, width/eraser presets, quick colours, and a route to the full ink options.
+- `src/components/icons.tsx` — added `ElbowIcon` for the elbow connector tile.
+- `src/components/ShapeOptionsSheet.tsx` — custom `#rrggbb` colour support so the sheet can show a colour picked in the insert sheet.
+- `app/editor.tsx` — `ActionIsland`, `InkingQuickTray`, and `QuickCreationSheet` wiring, `toggleInking` and `handleSelectInsert`, `islandBottom`/`optionsBottom` derived from `ACTION_ISLAND_HEIGHT`, and removal of the old `ToolDock`/`FloatingIsland` and their dead styles.
 - `src/media/image-crop.ts` (new) — pure crop geometry, cover scale, frame fitting, transform clamping, focal zoom, integer pixel crop calculation, quarter-turn rotation, and safe board segment helper.
 - `src/media/image-source.ts` (new) — user-facing copy for source sheet, permission denied guidance, and error formatting.
 - `src/media/image-picker.ts` (new) — thin wrapper for `expo-image-picker` camera and media library launchers with error and permission mapping.
@@ -111,6 +134,9 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - `src/components/icons.tsx` — `ImageIcon` SVG icon for toolbar dock.
 - `src/persistence/repository.ts` — `parseCanvasObject` and `objectStyle` serialization and deserialization for `image` canvas objects.
 - `app/editor.tsx` — Image tool button in dock, modal flow presentation, `placeImageObject` inserting image object and recording media asset rows in SQLite, image-specific selection rail actions (duplicate and delete).
+- `src/components/ImageImportFlow.tsx` — now presents the flow in a `Modal` so no editor chrome can draw above it, handles Android back per step, and dismisses after a successful placement.
+- `src/components/ImageCropScreen.tsx` — `.runOnJS(true)` on the pan, pinch, and double-tap gestures (fixes the UI-thread crash) and safe-area padding.
+- `src/components/ImageSourceSheet.tsx` — dimmed scrim that dismisses on tap, theme-tokened header border, and bottom safe-area inset.
 - `app.json` — `expo-image-picker` plugin configuration with camera and photo library usage descriptions, Android permissions.
 - `package.json` / `package-lock.json` — dependencies `expo-image-picker`, `expo-image-manipulator`, `expo-file-system`, and `test:image` verification script.
 - `scripts/verify-image.mts` (new) — comprehensive automated tests covering permissions, cancellations, large image bounds, crop maths, rotation, placement, proportional resize, undo/redo history, and persistence relaunch recovery.
@@ -137,6 +163,16 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - Touch interaction on actual mobile hardware was not exercised in this environment; manual testing of pinch-zoom crop is recommended.
 
 ## Decisions
+- Crop-screen gestures call `.runOnJS(true)` instead of being rewritten as worklets. The crop maths in `src/media/image-crop.ts` is shared with the pure verification suite, so keeping it plain JS and running the gesture callbacks on the JS thread avoids duplicating every helper as a worklet while removing the UI-thread crash.
+- Modal-based image import: the flow owns its own window so it cannot be interleaved with editor chrome, and it is the same primitive the insert sheet uses for the same reason.
+- The inking tray uses two fixed rows rather than a horizontal scroller. A drawing toolbar needs every control visible at once; a horizontal list hides options off-screen with no affordance and asks for a sideways drag that competes with the canvas pan gesture. Two rows also stay inside a 320pt-wide screen, which a single row of the same controls cannot.
+- The image flow dismisses itself after a successful placement, because the placed copy is already durable and leaving the source sheet up asked the user to close the flow twice.
+- The phone dock is two-tier because nine flat buttons cannot meet the 48pt target and the label legibility the design system asks for at once. Tier one holds the four things that are one tap away in practice; everything else lives in tier two.
+- `ACTION_ISLAND_HEIGHT` is exported from `ActionIsland` and consumed by `app/editor.tsx` so the ink tray and style sheets stack above the pill from a single number instead of a repeated magic offset.
+- The insert sheet is a `Modal` rather than an absolutely positioned `View`: it gets the platform slide animation, hardware back handling via `onRequestClose`, and correct modal focus for screen readers.
+- The insert sheet does not promise OCR. The media card is a plain "Photo" card; text recognition is still the next slice.
+- The island, the insert sheet, and the inking tray are flat. The design tokens forbid drop shadows, so depth is a 1px border and elevation is never used.
+- Quick-colour rows show six presets per kind with a `+` for the full picker, instead of the fifteen overflowing swatches the old dock carried.
 - Stored media asset paths are stored relative to the document directory (`media/<boardId>/...`) rather than as absolute paths, so app container path shifts across iOS/Android OS updates and restores never break image references.
 - Working image copies live in the cache directory (`flowcanvas-images`) and are purged upon placement or cancellation; only original and placed assets are durable.
 - Original source images are always preserved untouched alongside placed/cropped images, allowing future OCR re-runs or re-cropping from the source photo.

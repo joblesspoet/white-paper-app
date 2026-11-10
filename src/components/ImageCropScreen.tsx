@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   CheckIcon,
@@ -41,6 +42,7 @@ export function ImageCropScreen({
   onDone,
   onCancel,
 }: Props) {
+  const insets = useSafeAreaInsets();
   const [rotation, setRotation] = useState<ImageRotation>(initialRotation);
   const rotationRef = useRef<ImageRotation>(initialRotation);
   rotationRef.current = rotation;
@@ -58,6 +60,11 @@ export function ImageCropScreen({
   const gestureStart = useRef<CropTransform>(transform);
 
   const pan = Gesture.Pan()
+    // Reanimated workletizes gesture callbacks and runs them on the UI thread,
+    // but this crop maths and `setTransform` are plain JS. Running the callbacks
+    // on the JS thread keeps them synchronous instead of throwing a
+    // "non-worklet function on the UI thread" crash on the first drag.
+    .runOnJS(true)
     .onStart(() => {
       gestureStart.current = transformRef.current;
     })
@@ -82,6 +89,7 @@ export function ImageCropScreen({
     });
 
   const pinch = Gesture.Pinch()
+    .runOnJS(true)
     .onStart(() => {
       gestureStart.current = transformRef.current;
     })
@@ -106,6 +114,7 @@ export function ImageCropScreen({
 
   const doubleTap = Gesture.Tap()
     .numberOfTaps(2)
+    .runOnJS(true)
     .onEnd((event) => {
       const current = transformRef.current;
       const currentSize = rotatedSize(width, height, rotationRef.current);
@@ -181,7 +190,12 @@ export function ImageCropScreen({
   const imageOffsetY = (displayH - rawH) / 2;
 
   return (
-    <View style={[styles.root, { backgroundColor: theme.background }]}>
+    <View
+      style={[
+        styles.root,
+        { backgroundColor: theme.background, paddingTop: insets.top, paddingBottom: insets.bottom },
+      ]}
+    >
       <View style={styles.header}>
         <Text style={[styles.title, { color: theme.foreground }]}>Crop & Rotate</Text>
       </View>
