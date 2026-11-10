@@ -1199,6 +1199,8 @@ export type DocumentAction =
   | { type: 'commit' }
   | { type: 'undo' }
   | { type: 'redo' }
+  /** Replace the document with one loaded from local storage. */
+  | { type: 'hydrate'; document: CanvasDocument }
   /** Correct a text object's height from the real rendered line count. */
   | { type: 'measure'; id: string; height: number };
 
@@ -1233,6 +1235,10 @@ export function editingCommit(object: CanvasObject, isNew: boolean): DocumentCom
  */
 export function documentReducer(state: DocumentHistory, action: DocumentAction): DocumentHistory {
   switch (action.type) {
+    case 'hydrate':
+      // Loading a saved board starts a fresh history: undo must not walk back
+      // into an empty document that existed before the read finished.
+      return createHistory(action.document);
     case 'command': {
       const command = prepareDocumentCommand(state.present, action.command);
       return command ? executeCommand(state, command, action.transient ?? false) : state;

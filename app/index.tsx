@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'expo-router';
-import { FlatList, Modal, Pressable, StyleSheet, Text, useColorScheme, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, Text, useColorScheme, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from '../src/components/AppButton';
@@ -18,7 +18,7 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDark = useColorScheme() === 'dark';
   const theme = isDark ? darkColors : colors;
-  const { boards, createBoard } = useBoards();
+  const { boards, createBoard, ready, storageError } = useBoards();
   const [sheetVisible, setSheetVisible] = useState(false);
   const [canvasBackground, setCanvasBackground] = useState<'light' | 'dark'>(isDark ? 'dark' : 'light');
   const [canvasStyle, setCanvasStyle] = useState<'blank' | 'dots'>('blank');
@@ -35,7 +35,7 @@ export default function HomeScreen() {
   const openCustomize = useCallback(() => setSheetVisible(true), []);
   const createCustomizedBoard = useCallback(() => {
     setSheetVisible(false);
-    createBoardNow();
+    createBoardNow({ background: canvasBackground, style: canvasStyle, orientation });
   }, [canvasBackground, canvasStyle, createBoardNow, orientation]);
 
   const renderBoard = useCallback(({ item }: { item: BoardSummary }) => (
@@ -54,6 +54,17 @@ export default function HomeScreen() {
         </Pressable>
       </View>
 
+      {storageError && (
+        <View
+          accessibilityRole="alert"
+          style={[styles.storageBanner, { borderColor: theme.border, backgroundColor: theme.muted }]}
+        >
+          <Text style={[styles.storageBannerText, { color: theme.destructive }]}>
+            Local storage: {storageError} Boards stay usable in memory, and the next change retries the save.
+          </Text>
+        </View>
+      )}
+
       <FlatList
         key={columns}
         data={boards}
@@ -65,15 +76,22 @@ export default function HomeScreen() {
         ListHeaderComponent={<View><AppButton label="New board" accessibilityHint="Creates a blank board and opens it" onPress={() => createBoardNow()} /><Pressable accessibilityRole="button" accessibilityLabel="Customize new board" onPress={openCustomize} style={styles.customizeLink}><Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text></Pressable></View>}
         ListHeaderComponentStyle={styles.listHeader}
         ListEmptyComponent={
-          <View style={[styles.empty, { borderColor: theme.border, backgroundColor: theme.muted }]}>
-            <View style={[styles.emptyIcon, { backgroundColor: isDark ? theme.darkSurface : colors.background }]}><BoardIcon size={44} color={theme.primary} /></View>
-            <Text style={[styles.emptyTitle, { color: theme.foreground }]}>Start with a blank canvas</Text>
-            <Text style={[styles.emptyBody, { color: theme.foreground }]}>Capture thoughts, sketch ideas, and turn them into something useful.</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Create your first board" onPress={() => createBoardNow()} style={[styles.emptyButton, { backgroundColor: theme.accent }]}>
-              <PlusIcon />
-              <Text style={styles.emptyButtonText}>Create your first board</Text>
-            </Pressable>
-          </View>
+          !ready ? (
+            <View style={styles.loading}>
+              <ActivityIndicator color={theme.primary} />
+              <Text style={[styles.loadingText, { color: theme.foreground }]}>Opening your boards…</Text>
+            </View>
+          ) : (
+            <View style={[styles.empty, { borderColor: theme.border, backgroundColor: theme.muted }]}>
+              <View style={[styles.emptyIcon, { backgroundColor: isDark ? theme.darkSurface : colors.background }]}><BoardIcon size={44} color={theme.primary} /></View>
+              <Text style={[styles.emptyTitle, { color: theme.foreground }]}>Start with a blank canvas</Text>
+              <Text style={[styles.emptyBody, { color: theme.foreground }]}>Capture thoughts, sketch ideas, and turn them into something useful.</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel="Create your first board" onPress={() => createBoardNow()} style={[styles.emptyButton, { backgroundColor: theme.accent }]}>
+                <PlusIcon />
+                <Text style={styles.emptyButtonText}>Create your first board</Text>
+              </Pressable>
+            </View>
+          )
         }
         ListFooterComponent={boards.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Import a board" style={styles.import}><Text style={[styles.importText, { color: theme.primary }]}>Import a board</Text></Pressable> : undefined}
         showsVerticalScrollIndicator={false}

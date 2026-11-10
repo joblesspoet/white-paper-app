@@ -20,4 +20,8 @@ export const homeStyles = StyleSheet.create({
   emptyButtonText: { ...typography.bodyStrong, color: colors.onAccent },
   import: { minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', marginTop: spacing.lg },
   importText: { ...typography.bodyStrong },
+  storageBanner: { marginHorizontal: spacing.lg, marginBottom: spacing.md, padding: spacing.md, borderWidth: 1, borderRadius: radii.sm },
+  storageBannerText: { ...typography.caption, lineHeight: 18 },
+  loading: { alignItems: 'center', justifyContent: 'center', gap: spacing.sm, paddingVertical: spacing.xxl },
+  loadingText: { ...typography.body },
 });

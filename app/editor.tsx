@@ -1,6 +1,8 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useReducer, useRef, useState, type ComponentRef } from 'react';
 import {
+  ActivityIndicator,
+  AppState,
   Keyboard,
   Pressable,
   StyleSheet,
@@ -38,6 +40,7 @@ import {
   textLineHeight,
   withObjectStyle,
   withObjectText,
+  type CanvasDocument,
   type CanvasObject,
   type DocumentCommand,
   type ObjectStylePatch,
@@ -53,6 +56,14 @@ import {
 import type { FreehandTool } from '../src/canvas/ink';
 import { canvasRectToScreen, selectionActionRail, selectionBounds } from '../src/canvas/selection';
 import type { Point, Viewport } from '../src/canvas/viewport';
+import { storageErrorMessage } from '../src/persistence/errors';
+import { getLocalDatabase } from '../src/persistence/expo-store';
+import {
+  loadBoardDocument,
+  saveBoardDocument,
+  saveBoardViewport,
+} from '../src/persistence/repository';
+import { enqueuePersistenceWrite } from '../src/persistence/write-queue';
 import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
 import {
   ChevronRightIcon,
@@ -92,6 +103,18 @@ const TOOLS = [
 const INITIAL_VIEWPORT: Viewport = { x: 150, y: -80, scale: 2 };
 /** How long viewport reports may be batched before the editor re-renders. */
 const VIEWPORT_RENDER_INTERVAL = 60;
+/** Quiet period before a document change is written to SQLite. */
+const AUTOSAVE_DELAY = 700;
+/** Panning and zooming settle before the viewport itself is written. */
+const VIEWPORT_SAVE_DELAY = 900;
+
+function sameViewport(left: Viewport, right: Viewport): boolean {
+  return (
+    Math.abs(left.x - right.x) < 0.5 &&
+    Math.abs(left.y - right.y) < 0.5 &&
+    Math.abs(left.scale - right.scale) < 0.001
+  );
+}
 
 /** The object being edited, plus whether it still needs inserting into the board. */
 type Editing = { object: CanvasObject; isNew: boolean };
@@ -99,10 +122,13 @@ type Editing = { object: CanvasObject; isNew: boolean };
 export default function BoardEditorScreen() {
   const router = useRouter();
   const { boardId } = useLocalSearchParams<{ boardId?: string }>();
-  const { boards, updateTitle } = useBoards();
+  const { boards, updateTitle, touchBoard } = useBoards();
   const board = boards.find((item) => item.id === boardId);
   const [title, setTitle] = useState(board?.title ?? 'Untitled board');
-  useEffect(() => { if (board) setTitle(board.title); }, [board]);
+  // Adopt the stored title when the board first becomes available. Autosave
+  // metadata refreshes must not overwrite a title the user is typing.
+  const boardTitle = board?.title;
+  useEffect(() => { if (boardTitle) setTitle(boardTitle); }, [board?.id]);
   const insets = useSafeAreaInsets();
   const { width, height: windowHeight } = useWindowDimensions();
   const dark = useColorScheme() === 'dark';
@@ -159,6 +185,18 @@ export default function BoardEditorScreen() {
   const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [viewportRequest, setViewportRequest] = useState<ViewportRequest | null>(null);
 
+  // Local persistence: hydration, debounced autosave, and serialized writes.
+  const [hydrated, setHydrated] = useState(false);
+  const [initialViewport, setInitialViewport] = useState<Viewport>(INITIAL_VIEWPORT);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const documentRef = useRef<CanvasDocument>(document);
+  documentRef.current = document;
+  const hydratedRef = useRef(false);
+  const lastSavedDocument = useRef<CanvasDocument | null>(null);
+  const savedViewport = useRef<Viewport | null>(null);
+  const documentSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewportSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Keep the selected ink colour readable when the system theme changes without
   // overwriting a custom colour that is not part of the palette.
   useEffect(() => {
@@ -185,8 +223,149 @@ export default function BoardEditorScreen() {
     };
   }, []);
 
+  const enqueueWrite = useCallback((task: () => Promise<void>) => {
+    void enqueuePersistenceWrite(task).catch((error: unknown) => {
+      setStorageError(storageErrorMessage(error));
+    });
+  }, []);
+
+  const persistDocument = useCallback((snapshot: CanvasDocument, viewport: Viewport) => {
+    if (!boardId) return;
+    enqueueWrite(async () => {
+      const database = await getLocalDatabase();
+      await saveBoardDocument(database, boardId, snapshot, viewport);
+      lastSavedDocument.current = snapshot;
+      savedViewport.current = viewport;
+      setStorageError(null);
+      touchBoard(boardId, snapshot.strokes.length + snapshot.objects.length);
+    });
+  }, [boardId, enqueueWrite, touchBoard]);
+
+  /**
+   * Write the newest document and viewport right now. Used when the app leaves
+   * the foreground or the editor closes, so a debounce window cannot lose work.
+   */
+  const flushPendingSaves = useCallback(() => {
+    if (!boardId || !hydratedRef.current) return;
+    if (documentSaveTimer.current) {
+      clearTimeout(documentSaveTimer.current);
+      documentSaveTimer.current = null;
+    }
+    if (viewportSaveTimer.current) {
+      clearTimeout(viewportSaveTimer.current);
+      viewportSaveTimer.current = null;
+    }
+    const snapshot = documentRef.current;
+    const viewport = viewportLive.current;
+    const documentDirty = lastSavedDocument.current !== snapshot;
+    const viewportDirty = !savedViewport.current || !sameViewport(savedViewport.current, viewport);
+    if (!documentDirty && !viewportDirty) return;
+
+    enqueueWrite(async () => {
+      const database = await getLocalDatabase();
+      if (documentDirty) {
+        await saveBoardDocument(database, boardId, snapshot, viewport);
+        lastSavedDocument.current = snapshot;
+        savedViewport.current = viewport;
+        touchBoard(boardId, snapshot.strokes.length + snapshot.objects.length);
+      } else {
+        await saveBoardViewport(database, boardId, viewport);
+        savedViewport.current = viewport;
+      }
+      setStorageError(null);
+    });
+  }, [boardId, enqueueWrite, touchBoard]);
+
+  const scheduleViewportSave = useCallback((next: Viewport) => {
+    if (!boardId || !hydratedRef.current) return;
+    if (savedViewport.current && sameViewport(savedViewport.current, next)) return;
+    if (viewportSaveTimer.current) clearTimeout(viewportSaveTimer.current);
+    viewportSaveTimer.current = setTimeout(() => {
+      viewportSaveTimer.current = null;
+      const viewport = viewportLive.current;
+      if (!boardId || !hydratedRef.current) return;
+      if (savedViewport.current && sameViewport(savedViewport.current, viewport)) return;
+      enqueueWrite(async () => {
+        const database = await getLocalDatabase();
+        await saveBoardViewport(database, boardId, viewport);
+        savedViewport.current = viewport;
+        setStorageError(null);
+      });
+    }, VIEWPORT_SAVE_DELAY);
+  }, [boardId, enqueueWrite]);
+
+  // Load the saved board once. Rendering the canvas only after this finishes
+  // keeps CanvasViewport's initial viewport and the document in agreement.
+  useEffect(() => {
+    let cancelled = false;
+    hydratedRef.current = false;
+    setHydrated(false);
+    if (!boardId) {
+      hydratedRef.current = true;
+      lastSavedDocument.current = documentRef.current;
+      setHydrated(true);
+      return () => { cancelled = true; };
+    }
+    (async () => {
+      try {
+        const database = await getLocalDatabase();
+        const snapshot = await loadBoardDocument(database, boardId);
+        if (cancelled) return;
+        dispatch({ type: 'hydrate', document: snapshot.document });
+        lastSavedDocument.current = snapshot.document;
+        const saved = snapshot.viewport ?? INITIAL_VIEWPORT;
+        viewportLive.current = saved;
+        savedViewport.current = saved;
+        setInitialViewport(saved);
+        setViewport(saved);
+        setStorageError(null);
+      } catch (error) {
+        if (cancelled) return;
+        // A failed read must not block editing: keep the in-memory board and
+        // surface the problem while the next edit retries the store.
+        setStorageError(storageErrorMessage(error));
+        lastSavedDocument.current = documentRef.current;
+        savedViewport.current = viewportLive.current;
+      } finally {
+        if (!cancelled) {
+          hydratedRef.current = true;
+          setHydrated(true);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [boardId]);
+
+  // Debounced autosave. Reference equality is enough because every mutation
+  // produces a new document only when something actually changed.
+  useEffect(() => {
+    if (!hydrated || !boardId) return;
+    if (lastSavedDocument.current === document) return;
+    if (documentSaveTimer.current) clearTimeout(documentSaveTimer.current);
+    documentSaveTimer.current = setTimeout(() => {
+      documentSaveTimer.current = null;
+      persistDocument(documentRef.current, viewportLive.current);
+    }, AUTOSAVE_DELAY);
+    return () => {
+      if (documentSaveTimer.current) {
+        clearTimeout(documentSaveTimer.current);
+        documentSaveTimer.current = null;
+      }
+    };
+  }, [document, hydrated, boardId, persistDocument]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') flushPendingSaves();
+    });
+    return () => subscription.remove();
+  }, [flushPendingSaves]);
+
+  useEffect(() => () => flushPendingSaves(), [flushPendingSaves]);
+
   const reportViewport = useCallback((next: Viewport) => {
     viewportLive.current = next;
+    scheduleViewportSave(next);
     const now = Date.now();
     if (now - viewportFlushedAt.current >= VIEWPORT_RENDER_INTERVAL) {
       viewportFlushedAt.current = now;
@@ -200,7 +379,7 @@ export default function BoardEditorScreen() {
       viewportFlushedAt.current = Date.now();
       setViewport(viewportLive.current);
     }, VIEWPORT_RENDER_INTERVAL);
-  }, []);
+  }, [scheduleViewportSave]);
 
   const requestViewport = useCallback((next: Viewport) => {
     viewportLive.current = next;
@@ -452,7 +631,6 @@ export default function BoardEditorScreen() {
   const overlayFill = editingTextObject ? objectFill(editingTextObject) : undefined;
   const overlayTextColor = editingTextObject ? objectTextColor(editingTextObject, dark) : theme.foreground;
   const overlayLineHeight = editingTextObject ? textLineHeight(editingTextObject.fontSize) : 0;
-  const editingSheetBottom = keyboardHeight > 0 ? keyboardHeight + spacing.sm : insets.bottom + spacing.md;
   const selectedBounds = selectionBounds(selectedObjects);
   const selectedRect = selectedBounds && !editing ? canvasRectToScreen(selectedBounds, viewport) : null;
   // Only text and sticky notes have editable text. Shapes and connectors
@@ -507,187 +685,175 @@ export default function BoardEditorScreen() {
         </View>
       </View>
 
+      {storageError && (
+        <View
+          accessibilityRole="alert"
+          style={[styles.storageBanner, { borderColor: theme.border, backgroundColor: theme.muted }]}
+        >
+          <Text style={[styles.storageBannerText, { color: theme.destructive }]}>
+            Not saved: {storageError} The board stays editable and the next change retries the save.
+          </Text>
+        </View>
+      )}
+
       <View style={styles.workspace}>
         {tablet && <ToolRail theme={theme} activeTool={activeTool} onToolPress={pressTool} />}
-        <View
-          ref={canvasRef}
-          onLayout={measureCanvas}
-          style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}
-        >
-          <View style={styles.canvasClip}>
-            <CanvasViewport
-              dark={dark}
-              initialViewport={INITIAL_VIEWPORT}
-              activeTool={activeTool}
-              color={color}
-              width={strokeWidth}
-              opacity={opacity}
-              eraserRadius={eraserRadius}
-              shapeKind={shapeKind}
-              shapeColorKey={shapeColorKey}
-              shapeFillKey={shapeFillKey}
-              shapeStrokeWidth={shapeStrokeWidth}
-              connectorStyle={connectorStyle}
-              connectorColorKey={connectorColorKey}
-              connectorStrokeWidth={connectorStrokeWidth}
-              document={document}
-              selectedObjectIds={selectedObjectIds}
-              editingObjectId={editingId}
-              viewportRequest={viewportRequest}
-              onViewportChange={reportViewport}
-              onCommand={runCommand}
-              onCommitPending={commitPending}
-              onObjectCreate={startNewObject}
-              onSelectionChange={setSelectedObjectIds}
-              onObjectEdit={startEditingExisting}
-              onObjectMeasure={measureObject}
-              onCanvasTouch={commitEditing}
-            />
-            {showGuidance && (
-              <View pointerEvents="none" style={styles.canvasGuidance}>
-                <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
-                <Text style={[styles.canvasBody, { color: theme.foreground }]}>
-                  Draw with a pen, or tap the text and sticky-note tools to add a note.
-                </Text>
-              </View>
-            )}
-            {editingTextObject && overlayRect && (
-              <TextInput
-                multiline
-                autoFocus
-                accessibilityLabel={editingTextObject.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
-                value={editingTextObject.text}
-                onChangeText={(text) => updateDraft({ text })}
-                onBlur={commitEditing}
-                placeholder={editingTextObject.type === 'sticky' ? 'Write a note' : 'Type something'}
-                placeholderTextColor={`${overlayTextColor}80`}
-                selectionColor={theme.primary}
+        {!hydrated ? (
+          <View style={styles.editorLoading}>
+            <ActivityIndicator color={theme.primary} />
+            <Text style={[styles.editorLoadingText, { color: theme.foreground }]}>Opening board…</Text>
+          </View>
+        ) : (
+          <View
+            ref={canvasRef}
+            onLayout={measureCanvas}
+            style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}
+          >
+            <View style={styles.canvasClip}>
+              <CanvasViewport
+                dark={dark}
+                initialViewport={initialViewport}
+                activeTool={activeTool}
+                color={color}
+                width={strokeWidth}
+                opacity={opacity}
+                eraserRadius={eraserRadius}
+                shapeKind={shapeKind}
+                shapeColorKey={shapeColorKey}
+                shapeFillKey={shapeFillKey}
+                shapeStrokeWidth={shapeStrokeWidth}
+                connectorStyle={connectorStyle}
+                connectorColorKey={connectorColorKey}
+                connectorStrokeWidth={connectorStrokeWidth}
+                document={document}
+                selectedObjectIds={selectedObjectIds}
+                editingObjectId={editingId}
+                viewportRequest={viewportRequest}
+                onViewportChange={reportViewport}
+                onCommand={runCommand}
+                onCommitPending={commitPending}
+                onObjectCreate={startNewObject}
+                onSelectionChange={setSelectedObjectIds}
+                onObjectEdit={startEditingExisting}
+                onObjectMeasure={measureObject}
+                onCanvasTouch={commitEditing}
+              />
+              {showGuidance && (
+                <View pointerEvents="none" style={styles.canvasGuidance}>
+                  <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
+                  <Text style={[styles.canvasBody, { color: theme.foreground }]}>
+                    Draw with a pen, or tap the text and sticky-note tools to add a note.
+                  </Text>
+                </View>
+              )}
+              {editingTextObject && overlayRect && (
+                <TextInput
+                  multiline
+                  autoFocus
+                  accessibilityLabel={editingTextObject.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
+                  value={editingTextObject.text}
+                  onChangeText={(text) => updateDraft({ text })}
+                  onBlur={commitEditing}
+                  placeholder={editingTextObject.type === 'sticky' ? 'Write a note' : 'Type something'}
+                  placeholderTextColor={`${overlayTextColor}80`}
+                  selectionColor={theme.primary}
+                  style={[
+                    styles.objectEditor,
+                    {
+                      left: overlayRect.x,
+                      top: overlayRect.y,
+                      width: overlayRect.width,
+                      minHeight: overlayRect.height,
+                      padding: OBJECT_PADDING * viewport.scale,
+                      borderRadius: radii.sm * viewport.scale,
+                      backgroundColor: overlayFill ?? 'transparent',
+                      color: overlayTextColor,
+                      fontSize: editingTextObject.fontSize * viewport.scale,
+                      lineHeight: overlayLineHeight * viewport.scale,
+                      fontWeight: editingTextObject.fontWeight ?? 'normal',
+                      fontStyle: editingTextObject.fontStyle ?? 'normal',
+                      transform: [{ rotate: `${editingTextObject.rotation}deg` }],
+                    },
+                  ]}
+                />
+              )}
+            </View>
+
+            {selectedObjects.length > 0 && actionRail && (
+              <View
+                accessibilityLabel={selectionLabel}
                 style={[
-                  styles.objectEditor,
+                  styles.selectionRail,
                   {
-                    left: overlayRect.x,
-                    top: overlayRect.y,
-                    width: overlayRect.width,
-                    minHeight: overlayRect.height,
-                    padding: OBJECT_PADDING * viewport.scale,
-                    borderRadius: radii.sm * viewport.scale,
-                    backgroundColor: overlayFill ?? 'transparent',
-                    color: overlayTextColor,
-                    fontSize: editingTextObject.fontSize * viewport.scale,
-                    lineHeight: overlayLineHeight * viewport.scale,
-                    fontWeight: editingTextObject.fontWeight ?? 'normal',
-                    fontStyle: editingTextObject.fontStyle ?? 'normal',
-                    transform: [{ rotate: `${editingTextObject.rotation}deg` }],
+                    left: actionRail.x,
+                    top: actionRail.y,
+                    width: actionRail.width,
+                    height: actionRail.height,
+                    backgroundColor: theme.surface,
+                    borderColor: theme.border,
                   },
                 ]}
-              />
-            )}
-          </View>
-
-          {selectedObjects.length > 0 && actionRail && (
-            <View
-              accessibilityLabel={selectionLabel}
-              style={[
-                styles.selectionRail,
-                {
-                  left: actionRail.x,
-                  top: actionRail.y,
-                  width: actionRail.width,
-                  height: actionRail.height,
-                  backgroundColor: theme.surface,
-                  borderColor: theme.border,
-                },
-              ]}
-            >
-              {selectedIsTextual && selectedObject && (
+              >
+                {selectedIsTextual && selectedObject && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Edit selected object"
+                    accessibilityHint="Opens the object's text editor"
+                    onPress={() => startEditingExisting(selectedObject.id)}
+                    style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
+                  >
+                    <EditIcon size={18} color={theme.foreground} />
+                  </Pressable>
+                )}
+                {selectedObject && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Style selected object"
+                    accessibilityHint="Opens the object's style options"
+                    onPress={toggleStyleSheet}
+                    style={({ pressed }) => [
+                      styles.selectionAction,
+                      selectedIsTextual && styles.selectionActionSeparator,
+                      { borderTopColor: theme.border },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <StyleIcon size={18} color={theme.foreground} />
+                  </Pressable>
+                )}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Edit selected object"
-                  accessibilityHint="Opens the object's text editor"
-                  onPress={() => startEditingExisting(selectedObject.id)}
-                  style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
-                >
-                  <EditIcon size={18} color={theme.foreground} />
-                </Pressable>
-              )}
-              {selectedObject && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Style selected object"
-                  accessibilityHint="Opens the object's style options"
-                  onPress={toggleStyleSheet}
+                  accessibilityLabel={selectedObjects.length === 1 ? 'Duplicate selected object' : 'Duplicate selected objects'}
+                  accessibilityHint="Creates an offset copy in the same undo step"
+                  onPress={duplicateSelected}
                   style={({ pressed }) => [
                     styles.selectionAction,
-                    selectedIsTextual && styles.selectionActionSeparator,
+                    selectedObject && styles.selectionActionSeparator,
                     { borderTopColor: theme.border },
                     pressed && styles.pressed,
                   ]}
                 >
-                  <StyleIcon size={18} color={theme.foreground} />
+                  <DuplicateIcon size={18} color={theme.foreground} />
                 </Pressable>
-              )}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={selectedObjects.length === 1 ? 'Duplicate selected object' : 'Duplicate selected objects'}
-                accessibilityHint="Creates an offset copy in the same undo step"
-                onPress={duplicateSelected}
-                style={({ pressed }) => [
-                  styles.selectionAction,
-                  selectedObject && styles.selectionActionSeparator,
-                  { borderTopColor: theme.border },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <DuplicateIcon size={18} color={theme.foreground} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={selectedObjects.length === 1 ? 'Delete selected object' : 'Delete selected objects'}
-                accessibilityHint="Removes the selection; undo restores it"
-                onPress={deleteSelected}
-                style={({ pressed }) => [
-                  styles.selectionAction,
-                  styles.selectionActionSeparator,
-                  { borderTopColor: theme.border },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <TrashIcon size={18} color={theme.destructive} />
-              </Pressable>
-            </View>
-          )}
-        </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={selectedObjects.length === 1 ? 'Delete selected object' : 'Delete selected objects'}
+                  accessibilityHint="Removes the selection; undo restores it"
+                  onPress={deleteSelected}
+                  style={({ pressed }) => [
+                    styles.selectionAction,
+                    styles.selectionActionSeparator,
+                    { borderTopColor: theme.border },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <TrashIcon size={18} color={theme.destructive} />
+                </Pressable>
+              </View>
+            )}
+          </View>
+        )}
       </View>
-
-      {editingTextObject && editing?.isNew && (
-        <ObjectOptionsSheet
-          theme={theme}
-          dark={dark}
-          kind={editingTextObject.type}
-          colorKey={editingTextObject.colorKey}
-          fontSize={editingTextObject.fontSize}
-          fontWeight={editingTextObject.fontWeight ?? 'normal'}
-          fontStyle={editingTextObject.fontStyle ?? 'normal'}
-          bottomOffset={editingSheetBottom}
-          doneLabel="Done"
-          doneHint="Commits the object and closes the keyboard"
-          showScrim={false}
-          onColorChange={(key) => updateDraft({ colorKey: key })}
-          onFontSizeChange={(size) => updateDraft({ fontSize: size })}
-          onFontWeightChange={(weight) => {
-            updateDraft({ fontWeight: weight });
-            if (editingTextObject.type === 'sticky') setStickyBold(weight === 'bold');
-            else setTextBold(weight === 'bold');
-          }}
-          onFontStyleChange={(style) => {
-            updateDraft({ fontStyle: style });
-            if (editingTextObject.type === 'sticky') setStickyItalic(style === 'italic');
-            else setTextItalic(style === 'italic');
-          }}
-          onDone={commitEditing}
-          onHeightChange={setSheetHeight}
-        />
-      )}
 
       {!editing && objectOptionsVisible && (activeTool === 'text' || activeTool === 'sticky') && (
         <ObjectOptionsSheet
@@ -701,6 +867,9 @@ export default function BoardEditorScreen() {
           bottomOffset={optionsBottom}
           doneLabel="Done"
           doneHint="Closes the style options"
+          // Selecting the tool opens this sheet, so a full-screen scrim would
+          // swallow the next canvas tap and the object would never be placed.
+          showScrim={false}
           onColorChange={(key) => (activeTool === 'sticky' ? setStickyColorKey(key) : setTextColorKey(key))}
           onFontSizeChange={(size) => (activeTool === 'sticky' ? setStickySize(size) : setTextSize(size))}
           onFontWeightChange={(weight) => {
@@ -868,4 +1037,8 @@ const styles = StyleSheet.create({
   selectionAction: { height: touchTarget, alignItems: 'center', justifyContent: 'center' },
   selectionActionSeparator: { borderTopWidth: 1 },
   pressed: { opacity: 0.65 },
+  storageBanner: { marginHorizontal: spacing.md, marginTop: spacing.sm, padding: spacing.md, borderWidth: 1, borderRadius: radii.sm },
+  storageBannerText: { ...typography.caption, lineHeight: 18 },
+  editorLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
+  editorLoadingText: { ...typography.body },
 });

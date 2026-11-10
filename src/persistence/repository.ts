@@ -1,0 +1,584 @@
+/**
+ * Board repository: every read and write the app needs for local persistence.
+ *
+ * Documents are stored one row per canvas object, including ink strokes, so a
+ * future page or object query does not need to parse the whole board. The full
+ * object is also kept in `content_json`; the mirrored geometry columns exist for
+ * indexing and inspection, not as a second source of truth.
+ *
+ * A save replaces the page's object rows inside one transaction. That keeps the
+ * write simple and atomic for the board sizes this MVP targets; incremental row
+ * updates can replace it when boards grow large.
+ */
+
+import type {
+  CanvasDocument,
+  CanvasObject,
+  ConnectorStyle,
+  LineDirection,
+  ShapeKind,
+} from '../canvas/document.ts';
+import { documentsEqual } from '../canvas/document.ts';
+import type { InkStroke } from '../canvas/ink.ts';
+import type { Viewport } from '../canvas/viewport.ts';
+import type { PersistenceDatabase, SqlParams } from './database.ts';
+import {
+  DEFAULT_BOARD_SETTINGS,
+  parseBoardSettings,
+  parseViewport,
+  serializeBoardSettings,
+  serializeViewport,
+  type BoardSettings,
+} from './schema.ts';
+
+export type BoardRecord = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  settings: BoardSettings;
+  viewport: Viewport | null;
+  objectCount: number;
+};
+
+export type NewBoardRecord = {
+  id: string;
+  title: string;
+  settings: BoardSettings;
+  createdAt: string;
+};
+
+export type BoardSnapshot = {
+  document: CanvasDocument;
+  viewport: Viewport | null;
+  pageId: string | null;
+};
+
+export type MediaAssetRecord = {
+  id: string;
+  boardId: string;
+  ownerId: string | null;
+  storagePath: string;
+  mimeType: string;
+  bytes: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+type BoardRow = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  settings_json: string | null;
+  viewport_json: string | null;
+  object_count?: number | null;
+};
+
+type PageRow = {
+  id: string;
+  board_id: string;
+  name: string;
+  order_index: number;
+};
+
+type CanvasObjectRow = {
+  id: string;
+  type: string;
+  z_index: number;
+  content_json: string;
+};
+
+type MediaAssetRow = {
+  id: string;
+  board_id: string;
+  owner_id: string | null;
+  storage_path: string;
+  mime_type: string;
+  bytes: number | null;
+  metadata_json: string | null;
+  created_at: string;
+};
+
+const BOARD_COLUMNS = `
+  b.id, b.title, b.created_at, b.updated_at, b.settings_json, b.viewport_json,
+  (
+    SELECT COUNT(*)
+    FROM canvas_objects o
+    JOIN board_pages p ON p.id = o.page_id
+    WHERE p.board_id = b.id AND o.deleted_at IS NULL
+  ) AS object_count
+`;
+
+/** Stable id for a board's first page, so a retried create cannot duplicate it. */
+export function defaultPageId(boardId: string): string {
+  return `${boardId}:page:0`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function boardFromRow(row: BoardRow): BoardRecord {
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    settings: parseBoardSettings(row.settings_json),
+    viewport: parseViewport(row.viewport_json),
+    objectCount: Number(row.object_count ?? 0),
+  };
+}
+
+// -------------------------------------------------------------------- boards
+
+export async function listBoards(database: PersistenceDatabase): Promise<BoardRecord[]> {
+  const rows = await database.getAllAsync<BoardRow>(
+    `SELECT ${BOARD_COLUMNS} FROM boards b ORDER BY b.updated_at DESC`,
+  );
+  return rows.map(boardFromRow);
+}
+
+export async function getBoard(
+  database: PersistenceDatabase,
+  boardId: string,
+): Promise<BoardRecord | null> {
+  const row = await database.getFirstAsync<BoardRow>(
+    `SELECT ${BOARD_COLUMNS} FROM boards b WHERE b.id = ?`,
+    [boardId],
+  );
+  return row ? boardFromRow(row) : null;
+}
+
+/**
+ * Create a board and its first page together. The page row is what lets every
+ * later save be a plain page-scoped object replacement.
+ */
+export async function insertBoard(
+  database: PersistenceDatabase,
+  board: NewBoardRecord,
+  now = board.createdAt,
+): Promise<void> {
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `INSERT OR IGNORE INTO boards (id, title, created_at, updated_at, settings_json)
+       VALUES (?, ?, ?, ?, ?)`,
+      [board.id, board.title, board.createdAt, now, serializeBoardSettings(board.settings)],
+    );
+    await database.runAsync(
+      `INSERT OR IGNORE INTO board_pages (id, board_id, name, order_index, created_at, updated_at)
+       VALUES (?, ?, ?, 0, ?, ?)`,
+      [defaultPageId(board.id), board.id, 'Page 1', board.createdAt, now],
+    );
+  });
+}
+
+export async function updateBoardTitle(
+  database: PersistenceDatabase,
+  boardId: string,
+  title: string,
+  now = new Date().toISOString(),
+): Promise<void> {
+  await database.runAsync(
+    `UPDATE boards SET title = ?, updated_at = ? WHERE id = ?`,
+    [title.trim() || 'Untitled board', now, boardId],
+  );
+}
+
+// ----------------------------------------------------------------- documents
+
+async function firstPage(
+  database: PersistenceDatabase,
+  boardId: string,
+): Promise<PageRow | null> {
+  return database.getFirstAsync<PageRow>(
+    `SELECT id, board_id, name, order_index
+     FROM board_pages WHERE board_id = ? ORDER BY order_index ASC LIMIT 1`,
+    [boardId],
+  );
+}
+
+async function ensurePage(
+  database: PersistenceDatabase,
+  boardId: string,
+  now: string,
+): Promise<string> {
+  const page = await firstPage(database, boardId);
+  if (page) return page.id;
+  const id = defaultPageId(boardId);
+  await database.runAsync(
+    `INSERT OR IGNORE INTO board_pages (id, board_id, name, order_index, created_at, updated_at)
+     VALUES (?, ?, ?, 0, ?, ?)`,
+    [id, boardId, 'Page 1', now, now],
+  );
+  return id;
+}
+
+/** Load a board's document and saved viewport. Corrupt rows are skipped. */
+export async function loadBoardDocument(
+  database: PersistenceDatabase,
+  boardId: string,
+): Promise<BoardSnapshot> {
+  const board = await database.getFirstAsync<{ viewport_json: string | null }>(
+    `SELECT viewport_json FROM boards WHERE id = ?`,
+    [boardId],
+  );
+  const viewport = parseViewport(board?.viewport_json);
+  const page = await firstPage(database, boardId);
+  if (!page) return { document: { strokes: [], objects: [] }, viewport, pageId: null };
+
+  const rows = await database.getAllAsync<CanvasObjectRow>(
+    `SELECT id, type, z_index, content_json
+     FROM canvas_objects
+     WHERE page_id = ? AND deleted_at IS NULL
+     ORDER BY z_index ASC, rowid ASC`,
+    [page.id],
+  );
+
+  const strokes: InkStroke[] = [];
+  const objects: CanvasObject[] = [];
+  for (const row of rows) {
+    if (row.type === 'ink') {
+      const stroke = parseInkStroke(row.content_json);
+      if (stroke) strokes.push(stroke);
+      continue;
+    }
+    const object = parseCanvasObject(row.content_json);
+    if (object) objects.push(object);
+  }
+  return { document: { strokes, objects }, viewport, pageId: page.id };
+}
+
+/** Save a board document and viewport in one transaction. */
+export async function saveBoardDocument(
+  database: PersistenceDatabase,
+  boardId: string,
+  document: CanvasDocument,
+  viewport: Viewport | null,
+  now = new Date().toISOString(),
+): Promise<void> {
+  const pageId = await ensurePage(database, boardId, now);
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(`DELETE FROM canvas_objects WHERE page_id = ?`, [pageId]);
+
+    let zIndex = 0;
+    for (const stroke of document.strokes) {
+      await insertCanvasRow(database, {
+        id: stroke.id,
+        pageId,
+        type: 'ink',
+        zIndex,
+        x: null,
+        y: null,
+        width: null,
+        height: null,
+        rotation: 0,
+        content: stroke,
+        style: {
+          color: stroke.color,
+          width: stroke.width,
+          opacity: stroke.opacity,
+          tool: stroke.tool,
+        },
+        createdAt: stroke.createdAt,
+        updatedAt: now,
+      });
+      zIndex += 1;
+    }
+    for (const object of document.objects) {
+      await insertCanvasRow(database, {
+        id: object.id,
+        pageId,
+        type: object.type,
+        zIndex,
+        x: object.x,
+        y: object.y,
+        width: object.width,
+        height: object.height,
+        rotation: object.rotation,
+        content: object,
+        style: objectStyle(object),
+        createdAt: now,
+        updatedAt: now,
+      });
+      zIndex += 1;
+    }
+
+    await database.runAsync(
+      `UPDATE boards SET updated_at = ?, viewport_json = ? WHERE id = ?`,
+      [now, viewport ? serializeViewport(viewport) : null, boardId],
+    );
+  });
+}
+
+type InsertObjectInput = {
+  id: string;
+  pageId: string;
+  type: string;
+  zIndex: number;
+  x: number | null;
+  y: number | null;
+  width: number | null;
+  height: number | null;
+  rotation: number;
+  content: CanvasObject | InkStroke;
+  style: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+async function insertCanvasRow(
+  database: PersistenceDatabase,
+  input: InsertObjectInput,
+): Promise<void> {
+  const params: SqlParams = [
+    input.id,
+    input.pageId,
+    input.type,
+    input.zIndex,
+    input.x,
+    input.y,
+    input.width,
+    input.height,
+    input.rotation,
+    JSON.stringify(input.content),
+    JSON.stringify(input.style),
+    input.createdAt,
+    input.updatedAt,
+  ];
+  await database.runAsync(
+    `INSERT OR REPLACE INTO canvas_objects
+      (id, page_id, type, z_index, x, y, width, height, rotation, content_json, style_json, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    params,
+  );
+}
+
+function objectStyle(object: CanvasObject): Record<string, unknown> {
+  const style: Record<string, unknown> = {};
+  if ('colorKey' in object) style.colorKey = object.colorKey;
+  if (object.type === 'shape') {
+    style.shape = object.shape;
+    style.fillKey = object.fillKey;
+    style.strokeWidth = object.strokeWidth;
+  }
+  if (object.type === 'connector') {
+    style.style = object.style;
+    style.strokeWidth = object.strokeWidth;
+  }
+  if (object.type === 'text' || object.type === 'sticky') {
+    style.fontSize = object.fontSize;
+    style.fontWeight = object.fontWeight ?? 'normal';
+    style.fontStyle = object.fontStyle ?? 'normal';
+  }
+  return style;
+}
+
+// ------------------------------------------------------------------ viewport
+
+export async function saveBoardViewport(
+  database: PersistenceDatabase,
+  boardId: string,
+  viewport: Viewport,
+): Promise<void> {
+  await database.runAsync(`UPDATE boards SET viewport_json = ? WHERE id = ?`, [
+    serializeViewport(viewport),
+    boardId,
+  ]);
+}
+
+// ------------------------------------------------------------------- parsing
+
+const SHAPE_KINDS = new Set(['rectangle', 'ellipse', 'line']);
+const CONNECTOR_STYLES = new Set(['line', 'arrow', 'elbow']);
+const DIRECTIONS = new Set(['tlbr', 'trbl', 'bltr', 'brtl']);
+
+function baseGeometry(value: Record<string, unknown>): boolean {
+  return (
+    typeof value.id === 'string' &&
+    isFiniteNumber(value.x) &&
+    isFiniteNumber(value.y) &&
+    isFiniteNumber(value.width) &&
+    isFiniteNumber(value.height) &&
+    isFiniteNumber(value.rotation)
+  );
+}
+
+/** Parse one stored object; `null` means the row is unusable and is skipped. */
+export function parseCanvasObject(raw: string): CanvasObject | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(value) || !baseGeometry(value)) return null;
+
+  const base = {
+    id: value.id as string,
+    x: value.x as number,
+    y: value.y as number,
+    width: value.width as number,
+    height: value.height as number,
+    rotation: value.rotation as number,
+  };
+  const text = value.text;
+  const fontSize = value.fontSize;
+  const colorKey = value.colorKey;
+
+  if (value.type === 'text' || value.type === 'sticky') {
+    if (typeof text !== 'string' || !isFiniteNumber(fontSize) || typeof colorKey !== 'string') {
+      return null;
+    }
+    const fontWeight = value.fontWeight === 'bold' ? 'bold' : 'normal';
+    const fontStyle = value.fontStyle === 'italic' ? 'italic' : 'normal';
+    return { ...base, type: value.type, text, fontSize, colorKey, fontWeight, fontStyle };
+  }
+
+  if (value.type === 'shape') {
+    if (
+      typeof value.shape !== 'string' ||
+      !SHAPE_KINDS.has(value.shape) ||
+      typeof colorKey !== 'string' ||
+      !isFiniteNumber(value.strokeWidth) ||
+      !(value.fillKey === null || typeof value.fillKey === 'string') ||
+      typeof value.direction !== 'string' ||
+      !DIRECTIONS.has(value.direction)
+    ) {
+      return null;
+    }
+    return {
+      ...base,
+      type: 'shape',
+      shape: value.shape as ShapeKind,
+      colorKey,
+      fillKey: value.fillKey as string | null,
+      strokeWidth: value.strokeWidth,
+      direction: value.direction as LineDirection,
+    };
+  }
+
+  if (value.type === 'connector') {
+    if (
+      typeof value.style !== 'string' ||
+      !CONNECTOR_STYLES.has(value.style) ||
+      typeof colorKey !== 'string' ||
+      !isFiniteNumber(value.strokeWidth) ||
+      typeof value.direction !== 'string' ||
+      !DIRECTIONS.has(value.direction)
+    ) {
+      return null;
+    }
+    return {
+      ...base,
+      type: 'connector',
+      style: value.style as ConnectorStyle,
+      colorKey,
+      strokeWidth: value.strokeWidth,
+      direction: value.direction as LineDirection,
+    };
+  }
+
+  return null;
+}
+
+export function parseInkStroke(raw: string): InkStroke | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(value)) return null;
+  const { id, tool, color, width, opacity, createdAt, points } = value;
+  if (
+    typeof id !== 'string' ||
+    (tool !== 'pen' && tool !== 'highlighter') ||
+    typeof color !== 'string' ||
+    !isFiniteNumber(width) ||
+    !isFiniteNumber(opacity) ||
+    typeof createdAt !== 'string' ||
+    !Array.isArray(points) ||
+    points.length === 0
+  ) {
+    return null;
+  }
+  const parsedPoints: { x: number; y: number }[] = [];
+  for (const point of points) {
+    if (!isRecord(point) || !isFiniteNumber(point.x) || !isFiniteNumber(point.y)) return null;
+    parsedPoints.push({ x: point.x, y: point.y });
+  }
+  return {
+    id,
+    tool,
+    color,
+    width,
+    opacity,
+    createdAt,
+    points: parsedPoints,
+  };
+}
+
+// -------------------------------------------------------------------- media
+
+export async function insertMediaAsset(
+  database: PersistenceDatabase,
+  asset: MediaAssetRecord,
+): Promise<void> {
+  await database.runAsync(
+    `INSERT OR REPLACE INTO media_assets
+      (id, board_id, owner_id, storage_path, mime_type, bytes, metadata_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      asset.id,
+      asset.boardId,
+      asset.ownerId,
+      asset.storagePath,
+      asset.mimeType,
+      asset.bytes,
+      JSON.stringify(asset.metadata),
+      asset.createdAt,
+    ],
+  );
+}
+
+export async function listMediaAssets(
+  database: PersistenceDatabase,
+  boardId: string,
+): Promise<MediaAssetRecord[]> {
+  const rows = await database.getAllAsync<MediaAssetRow>(
+    `SELECT id, board_id, owner_id, storage_path, mime_type, bytes, metadata_json, created_at
+     FROM media_assets WHERE board_id = ? ORDER BY created_at ASC`,
+    [boardId],
+  );
+  return rows.map((row) => {
+    let metadata: Record<string, unknown> = {};
+    if (row.metadata_json) {
+      try {
+        const value: unknown = JSON.parse(row.metadata_json);
+        if (isRecord(value)) metadata = value;
+      } catch {
+        metadata = {};
+      }
+    }
+    return {
+      id: row.id,
+      boardId: row.board_id,
+      ownerId: row.owner_id,
+      storagePath: row.storage_path,
+      mimeType: row.mime_type,
+      bytes: Number(row.bytes ?? 0),
+      metadata,
+      createdAt: row.created_at,
+    };
+  });
+}
+
+/** Re-exported so verification can assert a save/load round-trip precisely. */
+export { documentsEqual };
+export { DEFAULT_BOARD_SETTINGS };

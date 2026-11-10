@@ -8,6 +8,7 @@
     "expo-constants": "~58.0.15",
     "expo-linking": "~58.0.16",
     "expo-router": "~58.0.30",
+    "expo-sqlite": "~58.0.15",
     "expo-status-bar": "~58.0.4",
     "react": "19.3.0",
     "react-native": "0.88.1",
@@ -28,12 +29,13 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:viewport && npm run test:ink && npm run test:history && npm run test:objects && npm run test:selection",
+    "test": "npm run test:viewport && npm run test:ink && npm run test:history && npm run test:objects && npm run test:selection && npm run test:persistence",
     "test:viewport": "node --no-warnings --experimental-strip-types scripts/verify-viewport.mts",
     "test:ink": "node --no-warnings --experimental-strip-types scripts/verify-ink.mts",
     "test:history": "node --no-warnings --experimental-strip-types scripts/verify-history.mts",
     "test:objects": "node --no-warnings --experimental-strip-types scripts/verify-objects.mts",
-    "test:selection": "node --no-warnings --experimental-strip-types scripts/verify-selection.mts"
+    "test:selection": "node --no-warnings --experimental-strip-types scripts/verify-selection.mts",
+    "test:persistence": "node --no-warnings --experimental-strip-types scripts/verify-persistence.mts"
   },
   "private": true
 }
