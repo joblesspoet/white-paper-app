@@ -150,6 +150,30 @@ export function ShapeIcon({ size = 24, color = colors.foreground }: IconProps) {
   );
 }
 
+export function RectangleIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Rect x={4} y={6} width={16} height={12} rx={2} stroke={color} strokeWidth={2} />
+    </Svg>
+  );
+}
+
+export function EllipseIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx={12} cy={12} r={8} stroke={color} strokeWidth={2} />
+    </Svg>
+  );
+}
+
+export function LineIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M5 19 19 5" stroke={color} strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 export function ConnectorIcon({ size = 24, color = colors.foreground }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

@@ -895,6 +895,7 @@ export default function BoardEditorScreen() {
           connectorStyle={connectorStyle}
           connectorColorKey={connectorColorKey}
           connectorStrokeWidth={connectorStrokeWidth}
+          bottomOffset={optionsBottom}
           onShapeKind={setShapeKind}
           onShapeColor={setShapeColorKey}
           onShapeFill={setShapeFillKey}
@@ -937,6 +938,7 @@ export default function BoardEditorScreen() {
           connectorStyle={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.style : connectorStyle}
           connectorColorKey={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.colorKey : connectorColorKey}
           connectorStrokeWidth={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.strokeWidth : connectorStrokeWidth}
+          bottomOffset={optionsBottom}
           onShapeKind={(value) => updateStyledObject({ shape: value })}
           onShapeColor={(value) => updateStyledObject({ colorKey: value })}
           onShapeFill={(value) => updateStyledObject({ fillKey: value })}
