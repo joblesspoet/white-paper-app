@@ -249,7 +249,7 @@ assert.equal(moved.objects[0].width, document.objects[0].width, 'moving never re
 
 const styled = applyCommand(moved, { type: 'object.update', id: 'text-1', text: 'hello world', colorKey: 'red', fontSize: 24 });
 const styledObject = findObject(styled, 'text-1');
-assert.ok(styledObject);
+assert.ok(styledObject && styledObject.type === 'text');
 assert.equal(styledObject.text, 'hello world');
 assert.equal(styledObject.colorKey, 'red');
 assert.equal(styledObject.fontSize, 24);
@@ -282,7 +282,7 @@ assert.deepEqual(cleared, { type: 'object.delete', id: 'text-1' });
 
 // Committing typed text inserts once, with trimmed text and the chosen style.
 const committed = editingCommit({ ...textObject(' hi '), colorKey: 'teal', fontSize: 24 }, true);
-assert.ok(committed && committed.type === 'object.insert');
+assert.ok(committed && committed.type === 'object.insert' && committed.object.type === 'text');
 assert.equal(committed.object.text, 'hi');
 assert.equal(committed.object.colorKey, 'teal');
 const updated = editingCommit(textObject('edited'), false);

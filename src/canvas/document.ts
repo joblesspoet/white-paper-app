@@ -7,7 +7,11 @@
  * an unchanged document when a command is a no-op: the undo history relies on
  * that reference equality to avoid empty undo steps.
  *
- * Not in this slice: images, persistence, grouping, or cloud sync.
+ * Images are canvas objects too, but their pixels live in the media store: the
+ * object only carries relative asset paths, the placed pixel size, and the crop
+ * metadata that produced the placed copy from the untouched original.
+ *
+ * Not in this slice: OCR, grouping, or cloud sync.
  */
 
 import { isHexColor, readableTextColor } from './colors.ts';
@@ -36,6 +40,8 @@ import {
   type ShapeKind,
 } from './shapes.ts';
 import { canvasToScreen, type Point, type Viewport } from './viewport.ts';
+
+export type { Point };
 
 export {
   CONNECTOR_STROKE_WIDTHS,
@@ -241,7 +247,44 @@ export type ConnectorObject = CanvasObjectBase &
     colorKey: string;
     strokeWidth: number;
   };
-export type CanvasObject = TextObject | StickyObject | ShapeObject | ConnectorObject;
+
+/** A clockwise quarter-turn applied to the original before cropping. */
+export type ImageRotation = 0 | 90 | 180 | 270;
+
+/**
+ * Crop applied to the rotated original, in original pixel coordinates. The
+ * original file is never modified, so the same metadata can rebuild the placed
+ * image or be handed to a later OCR pass.
+ */
+export type ImageCrop = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: ImageRotation;
+};
+
+export type ImageObject = CanvasObjectBase & {
+  type: 'image';
+  /** `media_assets.id` of the placed (cropped) file. */
+  assetId: string;
+  /** Path relative to the app's document directory; absolute paths are not portable. */
+  storagePath: string;
+  /** `media_assets.id` of the untouched source file. */
+  originalAssetId: string;
+  /** Relative path of the untouched source file. */
+  originalStoragePath: string;
+  /** Pixel size of the placed file. */
+  sourceWidth: number;
+  sourceHeight: number;
+  /** Pixel size of the original file before crop or rotation. */
+  originalWidth: number;
+  originalHeight: number;
+  /** How the placed file was produced from the original. */
+  crop: ImageCrop;
+};
+
+export type CanvasObject = TextObject | StickyObject | ShapeObject | ConnectorObject | ImageObject;
 export type CanvasObjectType = CanvasObject['type'];
 export type TextualObject = TextObject | StickyObject;
 export type GeometricObject = ShapeObject | ConnectorObject;
@@ -415,10 +458,90 @@ export function createConnectorObject({
   };
 }
 
+/** Largest canvas width a freshly imported image starts with. */
+export const MAX_IMAGE_CANVAS_WIDTH = 320;
+
+/**
+ * Fit an imported image inside a sensible canvas footprint, centred on the tap
+ * point or viewport centre. Pixel dimensions decide the aspect ratio, so a
+ * tall photo stays tall and a panorama stays wide.
+ */
+export function imagePlacement(
+  sourceWidth: number,
+  sourceHeight: number,
+  point: Point,
+  maxWidth = MAX_IMAGE_CANVAS_WIDTH,
+): { x: number; y: number; width: number; height: number } {
+  const safeWidth = Math.max(1, sourceWidth);
+  const safeHeight = Math.max(1, sourceHeight);
+  const width = Math.max(1, Math.min(Math.max(96, safeWidth), Math.max(1, maxWidth)));
+  const height = Math.max(1, width * (safeHeight / safeWidth));
+  return {
+    x: Math.round(point.x - width / 2),
+    y: Math.round(point.y - height / 2),
+    width: Math.round(width),
+    height: Math.round(height),
+  };
+}
+
+export type CreateImageInput = {
+  id: string;
+  /** Canvas-space centre for the new image. */
+  point: Point;
+  maxWidth?: number;
+  assetId: string;
+  storagePath: string;
+  originalAssetId: string;
+  originalStoragePath: string;
+  sourceWidth: number;
+  sourceHeight: number;
+  originalWidth: number;
+  originalHeight: number;
+  crop: ImageCrop;
+};
+
+export function createImageObject({
+  id,
+  point,
+  maxWidth = MAX_IMAGE_CANVAS_WIDTH,
+  assetId,
+  storagePath,
+  originalAssetId,
+  originalStoragePath,
+  sourceWidth,
+  sourceHeight,
+  originalWidth,
+  originalHeight,
+  crop,
+}: CreateImageInput): ImageObject {
+  const placement = imagePlacement(sourceWidth, sourceHeight, point, maxWidth);
+  return {
+    id,
+    type: 'image',
+    ...placement,
+    rotation: 0,
+    assetId,
+    storagePath,
+    originalAssetId,
+    originalStoragePath,
+    sourceWidth: Math.max(1, Math.round(sourceWidth)),
+    sourceHeight: Math.max(1, Math.round(sourceHeight)),
+    originalWidth: Math.max(1, Math.round(originalWidth)),
+    originalHeight: Math.max(1, Math.round(originalHeight)),
+    crop,
+  };
+}
+
 /** Text and sticky notes are the only objects with an in-place text editor. */
 export function isTextualObject(object: CanvasObject): object is TextualObject {
   'worklet';
   return object.type === 'text' || object.type === 'sticky';
+}
+
+/** Images render from the media store and cannot be edited as text. */
+export function isImageObject(object: CanvasObject): object is ImageObject {
+  'worklet';
+  return object.type === 'image';
 }
 
 /** Shapes and connectors are rendered by Skia rather than as native views. */
@@ -443,6 +566,7 @@ export function withObjectText(object: CanvasObject, text: string): CanvasObject
 
 /** Apply colour, size, weight, and slant, keeping the text hit box in step. */
 export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): CanvasObject {
+  if (object.type === 'image') return object;
   const colorKey = patch.colorKey ?? object.colorKey;
   if (object.type === 'text') {
     const fontSize = patch.fontSize ?? object.fontSize;
@@ -573,6 +697,7 @@ export function objectFill(object: CanvasObject): string | undefined {
 
 /** Text or shape-stroke colour, resolved against the current theme. */
 export function objectTextColor(object: CanvasObject, dark: boolean): string {
+  if (object.type === 'image') return dark ? '#E6F4F1' : '#134E4A';
   if (object.type === 'sticky') {
     if (isHexColor(object.colorKey)) {
       return readableTextColor(object.colorKey, [STICKY_TEXT_COLOR, '#FFFFFF']);
@@ -876,6 +1001,30 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
 
 function objectEquals(left: CanvasObject, right: CanvasObject): boolean {
   if (left === right) return true;
+  if (left.type !== right.type) return false;
+  if (left.type === 'image' && right.type === 'image') {
+    return (
+      left.id === right.id &&
+      left.x === right.x &&
+      left.y === right.y &&
+      left.width === right.width &&
+      left.height === right.height &&
+      left.rotation === right.rotation &&
+      left.assetId === right.assetId &&
+      left.storagePath === right.storagePath &&
+      left.originalAssetId === right.originalAssetId &&
+      left.originalStoragePath === right.originalStoragePath &&
+      left.sourceWidth === right.sourceWidth &&
+      left.sourceHeight === right.sourceHeight &&
+      left.originalWidth === right.originalWidth &&
+      left.originalHeight === right.originalHeight &&
+      left.crop.x === right.crop.x &&
+      left.crop.y === right.crop.y &&
+      left.crop.width === right.crop.width &&
+      left.crop.height === right.crop.height &&
+      left.crop.rotation === right.crop.rotation
+    );
+  }
   const leftKeys = Object.keys(left);
   const rightKeys = Object.keys(right);
   if (leftKeys.length !== rightKeys.length) return false;

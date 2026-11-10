@@ -1,4 +1,4 @@
-import { Canvas, Circle, Group, Oval, Path, Rect, Skia } from '@shopify/react-native-skia';
+import { Canvas, Circle, Group, Image as SkiaImage, Oval, Path, Rect, Skia, useImage } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type TextLayoutEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -18,6 +18,7 @@ import {
   createShapeObject,
   geometryFromPoints,
   isGeometricObject,
+  isImageObject,
   isTextualObject,
   objectAtPoint,
   objectFill,
@@ -30,6 +31,7 @@ import {
   type ConnectorObject,
   type ConnectorStyle,
   type DocumentCommand,
+  type ImageObject,
   type ShapeKind,
   type ShapeObject,
   type TextualObject,
@@ -78,6 +80,7 @@ import {
   type Viewport,
 } from '../canvas/viewport';
 import { colors, darkColors, radii, spacing, touchTarget, typography } from '../theme';
+import { resolveMediaUri } from '../media/asset-store';
 
 export { canvasToScreen, screenToCanvas } from '../canvas/viewport';
 export type { InkStroke } from '../canvas/ink';
@@ -90,7 +93,8 @@ export type InkTool =
   | 'text'
   | 'sticky'
   | 'shape'
-  | 'connector';
+  | 'connector'
+  | 'image';
 export type ViewportState = Viewport;
 
 /** Minimum finger travel before a touch on an object counts as a drag, not a tap. */
@@ -720,6 +724,9 @@ export function CanvasViewport({
               />
             )}
             {draftObject && <GeometricObjectView object={draftObject} dark={dark} />}
+            {document.objects.filter(isImageObject).map((object) => (
+              <ImageObjectView key={object.id} object={object} dark={dark} />
+            ))}
             {document.objects.filter(isGeometricObject).map((object) => (
               <GeometricObjectView key={object.id} object={object} dark={dark} />
             ))}
@@ -878,6 +885,27 @@ function CanvasObjectView({ object, dark, hidden, offsetX, offsetY, scale, onMea
         {object.text}
       </Animated.Text>
     </Animated.View>
+  );
+}
+
+function ImageObjectView({ object, dark }: { object: ImageObject; dark: boolean }) {
+  const uri = resolveMediaUri(object.storagePath);
+  const image = useImage(uri);
+  const theme = dark ? darkColors : colors;
+  const origin = { x: object.x + object.width / 2, y: object.y + object.height / 2 };
+  const transform = object.rotation === 0 ? undefined : [{ rotate: (object.rotation * Math.PI) / 180 }];
+  if (!image) {
+    return (
+      <Group origin={origin} transform={transform}>
+        <Rect x={object.x} y={object.y} width={object.width} height={object.height} color={theme.muted} />
+        <Rect x={object.x} y={object.y} width={object.width} height={object.height} color={theme.border} style="stroke" strokeWidth={1} />
+      </Group>
+    );
+  }
+  return (
+    <Group origin={origin} transform={transform}>
+      <SkiaImage image={image} x={object.x} y={object.y} width={object.width} height={object.height} fit="contain" />
+    </Group>
   );
 }
 

@@ -371,6 +371,10 @@ function objectStyle(object: CanvasObject): Record<string, unknown> {
     style.style = object.style;
     style.strokeWidth = object.strokeWidth;
   }
+  if (object.type === 'image') {
+    style.assetId = object.assetId;
+    style.storagePath = object.storagePath;
+  }
   if (object.type === 'text' || object.type === 'sticky') {
     style.fontSize = object.fontSize;
     style.fontWeight = object.fontWeight ?? 'normal';
@@ -460,6 +464,26 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
       fillKey: value.fillKey as string | null,
       strokeWidth: value.strokeWidth,
       direction: value.direction as LineDirection,
+    };
+  }
+
+  if (value.type === 'image') {
+    const crop = value.crop;
+    if (
+      typeof value.assetId !== 'string' || typeof value.storagePath !== 'string' ||
+      typeof value.originalAssetId !== 'string' || typeof value.originalStoragePath !== 'string' ||
+      !isFiniteNumber(value.sourceWidth) || !isFiniteNumber(value.sourceHeight) ||
+      !isFiniteNumber(value.originalWidth) || !isFiniteNumber(value.originalHeight) ||
+      !isRecord(crop) || !isFiniteNumber(crop.x) || !isFiniteNumber(crop.y) ||
+      !isFiniteNumber(crop.width) || !isFiniteNumber(crop.height) ||
+      ![0, 90, 180, 270].includes(crop.rotation as number)
+    ) return null;
+    return {
+      ...base, type: 'image', assetId: value.assetId, storagePath: value.storagePath,
+      originalAssetId: value.originalAssetId, originalStoragePath: value.originalStoragePath,
+      sourceWidth: value.sourceWidth, sourceHeight: value.sourceHeight,
+      originalWidth: value.originalWidth, originalHeight: value.originalHeight,
+      crop: { x: crop.x, y: crop.y, width: crop.width, height: crop.height, rotation: crop.rotation as 0 | 90 | 180 | 270 },
     };
   }
 

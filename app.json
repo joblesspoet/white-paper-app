@@ -16,6 +16,11 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -23,7 +28,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow FlowCanvas to access your photos so you can add images to boards.",
+          "cameraPermission": "Allow FlowCanvas to use the camera so you can capture images for boards."
+        }
+      ]
     ],
     "scheme": "flowcanvas"
   }

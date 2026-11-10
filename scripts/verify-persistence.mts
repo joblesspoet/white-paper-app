@@ -248,7 +248,7 @@ async function testVersionOneUpgrade(): Promise<void> {
         textObject.height,
         textObject.rotation,
         JSON.stringify(textObject),
-        JSON.stringify({ colorKey: textObject.colorKey }),
+        JSON.stringify({ colorKey: textObject.type === 'image' ? 'ink' : textObject.colorKey }),
         CREATED_AT,
         CREATED_AT,
       ],

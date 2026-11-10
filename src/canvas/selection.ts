@@ -273,9 +273,16 @@ export function resizeObject(
     minimum,
     west ? anchorLocal.x - local.x : local.x - anchorLocal.x,
   );
+  // Text re-wraps; an image scales proportionally so its pixels are never
+  // stretched. Shapes and connectors take the pointer-driven box.
+  const imageAspect = object.type === 'image' && object.width > 0
+    ? object.height / object.width
+    : null;
   const height = object.type === 'text'
     ? measureTextBlock(object.text, object.fontSize, width, object.fontWeight, object.fontStyle).height
-    : Math.max(minimum, north ? anchorLocal.y - local.y : local.y - anchorLocal.y);
+    : imageAspect !== null
+      ? Math.max(minimum, width * imageAspect)
+      : Math.max(minimum, north ? anchorLocal.y - local.y : local.y - anchorLocal.y);
 
   const left = west ? anchorLocal.x - width : anchorLocal.x;
   const top = north ? anchorLocal.y - height : anchorLocal.y;

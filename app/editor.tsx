@@ -55,7 +55,7 @@ import {
 } from '../src/canvas/history';
 import type { FreehandTool } from '../src/canvas/ink';
 import { canvasRectToScreen, selectionActionRail, selectionBounds } from '../src/canvas/selection';
-import type { Point, Viewport } from '../src/canvas/viewport';
+import { screenToCanvas, type Point, type Viewport } from '../src/canvas/viewport';
 import { storageErrorMessage } from '../src/persistence/errors';
 import { getLocalDatabase } from '../src/persistence/expo-store';
 import {
@@ -71,6 +71,7 @@ import {
   EditIcon,
   EraserIcon,
   HighlighterIcon,
+  ImageIcon,
   MoreIcon,
   ConnectorIcon,
   PenIcon,
@@ -83,6 +84,10 @@ import {
   TrashIcon,
   UndoIcon,
 } from '../src/components/icons';
+import { ImageImportFlow } from '../src/components/ImageImportFlow';
+import { insertMediaAsset, type MediaAssetRecord } from '../src/persistence/repository';
+import { cropMetadata } from '../src/media/asset-store';
+import type { ImageObject } from '../src/canvas/document';
 import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
 import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
@@ -97,6 +102,7 @@ const TOOLS = [
   { tool: 'pen', label: 'Pen', Icon: PenIcon },
   { tool: 'highlighter', label: 'Highlighter', Icon: HighlighterIcon },
   { tool: 'eraser', label: 'Eraser', Icon: EraserIcon },
+  { tool: 'image', label: 'Image', Icon: ImageIcon },
 ] as const satisfies ReadonlyArray<{ tool: InkTool; label: string; Icon: typeof PenIcon }>;
 
 /** Zoomed in enough that ink is comfortable under a finger. */
@@ -171,6 +177,42 @@ export default function BoardEditorScreen() {
   const [inkOptionsVisible, setInkOptionsVisible] = useState(false);
   const [objectOptionsVisible, setObjectOptionsVisible] = useState(false);
   const [shapeOptionsVisible, setShapeOptionsVisible] = useState(false);
+
+  const [imageFlowOpen, setImageFlowOpen] = useState(false);
+  const [imageFlowId, setImageFlowId] = useState<string | null>(null);
+
+  const insertMediaAssetRow = useCallback(async (asset: MediaAssetRecord) => {
+    if (!boardId) return;
+    const database = await getLocalDatabase();
+    await insertMediaAsset(database, asset);
+  }, [boardId]);
+
+  const placeImageObject = useCallback((object: ImageObject) => {
+    if (!boardId) return;
+    dispatch({ type: 'command', command: { type: 'object.insert', object } });
+    const original = { ...object };
+    void insertMediaAssetRow({
+      id: object.originalAssetId,
+      boardId,
+      ownerId: null,
+      storagePath: object.originalStoragePath,
+      mimeType: '',
+      bytes: 0,
+      metadata: {},
+      createdAt: new Date().toISOString(),
+    });
+    void insertMediaAssetRow({
+      id: object.assetId,
+      boardId,
+      ownerId: null,
+      storagePath: object.storagePath,
+      mimeType: '',
+      bytes: 0,
+      metadata: cropMetadata(object.crop, object.originalAssetId, '', { width: object.sourceWidth, height: object.sourceHeight }),
+      createdAt: new Date().toISOString(),
+    });
+    setSelectedObjectIds([object.id]);
+  }, [boardId, dispatch, insertMediaAssetRow]);
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [canvasRect, setCanvasRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -587,18 +629,19 @@ export default function BoardEditorScreen() {
       setInkOptionsVisible(true);
       return;
     }
-    setInkOptionsVisible(false);
     if (tool === 'shape' || tool === 'connector') {
       setObjectOptionsVisible(false);
       setShapeOptionsVisible((visible) => (activeTool === tool ? !visible : true));
     } else if (tool === 'text' || tool === 'sticky') {
-      // Pressing the active tool again shows its colour and size options.
       setObjectOptionsVisible((visible) => (activeTool === tool ? !visible : true));
-    } else {
-      setObjectOptionsVisible(false);
+    } else if (tool === 'image') {
+      setImageFlowId(`${boardId}-${Date.now()}`);
+      setImageFlowOpen(true);
+      return;
     }
+    setInkOptionsVisible(false);
     setActiveTool(tool);
-  }, [activeTool, commitEditing]);
+  }, [activeTool, boardId, commitEditing]);
 
   const selectInkTool = useCallback((tool: FreehandTool) => {
     setActiveTool(tool);
@@ -636,12 +679,13 @@ export default function BoardEditorScreen() {
   // Only text and sticky notes have editable text. Shapes and connectors
   // expose duplicate, style, and delete, so the Edit action is capability-driven.
   const selectedIsTextual = selectedObject ? isTextualObject(selectedObject) : false;
+  const selectedIsImage = selectedObject?.type === 'image';
   // The rail is vertical and sits beside the selection, so it never covers the
   // rotate handle above the selection. Its action count decides its height.
   const selectionActionCount = selectedObjects.length === 0
     ? 0
     : selectedObject
-      ? (selectedIsTextual ? 4 : 3)
+      ? (selectedIsTextual ? 4 : selectedIsImage ? 2 : 3)
       : 2;
   const canvasBorder = 1;
   const actionRail = selectedRect && !editing && canvasRect.width > 0
@@ -657,7 +701,7 @@ export default function BoardEditorScreen() {
     : `${selectedObjects.length} objects selected`;
   const stylingObject = stylingObjectId ? findObject(document, stylingObjectId) : null;
   const stylingTextObject = stylingObject && isTextualObject(stylingObject) ? stylingObject : null;
-  const stylingGeometricObject = stylingObject && !isTextualObject(stylingObject) ? stylingObject : null;
+  const stylingGeometricObject = stylingObject && (stylingObject.type === 'shape' || stylingObject.type === 'connector') ? stylingObject : null;
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}>
@@ -805,7 +849,7 @@ export default function BoardEditorScreen() {
                     <EditIcon size={18} color={theme.foreground} />
                   </Pressable>
                 )}
-                {selectedObject && (
+                {selectedObject && !selectedIsImage && (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Style selected object"
@@ -969,6 +1013,22 @@ export default function BoardEditorScreen() {
         />
       )}
       {!tablet && !editing && <ToolDock theme={theme} bottom={insets.bottom} activeTool={activeTool} onToolPress={pressTool} />}
+      {imageFlowOpen && imageFlowId && boardId && (
+        <ImageImportFlow
+          key={imageFlowId}
+          theme={theme}
+          boardId={boardId}
+          point={screenToCanvas(
+            {
+              x: canvasRect.width > 0 ? canvasRect.width / 2 : 180,
+              y: canvasRect.height > 0 ? canvasRect.height / 2 : 300,
+            },
+            viewport,
+          )}
+          onPlace={placeImageObject}
+          onClose={() => { setImageFlowOpen(false); setImageFlowId(null); }}
+        />
+      )}
     </View>
   );
 }

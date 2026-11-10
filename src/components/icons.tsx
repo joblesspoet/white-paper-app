@@ -212,6 +212,41 @@ export function EditIcon({ size = 24, color = colors.foreground }: IconProps) {
   );
 }
 
+export function ImageIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Rect x={3} y={3} width={18} height={18} rx={2} stroke={color} strokeWidth={2} />
+      <Circle cx={8.5} cy={7} r={2} fill={color} />
+      <Path d="m21 17-5-5L5 20" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+export function RotateIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M21 12a9 9 0 1 1-3-6.7M21 3v5h-5" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+export function CheckIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="m5 12 5 5L20 7" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
+export function ZoomInIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx={11} cy={11} r={7} stroke={color} strokeWidth={2} />
+      <Path d="m21 21-4.3-4.3M11 8v6M8 11h6" stroke={color} strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 export function StyleIcon({ size = 24, color = colors.foreground }: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
