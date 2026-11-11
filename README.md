@@ -12,6 +12,7 @@ The app supports an infinite canvas with handwriting, sticky notes, shapes, arro
 
 - [Architecture](docs/architecture.md) — system design, services, data flow, and security
 - [Feature plan](docs/feature-plan.md) — feature-by-feature implementation sequence
+- [Local OCR](docs/ocr.md) — OCR engine evaluation, on-device flow, and limitations
 - [AI cost model](docs/ai-cost-model.md) — assumptions, usage scenarios, and estimated monthly costs
 - [MVP roadmap](docs/roadmap.md) — milestones, acceptance criteria, and delivery order
 
@@ -47,7 +48,10 @@ app/
 src/
   theme.ts        design-system tokens
   canvas/         pure canvas logic: viewport, ink, document/objects, history, colours
-  components/     shared UI (buttons, icon family, canvas, option sheets)
+  media/          image picking, crop geometry, and the durable local media store
+  ocr/            on-device recognition adapter, review model, and text placement
+  persistence/    SQLite schema, migrations, and the board repository
+  components/     shared UI (buttons, icon family, canvas, option sheets, image/OCR flows)
 assets/           icons and splash assets
 docs/             planning, architecture, and task status
 design-system/    design system master file
@@ -58,8 +62,14 @@ prompts/          per-session task prompts
 npm install
 npm start          # Expo dev server (Expo Go, SDK 58)
 npm run typecheck  # tsc --noEmit
-npm test           # viewport, ink, and object/history checks (plain Node)
+npm test           # viewport, ink, object/history, image, and OCR checks (plain Node)
 ```
+
+Image import (camera/photo picker, crop, rotate) and SQLite persistence run in Expo
+Go. Local text recognition uses `expo-mlkit-ocr`, a native module, so OCR needs a
+development build (`npx expo run:ios` / `npx expo run:android` or EAS Build). In
+Expo Go the review screen reports that recognition is unavailable and the image
+can still be added with `Add image only`.
 
 Working state, decisions, and the next slice are tracked in [docs/task-status.md](docs/task-status.md).
 

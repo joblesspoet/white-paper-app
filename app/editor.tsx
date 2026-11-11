@@ -44,6 +44,7 @@ import {
   type CanvasObject,
   type DocumentCommand,
   type ObjectStylePatch,
+  type TextObject,
   type TextSlant,
   type TextWeight,
 } from '../src/canvas/document';
@@ -193,10 +194,11 @@ export default function BoardEditorScreen() {
     await insertMediaAsset(database, asset);
   }, [boardId]);
 
-  const placeImageObject = useCallback((object: ImageObject) => {
+  const placeImageObject = useCallback((object: ImageObject, textObject?: TextObject) => {
     if (!boardId) return;
-    dispatch({ type: 'command', command: { type: 'object.insert', object } });
-    const original = { ...object };
+    const commands: DocumentCommand[] = [{ type: 'object.insert', object }];
+    if (textObject) commands.push({ type: 'object.insert', object: textObject });
+    dispatch({ type: 'commands', commands });
     void insertMediaAssetRow({
       id: object.originalAssetId,
       boardId,
@@ -214,7 +216,10 @@ export default function BoardEditorScreen() {
       storagePath: object.storagePath,
       mimeType: '',
       bytes: 0,
-      metadata: cropMetadata(object.crop, object.originalAssetId, '', { width: object.sourceWidth, height: object.sourceHeight }),
+      metadata: {
+        ...cropMetadata(object.crop, object.originalAssetId, '', { width: object.sourceWidth, height: object.sourceHeight }),
+        ...(object.ocr ? { ocr: object.ocr } : {}),
+      },
       createdAt: new Date().toISOString(),
     });
     setSelectedObjectIds([object.id]);

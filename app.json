@@ -7,7 +7,8 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.joblesspoet.flowcanvas"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +20,8 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECORD_AUDIO"
       ],
       "predictiveBackGestureEnabled": false
     },
@@ -34,6 +36,20 @@
         {
           "photosPermission": "Allow FlowCanvas to access your photos so you can add images to boards.",
           "cameraPermission": "Allow FlowCanvas to use the camera so you can capture images for boards."
+        }
+      ],
+      [
+        "expo-mlkit-ocr",
+        {
+          "iosEngine": "vision"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.4"
+          }
         }
       ]
     ],

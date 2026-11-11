@@ -15,6 +15,7 @@ import type {
   CanvasDocument,
   CanvasObject,
   ConnectorStyle,
+  ImageOcr,
   LineDirection,
   ShapeKind,
 } from '../canvas/document.ts';
@@ -413,6 +414,28 @@ function baseGeometry(value: Record<string, unknown>): boolean {
   );
 }
 
+/** Parse optional OCR metadata; malformed metadata is dropped, not fatal. */
+function parseImageOcr(value: unknown): ImageOcr | null {
+  if (!isRecord(value)) return null;
+  if (
+    typeof value.text !== 'string' ||
+    value.text.trim().length === 0 ||
+    typeof value.engine !== 'string' ||
+    value.engine.length === 0 ||
+    !isFiniteNumber(value.regionCount) ||
+    typeof value.recognizedAt !== 'string' ||
+    value.recognizedAt.length === 0
+  ) {
+    return null;
+  }
+  return {
+    text: value.text,
+    engine: value.engine,
+    regionCount: Math.max(0, Math.round(value.regionCount)),
+    recognizedAt: value.recognizedAt,
+  };
+}
+
 /** Parse one stored object; `null` means the row is unusable and is skipped. */
 export function parseCanvasObject(raw: string): CanvasObject | null {
   let value: unknown;
@@ -441,7 +464,20 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
     }
     const fontWeight = value.fontWeight === 'bold' ? 'bold' : 'normal';
     const fontStyle = value.fontStyle === 'italic' ? 'italic' : 'normal';
-    return { ...base, type: value.type, text, fontSize, colorKey, fontWeight, fontStyle };
+    const sourceImageId =
+      value.type === 'text' && typeof value.sourceImageId === 'string' && value.sourceImageId.length > 0
+        ? value.sourceImageId
+        : null;
+    return {
+      ...base,
+      type: value.type,
+      text,
+      fontSize,
+      colorKey,
+      fontWeight,
+      fontStyle,
+      ...(sourceImageId ? { sourceImageId } : {}),
+    };
   }
 
   if (value.type === 'shape') {
@@ -478,12 +514,14 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
       !isFiniteNumber(crop.width) || !isFiniteNumber(crop.height) ||
       ![0, 90, 180, 270].includes(crop.rotation as number)
     ) return null;
+    const ocr = parseImageOcr(value.ocr);
     return {
       ...base, type: 'image', assetId: value.assetId, storagePath: value.storagePath,
       originalAssetId: value.originalAssetId, originalStoragePath: value.originalStoragePath,
       sourceWidth: value.sourceWidth, sourceHeight: value.sourceHeight,
       originalWidth: value.originalWidth, originalHeight: value.originalHeight,
       crop: { x: crop.x, y: crop.y, width: crop.width, height: crop.height, rotation: crop.rotation as 0 | 90 | 180 | 270 },
+      ...(ocr ? { ocr } : {}),
     };
   }
 

@@ -9,9 +9,11 @@
  *
  * Images are canvas objects too, but their pixels live in the media store: the
  * object only carries relative asset paths, the placed pixel size, and the crop
- * metadata that produced the placed copy from the untouched original.
+ * metadata that produced the placed copy from the untouched original. OCR text
+ * is optional metadata on the image and is linked from a text block through
+ * `sourceImageId`, so the extraction remains traceable to its photo.
  *
- * Not in this slice: OCR, grouping, or cloud sync.
+ * Not in this slice: grouping or cloud sync.
  */
 
 import { isHexColor, readableTextColor } from './colors.ts';
@@ -220,6 +222,8 @@ export type TextObject = CanvasObjectBase & {
   colorKey: string;
   fontWeight?: TextWeight;
   fontStyle?: TextSlant;
+  /** Image this text was extracted from, when it came from OCR. */
+  sourceImageId?: string;
 };
 export type StickyObject = CanvasObjectBase & {
   type: 'sticky';
@@ -282,6 +286,19 @@ export type ImageObject = CanvasObjectBase & {
   originalHeight: number;
   /** How the placed file was produced from the original. */
   crop: ImageCrop;
+  /**
+   * On-device recognition result retained with the source image. The text is
+   * the reviewed/corrected value; `engine` records which platform recognizer
+   * produced it and `regionCount` how many text lines were found.
+   */
+  ocr?: ImageOcr;
+};
+
+export type ImageOcr = {
+  text: string;
+  engine: string;
+  regionCount: number;
+  recognizedAt: string;
 };
 
 export type CanvasObject = TextObject | StickyObject | ShapeObject | ConnectorObject | ImageObject;
@@ -1022,7 +1039,11 @@ function objectEquals(left: CanvasObject, right: CanvasObject): boolean {
       left.crop.y === right.crop.y &&
       left.crop.width === right.crop.width &&
       left.crop.height === right.crop.height &&
-      left.crop.rotation === right.crop.rotation
+      left.crop.rotation === right.crop.rotation &&
+      left.ocr?.text === right.ocr?.text &&
+      left.ocr?.engine === right.ocr?.engine &&
+      left.ocr?.regionCount === right.ocr?.regionCount &&
+      left.ocr?.recognizedAt === right.ocr?.recognizedAt
     );
   }
   const leftKeys = Object.keys(left);

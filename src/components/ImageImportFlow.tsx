@@ -1,12 +1,13 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native';
 
 import { ImageCropScreen } from './ImageCropScreen';
 import { ImageSourceSheet } from './ImageSourceSheet';
+import { OcrReviewScreen } from './OcrReviewScreen';
 import {
-  cropMetadata,
   deleteFile,
   deleteStoredAsset,
+  prepareOcrImage,
   prepareWorkingImage,
   resolveMediaUri,
   rotateWorkingImage,
@@ -16,31 +17,82 @@ import {
   type WorkingImage,
 } from '../media/asset-store';
 import { imageImportErrorMessage, permissionDeniedMessage, type ImageSource } from '../media/image-source';
-import { pickImage, type PickImageResult } from '../media/image-picker';
+import { pickImage } from '../media/image-picker';
 import { toImageCrop, type PixelRect } from '../media/image-crop';
-import { createImageObject, type ImageCrop, type ImageObject, type Point } from '../canvas/document';
+import {
+  createImageObject,
+  type ImageCrop,
+  type ImageObject,
+  type Point,
+  type TextObject,
+} from '../canvas/document';
+import { buildOcrPlacement, type OcrPlacementChoice } from '../ocr/ocr-placement';
+import { recognizeImageText } from '../ocr/native-ocr';
+import {
+  loadingOcrState,
+  ocrReviewStateFromError,
+  ocrReviewStateFromResult,
+  withOcrCorrection,
+  type OcrReviewState,
+} from '../ocr/ocr-service';
 import { spacing, typography, type ThemeColors } from '../theme';
-type FlowStep = 'source' | 'crop' | 'placing' | 'error';
+
+type FlowStep = 'source' | 'crop' | 'ocr' | 'placing' | 'error';
+
+type PendingImage = {
+  image: ImageObject;
+  asset: StoredImageAsset;
+};
 
 type Props = {
   theme: ThemeColors;
   boardId: string;
   point?: Point;
-  onPlace: (object: ImageObject) => void;
+  onPlace: (object: ImageObject, textObject?: TextObject) => void;
   onClose: () => void;
 };
 
+/**
+ * Capture or pick → crop/rotate → durable image → on-device OCR review → place.
+ *
+ * The image is stored before recognition starts, so a slow, empty, or failed
+ * OCR pass can never prevent "Add image only". Cancel discards the original and
+ * placed copies together; a successful placement keeps both because the image
+ * object refers to them.
+ */
 export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Props) {
   const [step, setStep] = useState<FlowStep>('source');
   const [working, setWorking] = useState<WorkingImage | null>(null);
   const [original, setOriginal] = useState<StoredImageAsset | null>(null);
-  const [rotation, setRotation] = useState(0);
+  const [pending, setPending] = useState<PendingImage | null>(null);
+  /** Lossless cache copy the recognizer reads; deleted when the flow ends. */
+  const [ocrSource, setOcrSource] = useState<WorkingImage | null>(null);
+  const [ocrState, setOcrState] = useState<OcrReviewState>(loadingOcrState);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const recognitionRequest = useRef(0);
 
-  const cleanupWorking = useCallback(() => {
+  const cleanupTemporary = useCallback(() => {
+    // Ignore recognition results that arrive after the flow has moved on.
+    recognitionRequest.current += 1;
     if (working) void deleteFile(working.uri);
+    if (ocrSource) void deleteFile(ocrSource.uri);
     if (original) void deleteStoredAsset(original.storagePath);
-  }, [working, original]);
+    if (pending) void deleteStoredAsset(pending.asset.storagePath);
+  }, [working, ocrSource, original, pending]);
+
+  const runRecognition = useCallback(async (uri: string) => {
+    const request = recognitionRequest.current + 1;
+    recognitionRequest.current = request;
+    setOcrState(loadingOcrState());
+    try {
+      const result = await recognizeImageText(uri);
+      if (recognitionRequest.current !== request) return;
+      setOcrState(ocrReviewStateFromResult(result));
+    } catch (error) {
+      if (recognitionRequest.current !== request) return;
+      setOcrState(ocrReviewStateFromError(error));
+    }
+  }, []);
 
   const startPick = useCallback(async (source: ImageSource) => {
     setStep('placing');
@@ -70,7 +122,6 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
       setOriginal(stored);
       const prepared = await prepareWorkingImage(stored.uri, stored.mimeType);
       setWorking(prepared);
-      setRotation(0);
       setStep('crop');
     } catch (error) {
       setErrorMessage(imageImportErrorMessage(error));
@@ -82,7 +133,7 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
     if (!working || !original) return;
     setStep('placing');
     try {
-      const effectiveRotation = ((rotation + cropRotation) % 360) as 0 | 90 | 180 | 270;
+      const effectiveRotation = (cropRotation % 360) as 0 | 90 | 180 | 270;
       let placedWorking = working;
       if (effectiveRotation !== 0) {
         placedWorking = await rotateWorkingImage(working.uri, effectiveRotation);
@@ -93,7 +144,6 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
       let placedAsset: StoredImageAsset;
       if (needsCrop) {
         const cropped = await cropWorkingImage(placedWorking.uri, cropRect, placedWorking.mimeType);
-        void deleteFile(placedWorking.uri);
         placedAsset = await storeImageFile({
           boardId,
           sourceUri: cropped.uri,
@@ -102,6 +152,7 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
           width: cropped.width,
           height: cropped.height,
         });
+        void deleteFile(cropped.uri);
       } else {
         placedAsset = await storeImageFile({
           boardId,
@@ -126,33 +177,83 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
         originalHeight: original.height,
         crop: cropMeta,
       });
-      onPlace(placement);
-      // The placed copy is stored durably, so the cache working copy is done
-      // with. Returning to the source sheet would make the user dismiss the
-      // flow again after every image.
+
+      // The recognizer gets its own lossless copy of the same crop. It reads the
+      // untouched original while that still matches the working size (so no
+      // detail was lost to downsampling), otherwise the rotated working copy.
+      // OCR is an enhancement, so a failure here falls back to the placed copy.
+      let ocrCopy: WorkingImage | null = null;
+      try {
+        const originalMatchesWorking =
+          Math.abs(original.width - working.width) <= 1 &&
+          Math.abs(original.height - working.height) <= 1;
+        ocrCopy = await prepareOcrImage({
+          sourceUri: originalMatchesWorking ? original.uri : placedWorking.uri,
+          sourceWidth: originalMatchesWorking ? original.width : placedWorking.width,
+          sourceHeight: originalMatchesWorking ? original.height : placedWorking.height,
+          rotation: originalMatchesWorking ? effectiveRotation : 0,
+          crop: needsCrop ? cropRect : null,
+        });
+      } catch {
+        ocrCopy = null;
+      }
+
+      // The cache working copies are no longer needed. The durable original and
+      // placed copies stay until the user places or cancels the image.
       void deleteFile(placedWorking.uri);
       void deleteFile(working.uri);
       setWorking(null);
-      setOriginal(null);
-      setStep('source');
-      onClose();
+      setPending({ image: placement, asset: placedAsset });
+      setOcrSource(ocrCopy);
+      setStep('ocr');
+      void runRecognition(ocrCopy?.uri ?? placedAsset.uri);
     } catch (error) {
       setErrorMessage(imageImportErrorMessage(error));
       setStep('crop');
     }
-  }, [working, original, boardId, rotation, point, onPlace, onClose]);
+  }, [working, original, boardId, point, runRecognition]);
+
+  const handleRetryOcr = useCallback(() => {
+    if (!pending) return;
+    void runRecognition(ocrSource?.uri ?? pending.asset.uri);
+  }, [ocrSource, pending, runRecognition]);
+
+  const handlePlace = useCallback((choice: OcrPlacementChoice) => {
+    if (!pending) return;
+    recognitionRequest.current += 1;
+    const placement = buildOcrPlacement({
+      image: pending.image,
+      state: ocrState,
+      choice,
+      textId: `ocr-text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    });
+    setStep('placing');
+    onPlace(placement.image, placement.text ?? undefined);
+    // A placed image keeps both durable files, so clear them before closing;
+    // the close cleanup only removes copies that were never placed.
+    if (ocrSource) void deleteFile(ocrSource.uri);
+    setPending(null);
+    setOriginal(null);
+    setWorking(null);
+    setOcrSource(null);
+    setOcrState(loadingOcrState());
+    setStep('source');
+    onClose();
+  }, [pending, ocrState, ocrSource, onPlace, onClose]);
 
   const handleCancel = useCallback(() => {
-    cleanupWorking();
+    cleanupTemporary();
     setStep('source');
     setWorking(null);
     setOriginal(null);
-  }, [cleanupWorking]);
+    setPending(null);
+    setOcrSource(null);
+  }, [cleanupTemporary]);
 
   const handleClose = useCallback(() => {
-    cleanupWorking();
+    cleanupTemporary();
     onClose();
-  }, [cleanupWorking, onClose]);
+  }, [cleanupTemporary, onClose]);
 
   /** Android back / swipe: step back to the source sheet, or close the flow. */
   const handleRequestClose = useCallback(() => {
@@ -181,6 +282,19 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
           initialRotation={0}
           onDone={handleCropDone}
           onCancel={handleCancel}
+        />
+      ) : step === 'ocr' && pending ? (
+        <OcrReviewScreen
+          theme={theme}
+          uri={resolveMediaUri(pending.image.storagePath)}
+          width={pending.image.sourceWidth}
+          height={pending.image.sourceHeight}
+          state={ocrState}
+          onChangeText={(text) => setOcrState((current) => withOcrCorrection(current, text))}
+          onRetry={handleRetryOcr}
+          onAddText={() => handlePlace('text')}
+          onAddImageOnly={() => handlePlace('image-only')}
+          onClose={handleClose}
         />
       ) : step === 'placing' ? (
         <View style={[styles.container, { backgroundColor: theme.background }]}>
