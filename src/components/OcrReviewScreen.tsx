@@ -16,7 +16,7 @@ import { AppButton } from './AppButton';
 import {
   canAddRecognizedText,
   ocrEngineLabel,
-  ocrTextLineLabel,
+  ocrRegionLabel,
   type OcrReviewState,
 } from '../ocr/ocr-service';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
@@ -142,7 +142,7 @@ export function OcrReviewScreen({
         {state.status === 'success' && (
           <>
             <Text style={[styles.summary, { color: theme.foreground }]}>
-              {ocrTextLineLabel(state.regionCount)} · {ocrEngineLabel(state.engine)}
+              {ocrRegionLabel(state.regionCount)} · {ocrEngineLabel(state.engine)}
             </Text>
             <TextInput
               style={[

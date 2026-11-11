@@ -7,7 +7,6 @@ import { OcrReviewScreen } from './OcrReviewScreen';
 import {
   deleteFile,
   deleteStoredAsset,
-  prepareOcrImage,
   prepareWorkingImage,
   resolveMediaUri,
   rotateWorkingImage,
@@ -65,20 +64,15 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
   const [working, setWorking] = useState<WorkingImage | null>(null);
   const [original, setOriginal] = useState<StoredImageAsset | null>(null);
   const [pending, setPending] = useState<PendingImage | null>(null);
-  /** Lossless cache copy the recognizer reads; deleted when the flow ends. */
-  const [ocrSource, setOcrSource] = useState<WorkingImage | null>(null);
   const [ocrState, setOcrState] = useState<OcrReviewState>(loadingOcrState);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const recognitionRequest = useRef(0);
 
   const cleanupTemporary = useCallback(() => {
-    // Ignore recognition results that arrive after the flow has moved on.
-    recognitionRequest.current += 1;
     if (working) void deleteFile(working.uri);
-    if (ocrSource) void deleteFile(ocrSource.uri);
     if (original) void deleteStoredAsset(original.storagePath);
     if (pending) void deleteStoredAsset(pending.asset.storagePath);
-  }, [working, ocrSource, original, pending]);
+  }, [working, original, pending]);
 
   const runRecognition = useCallback(async (uri: string) => {
     const request = recognitionRequest.current + 1;
@@ -144,6 +138,7 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
       let placedAsset: StoredImageAsset;
       if (needsCrop) {
         const cropped = await cropWorkingImage(placedWorking.uri, cropRect, placedWorking.mimeType);
+        void deleteFile(placedWorking.uri);
         placedAsset = await storeImageFile({
           boardId,
           sourceUri: cropped.uri,
@@ -152,7 +147,6 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
           width: cropped.width,
           height: cropped.height,
         });
-        void deleteFile(cropped.uri);
       } else {
         placedAsset = await storeImageFile({
           boardId,
@@ -178,35 +172,14 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
         crop: cropMeta,
       });
 
-      // The recognizer gets its own lossless copy of the same crop. It reads the
-      // untouched original while that still matches the working size (so no
-      // detail was lost to downsampling), otherwise the rotated working copy.
-      // OCR is an enhancement, so a failure here falls back to the placed copy.
-      let ocrCopy: WorkingImage | null = null;
-      try {
-        const originalMatchesWorking =
-          Math.abs(original.width - working.width) <= 1 &&
-          Math.abs(original.height - working.height) <= 1;
-        ocrCopy = await prepareOcrImage({
-          sourceUri: originalMatchesWorking ? original.uri : placedWorking.uri,
-          sourceWidth: originalMatchesWorking ? original.width : placedWorking.width,
-          sourceHeight: originalMatchesWorking ? original.height : placedWorking.height,
-          rotation: originalMatchesWorking ? effectiveRotation : 0,
-          crop: needsCrop ? cropRect : null,
-        });
-      } catch {
-        ocrCopy = null;
-      }
-
       // The cache working copies are no longer needed. The durable original and
       // placed copies stay until the user places or cancels the image.
       void deleteFile(placedWorking.uri);
       void deleteFile(working.uri);
       setWorking(null);
       setPending({ image: placement, asset: placedAsset });
-      setOcrSource(ocrCopy);
       setStep('ocr');
-      void runRecognition(ocrCopy?.uri ?? placedAsset.uri);
+      void runRecognition(placedAsset.uri);
     } catch (error) {
       setErrorMessage(imageImportErrorMessage(error));
       setStep('crop');
@@ -215,12 +188,11 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
 
   const handleRetryOcr = useCallback(() => {
     if (!pending) return;
-    void runRecognition(ocrSource?.uri ?? pending.asset.uri);
-  }, [ocrSource, pending, runRecognition]);
+    void runRecognition(pending.asset.uri);
+  }, [pending, runRecognition]);
 
   const handlePlace = useCallback((choice: OcrPlacementChoice) => {
     if (!pending) return;
-    recognitionRequest.current += 1;
     const placement = buildOcrPlacement({
       image: pending.image,
       state: ocrState,
@@ -231,15 +203,13 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
     onPlace(placement.image, placement.text ?? undefined);
     // A placed image keeps both durable files, so clear them before closing;
     // the close cleanup only removes copies that were never placed.
-    if (ocrSource) void deleteFile(ocrSource.uri);
     setPending(null);
     setOriginal(null);
     setWorking(null);
-    setOcrSource(null);
     setOcrState(loadingOcrState());
     setStep('source');
     onClose();
-  }, [pending, ocrState, ocrSource, onPlace, onClose]);
+  }, [pending, ocrState, onPlace, onClose]);
 
   const handleCancel = useCallback(() => {
     cleanupTemporary();
@@ -247,7 +217,6 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
     setWorking(null);
     setOriginal(null);
     setPending(null);
-    setOcrSource(null);
   }, [cleanupTemporary]);
 
   const handleClose = useCallback(() => {

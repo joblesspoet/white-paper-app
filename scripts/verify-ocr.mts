@@ -29,12 +29,11 @@ import {
   normalizeOcrResult,
   normalizeRecognizedText,
   ocrErrorMessage,
-  ocrTextLineLabel,
+  ocrRegionLabel,
   ocrReviewStateFromError,
   ocrReviewStateFromResult,
   withOcrCorrection,
 } from '../src/ocr/ocr-service.ts';
-import { ocrSourceSize } from '../src/media/image-crop.ts';
 import {
   migrateDatabase,
   type PersistenceDatabase,
@@ -65,10 +64,10 @@ const image: ImageObject = createImageObject({
 
 const emptyDocument: CanvasDocument = { strokes: [], objects: [] };
 
-// ------------------------------------------------------ line-level read order
+// ------------------------------------------------------ multiple text regions
 
 // Blocks arrive out of order; the review must read top-to-bottom, then
-// left-to-right, preserving each line as its own region.
+// left-to-right, preserving each region as its own line.
 const multiRegion = normalizeOcrResult(
   {
     text: 'beta\nalpha\nProject title',
@@ -104,113 +103,6 @@ const transcriptOnly = normalizeOcrResult({ text: 'Only a transcript' }, 'apple-
 assert.equal(transcriptOnly.regionCount, 1);
 assert.equal(transcriptOnly.text, 'Only a transcript');
 assert.equal(transcriptOnly.engine, 'apple-vision');
-
-// iOS Apple Vision returns a single block containing every line. Line
-// geometry is what makes that usable: each line becomes its own region, and a
-// single block no longer reports "1 text region".
-const singleBlock = normalizeOcrResult(
-  {
-    text: 'beta\nalpha\nProject title',
-    blocks: [
-      {
-        text: 'beta\nalpha\nProject title',
-        boundingBox: { x: 20, y: 20, width: 300, height: 160 },
-        lines: [
-          { text: 'beta', boundingBox: { x: 220, y: 140, width: 100, height: 22 } },
-          { text: 'alpha', boundingBox: { x: 40, y: 142, width: 120, height: 22 } },
-          { text: 'Project title', boundingBox: { x: 30, y: 24, width: 260, height: 30 } },
-        ],
-      },
-    ],
-  },
-  'apple-vision',
-);
-assert.deepEqual(
-  singleBlock.regions.map((region) => region.text),
-  ['Project title', 'alpha', 'beta'],
-);
-assert.equal(singleBlock.text, 'Project title\nalpha\nbeta');
-assert.equal(singleBlock.regionCount, 3, 'a single Vision block must not count as one region');
-
-// Two side-by-side columns are read column by column, not row by row, even
-// when the payload interleaves the two columns.
-const twoColumns = normalizeOcrResult({
-  text: 'Right two\nLeft one\nRight one\nLeft three\nRight three\nLeft two',
-  blocks: [
-    {
-      text: 'Left column',
-      lines: [
-        { text: 'Left one', boundingBox: { x: 40, y: 100, width: 260, height: 24 } },
-        { text: 'Left two', boundingBox: { x: 40, y: 140, width: 280, height: 24 } },
-        { text: 'Left three', boundingBox: { x: 40, y: 180, width: 250, height: 24 } },
-      ],
-    },
-    {
-      text: 'Right column',
-      lines: [
-        { text: 'Right one', boundingBox: { x: 440, y: 104, width: 240, height: 24 } },
-        { text: 'Right two', boundingBox: { x: 440, y: 144, width: 260, height: 24 } },
-        { text: 'Right three', boundingBox: { x: 440, y: 184, width: 230, height: 24 } },
-      ],
-    },
-  ],
-});
-assert.equal(
-  twoColumns.text,
-  'Left one\nLeft two\nLeft three\nRight one\nRight two\nRight three',
-);
-
-// A full-width title spans the gutter, so the layout splits horizontally first
-// and the columns below it are still read left to right.
-const titleAboveColumns = normalizeOcrResult(
-  {
-    text: '',
-    blocks: [
-      {
-        text: 'Board',
-        lines: [
-          { text: 'Sprint board', boundingBox: { x: 40, y: 30, width: 640, height: 30 } },
-          { text: 'Doing', boundingBox: { x: 420, y: 104, width: 180, height: 22 } },
-          { text: 'Todo', boundingBox: { x: 40, y: 100, width: 160, height: 22 } },
-          { text: 'Later', boundingBox: { x: 420, y: 138, width: 150, height: 22 } },
-          { text: 'Next', boundingBox: { x: 40, y: 134, width: 140, height: 22 } },
-        ],
-      },
-    ],
-  },
-  'apple-vision',
-);
-assert.equal(titleAboveColumns.text, 'Sprint board\nTodo\nNext\nDoing\nLater');
-
-// Two lines on one visual row keep a single row when neither side has enough
-// lines to be a column, and read left to right.
-const rowPair = normalizeOcrResult({
-  text: '',
-  blocks: [
-    {
-      text: 'pair',
-      lines: [
-        { text: 'Second', boundingBox: { x: 420, y: 102, width: 120, height: 22 } },
-        { text: 'First', boundingBox: { x: 40, y: 100, width: 110, height: 22 } },
-      ],
-    },
-  ],
-});
-assert.equal(rowPair.text, 'First\nSecond');
-
-// A block without line geometry still contributes its text (other engines),
-// and its internal newlines are counted for the review summary.
-const blockOnly = normalizeOcrResult({
-  blocks: [{ text: 'one\n\ntwo', boundingBox: { x: 10, y: 10, width: 100, height: 60 } }],
-});
-assert.equal(blockOnly.text, 'one\n\ntwo');
-assert.equal(blockOnly.regionCount, 2);
-
-// The OCR copy is lossless PNG; small crops are enlarged, large ones are kept.
-assert.deepEqual(ocrSourceSize(800, 600), { width: 1600, height: 1200 });
-assert.deepEqual(ocrSourceSize(1200, 900), { width: 1600, height: 1200 });
-assert.deepEqual(ocrSourceSize(4000, 3000), { width: 4000, height: 3000 });
-assert.deepEqual(ocrSourceSize(200, 100), { width: 800, height: 400 });
 
 // Empty or whitespace-only output is an empty result, not a failure.
 for (const raw of [{}, { text: '   ' }, { blocks: [] }, { blocks: [{ text: '   ' }] }]) {
@@ -269,9 +161,9 @@ assert.ok(!canAddRecognizedText(cleared), 'whitespace-only correction cannot add
 assert.equal(withOcrCorrection(errorState, 'manual').status, 'error');
 assert.equal(withOcrCorrection(emptyState, 'manual').text, '');
 
-assert.equal(ocrTextLineLabel(0), 'No text lines');
-assert.equal(ocrTextLineLabel(1), '1 line of text');
-assert.equal(ocrTextLineLabel(4), '4 lines of text');
+assert.equal(ocrRegionLabel(0), 'No text regions');
+assert.equal(ocrRegionLabel(1), '1 text region');
+assert.equal(ocrRegionLabel(4), '4 text regions');
 
 // ------------------------------------------ placement, correction, and linking
 
@@ -453,5 +345,5 @@ assert.ok(brokenOcr && brokenOcr.type === 'image');
 assert.equal(brokenOcr.ocr, undefined);
 
 console.log(
-  'OCR checks passed: line-level reading order, columns and title/column layouts, multiple regions, loading/success/no-text/error states, correction, linking, image-only fallback, one-step undo, OCR copy sizing, persistence and relaunch',
+  'OCR checks passed: multiple regions, reading order, loading/success/no-text/error states, correction, linking, image-only fallback, one-step undo, persistence and relaunch',
 );

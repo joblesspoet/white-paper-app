@@ -289,7 +289,7 @@ export type ImageObject = CanvasObjectBase & {
   /**
    * On-device recognition result retained with the source image. The text is
    * the reviewed/corrected value; `engine` records which platform recognizer
-   * produced it and `regionCount` how many text lines were found.
+   * produced it and `regionCount` how many text blocks were found.
    */
   ocr?: ImageOcr;
 };

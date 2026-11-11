@@ -37,28 +37,20 @@ export type OcrReviewState = {
   errorMessage: string | null;
 };
 
-type RawOcrBoundingBox = {
-  x?: unknown;
-  y?: unknown;
-  width?: unknown;
-  height?: unknown;
-};
-
-type RawOcrLine = {
+type RawOcrBlock = {
   text?: unknown;
-  boundingBox?: RawOcrBoundingBox;
-};
-
-type RawOcrBlock = RawOcrLine & {
-  lines?: unknown;
+  boundingBox?: {
+    x?: unknown;
+    y?: unknown;
+    width?: unknown;
+    height?: unknown;
+  };
 };
 
 type RawOcrResult = {
   text?: unknown;
   blocks?: unknown;
 };
-
-type Span = { start: number; end: number };
 
 const RETRY_WITH_IMAGE = ' You can still add the image.';
 
@@ -69,10 +61,10 @@ export function ocrEngineLabel(engine: OcrEngine | null): string {
   return 'on-device recognition';
 }
 
-/** `1 line of text` / `12 lines of text`; zero is reported as none. */
-export function ocrTextLineLabel(count: number): string {
-  if (count <= 0) return 'No text lines';
-  return `${count} line${count === 1 ? '' : 's'} of text`;
+/** `1 text region` / `3 text regions`; zero is reported as none. */
+export function ocrRegionLabel(count: number): string {
+  if (count <= 0) return 'No text regions';
+  return `${count} text region${count === 1 ? '' : 's'}`;
 }
 
 /**
@@ -94,202 +86,41 @@ function finite(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function parseBoundingBox(raw: RawOcrBoundingBox | undefined): OcrBoundingBox {
-  const box = raw ?? {};
-  return {
-    x: finite(box.x),
-    y: finite(box.y),
-    width: Math.max(0, finite(box.width)),
-    height: Math.max(0, finite(box.height)),
-  };
-}
-
-/**
- * One recognized line. Both engines report `blocks[].lines[]` with their own
- * boxes (Apple Vision reports a single block containing every line; ML Kit
- * reports several blocks), so normalising at line level is what makes reading
- * order and the review count platform-independent.
- */
-function parseLine(raw: unknown): OcrRegion | null {
+function parseRegion(raw: unknown): OcrRegion | null {
   if (!raw || typeof raw !== 'object') return null;
-  const line = raw as RawOcrLine;
-  if (typeof line.text !== 'string') return null;
-  const text = normalizeRecognizedText(line.text);
+  const block = raw as RawOcrBlock;
+  if (typeof block.text !== 'string') return null;
+  const text = normalizeRecognizedText(block.text);
   if (text.length === 0) return null;
-  return { text, boundingBox: parseBoundingBox(line.boundingBox) };
-}
-
-function countTextLines(text: string): number {
-  return Math.max(1, text.split('\n').filter((line) => line.trim().length > 0).length);
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1] + sorted[middle]) / 2
-    : sorted[middle];
-}
-
-function spanX(region: OcrRegion): Span {
+  const box = block.boundingBox ?? {};
   return {
-    start: region.boundingBox.x,
-    end: region.boundingBox.x + region.boundingBox.width,
+    text,
+    boundingBox: {
+      x: finite(box.x),
+      y: finite(box.y),
+      width: Math.max(0, finite(box.width)),
+      height: Math.max(0, finite(box.height)),
+    },
   };
 }
 
-function spanY(region: OcrRegion): Span {
-  return {
-    start: region.boundingBox.y,
-    end: region.boundingBox.y + region.boundingBox.height,
-  };
-}
-
-function centerY(region: OcrRegion): number {
-  return region.boundingBox.y + region.boundingBox.height / 2;
-}
-
-function groupSpanY(regions: OcrRegion[]): Span {
-  let start = Infinity;
-  let end = -Infinity;
-  for (const region of regions) {
-    const span = spanY(region);
-    start = Math.min(start, span.start);
-    end = Math.max(end, span.end);
-  }
-  return { start, end };
-}
-
 /**
- * Widest horizontal blank column between two line boxes. Because the input is
- * projected onto the x axis, the returned range contains no line at all, so it
- * is safe to split a layout there without cutting through a line.
+ * Reading order for text blocks: top to bottom, then left to right. A small
+ * vertical tolerance keeps two blocks on the same visual line in the expected
+ * order even when their top edges differ by a few pixels.
  */
-function widestGutter(spans: Span[]): Span | null {
-  if (spans.length < 2) return null;
-  const sorted = [...spans].sort((a, b) => a.start - b.start);
-  let reach = sorted[0].end;
-  let gutter: Span | null = null;
-  for (let index = 1; index < sorted.length; index += 1) {
-    const span = sorted[index];
-    if (span.start - reach > 0 && (!gutter || span.start - reach > gutter.end - gutter.start)) {
-      gutter = { start: reach, end: span.start };
-    }
-    reach = Math.max(reach, span.end);
+function compareRegions(left: OcrRegion, right: OcrRegion): number {
+  const tolerance = Math.max(8, Math.min(left.boundingBox.height, right.boundingBox.height) * 0.6);
+  if (Math.abs(left.boundingBox.y - right.boundingBox.y) > tolerance) {
+    return left.boundingBox.y - right.boundingBox.y;
   }
-  return gutter;
-}
-
-/** How much two groups share the same vertical band, relative to the shorter one. */
-function verticalOverlap(left: OcrRegion[], right: OcrRegion[]): number {
-  const a = groupSpanY(left);
-  const b = groupSpanY(right);
-  const shorter = Math.min(a.end - a.start, b.end - b.start);
-  if (shorter <= 0) return 0;
-  const overlap = Math.min(a.end, b.end) - Math.max(a.start, b.start);
-  return Math.max(0, overlap) / shorter;
+  return left.boundingBox.x - right.boundingBox.x;
 }
 
 /**
- * Split genuine side-by-side columns. A wide blank gutter alone is not enough:
- * both sides need at least two lines and must share a vertical band, otherwise
- * scattered sticky notes or a staggered layout would be read column-first
- * instead of row-first.
- */
-function splitColumns(
-  regions: OcrRegion[],
-  lineHeight: number,
-): [OcrRegion[], OcrRegion[]] | null {
-  const gutter = widestGutter(regions.map(spanX));
-  if (!gutter) return null;
-  const gutterSize = gutter.end - gutter.start;
-  const contentStart = Math.min(...regions.map((region) => spanX(region).start));
-  const contentEnd = Math.max(...regions.map((region) => spanX(region).end));
-  const minimumGutter = Math.max(lineHeight * 0.8, (contentEnd - contentStart) * 0.02, 8);
-  if (gutterSize < minimumGutter) return null;
-
-  // No line crosses the gutter, so the two sides are unambiguous.
-  const left = regions.filter((region) => spanX(region).end <= gutter.start + 0.5);
-  const right = regions.filter((region) => spanX(region).start >= gutter.end - 0.5);
-  if (left.length < 2 || right.length < 2) return null;
-  if (left.length + right.length !== regions.length) return null;
-  if (verticalOverlap(left, right) < 0.5) return null;
-  return [left, right];
-}
-
-/** Split into paragraph-sized horizontal bands, top to bottom. */
-function splitBands(regions: OcrRegion[], gapThreshold: number): OcrRegion[][] {
-  const sorted = [...regions].sort((a, b) => spanY(a).start - spanY(b).start);
-  const bands: OcrRegion[][] = [];
-  let current: OcrRegion[] = [];
-  let bottom = 0;
-
-  for (const region of sorted) {
-    const span = spanY(region);
-    if (current.length > 0 && span.start - bottom >= gapThreshold) {
-      bands.push(current);
-      current = [];
-    }
-    bottom = current.length === 0 ? span.end : Math.max(bottom, span.end);
-    current.push(region);
-  }
-  if (current.length > 0) bands.push(current);
-  return bands;
-}
-
-/** Row-major fallback: cluster lines into rows, then read each row left to right. */
-function rowOrder(regions: OcrRegion[]): OcrRegion[] {
-  const sorted = [...regions].sort((a, b) => centerY(a) - centerY(b));
-  const rows: { center: number; height: number; items: OcrRegion[] }[] = [];
-
-  for (const region of sorted) {
-    const center = centerY(region);
-    const height = Math.max(1, region.boundingBox.height);
-    const row = rows[rows.length - 1];
-    const tolerance = row ? Math.max(6, Math.min(row.height, height) * 0.6) : 0;
-    if (row && Math.abs(center - row.center) <= tolerance) {
-      row.items.push(region);
-    } else {
-      rows.push({ center, height, items: [region] });
-    }
-  }
-
-  return rows.flatMap((row) => row.items.sort((a, b) => a.boundingBox.x - b.boundingBox.x));
-}
-
-/**
- * Reading order for recognized lines.
- *
- * 1. Real side-by-side columns are read left to right, each top to bottom.
- * 2. Otherwise, bands separated by paragraph-sized gaps are read top to bottom.
- * 3. Otherwise, lines are clustered into rows and read left to right.
- *
- * Recursing on each split keeps a title above two columns in the expected
- * order: the title spans the gutter, so the first split is horizontal, and the
- * column split happens inside the band below it.
- */
-function orderInReadingOrder(regions: OcrRegion[]): OcrRegion[] {
-  if (regions.length <= 1) return [...regions];
-
-  const heights = regions.map((region) => region.boundingBox.height).filter((height) => height > 0);
-  const lineHeight = median(heights);
-
-  const columns = splitColumns(regions, lineHeight);
-  if (columns) {
-    return [...orderInReadingOrder(columns[0]), ...orderInReadingOrder(columns[1])];
-  }
-
-  const bands = splitBands(regions, Math.max(8, lineHeight * 0.7));
-  if (bands.length > 1) return bands.flatMap((band) => orderInReadingOrder(band));
-
-  return rowOrder(regions);
-}
-
-/**
- * Convert a recognizer payload into stable reading order. Recognized lines are
- * preferred over block text because they carry their own geometry; a block
- * without lines, and the raw transcript, are fallbacks for other engines.
+ * Convert a recognizer payload into stable reading order. Blocks are preferred
+ * over the raw transcript because they preserve separate text regions; the raw
+ * transcript is a fallback for engines that only return a string.
  */
 export function normalizeOcrResult(
   raw: unknown,
@@ -297,23 +128,10 @@ export function normalizeOcrResult(
 ): OcrResult {
   const value = (raw && typeof raw === 'object' ? raw : {}) as RawOcrResult;
   const blocks = Array.isArray(value.blocks) ? value.blocks : [];
-  const regions: OcrRegion[] = [];
-
-  for (const rawBlock of blocks) {
-    const block = (rawBlock && typeof rawBlock === 'object' ? rawBlock : {}) as RawOcrBlock;
-    const blockLines = Array.isArray(block.lines) ? block.lines : [];
-    const lines = blockLines
-      .map(parseLine)
-      .filter((line): line is OcrRegion => line !== null);
-    if (lines.length > 0) {
-      regions.push(...lines);
-      continue;
-    }
-    // Some engines return block text without line geometry.
-    const blockRegion = parseLine(block);
-    if (blockRegion) regions.push(blockRegion);
-  }
-
+  const regions = blocks
+    .map(parseRegion)
+    .filter((region): region is OcrRegion => region !== null)
+    .sort(compareRegions);
   const transcript =
     typeof value.text === 'string' ? normalizeRecognizedText(value.text) : '';
 
@@ -324,13 +142,11 @@ export function normalizeOcrResult(
     });
   }
 
-  const ordered = orderInReadingOrder(regions);
-  const text = ordered.map((region) => region.text).join('\n');
-  const regionCount = ordered.reduce((count, region) => count + countTextLines(region.text), 0);
+  const text = regions.map((region) => region.text).join('\n');
   return {
     text,
-    regions: ordered,
-    regionCount,
+    regions,
+    regionCount: regions.length,
     engine,
   };
 }

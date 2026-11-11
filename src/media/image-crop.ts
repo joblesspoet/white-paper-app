@@ -74,31 +74,6 @@ export function rotatedSize(width: number, height: number, rotation: ImageRotati
     : { width, height };
 }
 
-/** An OCR copy is enlarged to this long edge when the crop is smaller. */
-export const OCR_MIN_LONG_EDGE = 1600;
-
-/** A tiny crop is enlarged at most this much; more pixels add cost, not detail. */
-export const OCR_MAX_UPSCALE = 4;
-
-/**
- * Pixel size for the recognizer's private copy. Small crops are enlarged so
- * their glyphs clear the engines' minimum text size; larger crops are kept at
- * source resolution because recognition improves with sharpness, not scaling.
- */
-export function ocrSourceSize(width: number, height: number): PixelSize {
-  const safeWidth = positive(width);
-  const safeHeight = positive(height);
-  const longEdge = Math.max(safeWidth, safeHeight);
-  if (longEdge >= OCR_MIN_LONG_EDGE) {
-    return { width: Math.round(safeWidth), height: Math.round(safeHeight) };
-  }
-  const factor = Math.min(OCR_MAX_UPSCALE, OCR_MIN_LONG_EDGE / longEdge);
-  return {
-    width: Math.max(1, Math.round(safeWidth * factor)),
-    height: Math.max(1, Math.round(safeHeight * factor)),
-  };
-}
-
 function positive(value: number, fallback = 1): number {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }

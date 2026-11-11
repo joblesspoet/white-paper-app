@@ -7,9 +7,9 @@ Local OCR (Milestone 3): on-device text recognition with an editable review step
 `implemented-unverified` — local OCR is implemented on top of the image import flow:
 - `expo-mlkit-ocr` 0.2.7 is wrapped by `src/ocr/`: Apple Vision on iOS (`iosEngine: "vision"`) and Google ML Kit Text Recognition v2 on Android. Recognition is entirely on-device; there is no cloud OCR, AI provider, or network call.
 - The native module is loaded lazily, so Expo Go or a build without the module shows an `unavailable` error state in the review screen instead of crashing the board.
-- `src/ocr/ocr-service.ts` is the platform-independent contract: line-level normalization, column-aware reading order (side-by-side columns left to right, otherwise paragraph bands top to bottom and rows left to right), loading/success/no-text/error states, engine and line-count copy, correction handling, and error messages that always remind the user the image can still be added.
-- `src/components/OcrReviewScreen.tsx` previews the durable placed image, shows a progress state while recognition runs, reports how many lines of text and which engine produced them, exposes a multiline editable field for correction, and offers `Add text to board` (disabled when the text is empty) and `Add image only`.
-- `src/components/ImageImportFlow.tsx` now runs pick → crop/rotate → durable store → lossless OCR copy → OCR review → placement. Recognition reads a dedicated cache PNG of the same crop (taken from the untouched original while it still matches the working size, otherwise the rotated working copy, enlarged up to 4× when small), so it never sees a double-compressed JPEG. Recognition starts from that local copy, so a slow, empty, or failed pass can never block image placement.
+- `src/ocr/ocr-service.ts` is the platform-independent contract: block-level normalization, top-to-bottom then left-to-right reading order with row tolerance, loading/success/no-text/error states, engine and region-count copy, correction handling, and error messages that always remind the user the image can still be added.
+- `src/components/OcrReviewScreen.tsx` previews the durable placed image, shows a progress state while recognition runs, reports how many text regions and which engine produced them, exposes a multiline editable field for correction, and offers `Add text to board` (disabled when the text is empty) and `Add image only`.
+- `src/components/ImageImportFlow.tsx` now runs pick → crop/rotate → durable store → OCR review → placement. Recognition reads the placed local copy, so a slow, empty, or failed pass can never block image placement.
 - `ImageObject.ocr` keeps the reviewed text, engine id, region count, and recognition timestamp; `TextObject.sourceImageId` links an extracted text block back to its photo. Both are optional, so older boards still load, and malformed OCR metadata is dropped without rejecting the image.
 - `Add text to board` places a normal editable text block directly below the image at the image's width and inserts image + text in one batched command, so the placement is a single undo step. `Add image only` keeps the OCR metadata attached to the image but creates no text block.
 - Reviewed OCR text is also mirrored onto the placed `media_assets` row.
@@ -65,15 +65,14 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - Local OCR (`src/ocr/`, `src/components/OcrReviewScreen.tsx`, `src/components/ImageImportFlow.tsx`):
   - `expo-mlkit-ocr` 0.2.7 behind a lazy adapter: Apple Vision on iOS through `iosEngine: "vision"`, Google ML Kit Text Recognition v2 on Android; all recognition is offline and on-device;
   - a missing native module (for example Expo Go) becomes an unavailable OCR error state, never a crash, and `Add image only` stays available;
-  - `src/ocr/ocr-service.ts` normalizes whitespace at line level, flattens `blocks[].lines` (including Apple Vision's single-block payload), reads genuine side-by-side columns left to right and everything else top to bottom with row tolerance, falls back to a plain transcript when an engine returns no blocks, and maps failures to action-oriented copy;
-  - loading, success, no-text, and error review states with text-line and engine labels;
+  - `src/ocr/ocr-service.ts` normalizes whitespace, sorts text blocks top to bottom with a row tolerance then left to right, falls back to a plain transcript when an engine returns no blocks, and maps failures to action-oriented copy;
+  - loading, success, no-text, and error review states with text-region and engine labels;
   - the extracted text is editable before placement; `Add text to board` is disabled when the corrected text is empty;
   - `Add text to board` places a normal editable text block below the image at the image's width and records `TextObject.sourceImageId`;
   - `Add image only` places the image with `ImageObject.ocr` metadata but no text block;
   - image + text placement is one batched command and therefore one undo step;
   - `ImageObject.ocr` is optional and malformed OCR metadata is dropped without rejecting the image row, so older boards still load;
-  - the recognizer reads a lossless PNG copy of the crop rather than the placed JPEG, taken from the untouched original while it still matches the working size and otherwise from the rotated working copy, with small crops enlarged up to 4×; the copy is deleted with the other cache files and a preparation failure falls back to the placed copy;
-  - verification in `scripts/verify-ocr.mts` covers line-level flattening, column and title/column reading order, row ordering, OCR copy sizing, all four review states, correction, linking, image-only fallback after loading/empty/error, one-step undo, persistence, and an on-disk relaunch.
+  - verification in `scripts/verify-ocr.mts` covers block ordering, all four review states, correction, linking, image-only fallback after loading/empty/error, one-step undo, persistence, and an on-disk relaunch.
 - Local persistence (`src/persistence/`):
   - `expo-sqlite` 58.0.15 is the storage engine; the connection opens lazily, enables WAL and foreign keys, and is shared by every screen;
   - schema version 2 is stored in `PRAGMA user_version`; migrations are append-only and each migration plus its version bump runs in one transaction;
@@ -143,10 +142,10 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - `src/components/icons.tsx` — added `ElbowIcon` for the elbow connector tile.
 - `src/components/ShapeOptionsSheet.tsx` — custom `#rrggbb` colour support so the sheet can show a colour picked in the insert sheet.
 - `app/editor.tsx` — `ActionIsland`, `InkingQuickTray`, and `QuickCreationSheet` wiring, `toggleInking` and `handleSelectInsert`, `islandBottom`/`optionsBottom` derived from `ACTION_ISLAND_HEIGHT`, and removal of the old `ToolDock`/`FloatingIsland` and their dead styles.
-- `src/media/image-crop.ts` (new) — pure crop geometry, cover scale, frame fitting, transform clamping, focal zoom, integer pixel crop calculation, quarter-turn rotation, OCR copy sizing, and safe board segment helper.
+- `src/media/image-crop.ts` (new) — pure crop geometry, cover scale, frame fitting, transform clamping, focal zoom, integer pixel crop calculation, quarter-turn rotation, and safe board segment helper.
 - `src/media/image-source.ts` (new) — user-facing copy for source sheet, permission denied guidance, and error formatting.
 - `src/media/image-picker.ts` (new) — thin wrapper for `expo-image-picker` camera and media library launchers with error and permission mapping.
-- `src/media/asset-store.ts` (new) — file system store managing original and cropped image files under the app document directory, downsampled cache working copies, the lossless PNG copy the recognizer reads, deletion, and crop metadata record generation.
+- `src/media/asset-store.ts` (new) — file system store managing original and cropped image files under the app document directory, downsampled cache working copies, deletion, and crop metadata record generation.
 - `src/components/ImageSourceSheet.tsx` (new) — bottom sheet presenting camera and photo library options, error alert banner with "Open Settings" link.
 - `src/components/ImageCropScreen.tsx` (new) — crop viewport modal with gesture-driven pan/pinch/double-tap, quarter-turn clockwise rotation, dashed frame border, and cancel/done controls.
 - `src/components/ImageImportFlow.tsx` (new) — coordinator managing the pick → cache → crop → store → place lifecycle, temporary file cleanup on cancel/unmount.
@@ -162,12 +161,11 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - `app.json` — `expo-image-picker` plugin configuration with camera and photo library usage descriptions, Android permissions.
 - `package.json` / `package-lock.json` — dependencies `expo-image-picker`, `expo-image-manipulator`, `expo-file-system`, and `test:image` verification script.
 - `scripts/verify-image.mts` (new) — comprehensive automated tests covering permissions, cancellations, large image bounds, crop maths, rotation, placement, proportional resize, undo/redo history, and persistence relaunch recovery.
-- `src/ocr/ocr-service.ts` (new) — platform-independent OCR result normalization at line level, column-aware reading order, review states, correction, text-line/engine labels, and error copy.
+- `src/ocr/ocr-service.ts` (new) — platform-independent OCR result normalization, top-to-bottom/left-to-right block ordering, review states, correction, region/engine labels, and error copy.
 - `src/ocr/native-ocr.ts` (new) — lazy `expo-mlkit-ocr` adapter using `requireOptionalNativeModule('ExpoMlkitOcr')`, mapping a missing native module or unsupported device to `OcrServiceError` codes instead of crashing.
 - `src/ocr/ocr-placement.ts` (new) — attaches reviewed OCR metadata to the image and builds the linked text block below it; `OCR_TEXT_GAP` and `buildOcrPlacement`.
-- `src/components/OcrReviewScreen.tsx` (new) — image preview, loading/success/no-text/error states, editable extracted text, `Add text to board`, `Add image only`, retry, and close; the summary reports recognized text lines.
-- `src/components/ImageImportFlow.tsx` — added the OCR review step, a dedicated lossless OCR copy with stale-request guarding, temporary-file cleanup across the new step, and the two placement choices.
-- `src/media/asset-store.ts` — `prepareOcrImage` renders rotate → crop → optional upscale into a lossless PNG cache file; `src/media/image-crop.ts` gained the pure `ocrSourceSize` sizing rule.
+- `src/components/OcrReviewScreen.tsx` (new) — image preview, loading/success/no-text/error states, editable extracted text, `Add text to board`, `Add image only`, retry, and close; the summary reports recognized text regions.
+- `src/components/ImageImportFlow.tsx` — added the OCR review step, temporary-file cleanup across the new step, and the two placement choices.
 - `src/components/AppButton.tsx` — `disabled` prop with an accessibility state and dimmed style.
 - `src/canvas/document.ts` — `ImageOcr`, optional `ImageObject.ocr`, `TextObject.sourceImageId`, and OCR fields in image equality.
 - `src/persistence/repository.ts` — parses/preserves `sourceImageId` and optional image OCR metadata; malformed OCR is dropped without rejecting the image.
@@ -188,19 +186,19 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
   - `test:selection`: rotated bounds and hit testing, handles, resize anchors, rotation, marquee, screen conversion, action rail placement, duplicate, multi-transform undo/redo
   - `test:persistence`: schema migrations, document round-trip, corrupt row tolerance, media assets, write queue, relaunch recovery
   - `test:image`: permission copy, cancel, large image, crop, rotate, placement, resize, history, persistence and relaunch
-  - `test:ocr`: line-level flattening, column and title/column reading order, row ordering, OCR copy sizing, loading/success/no-text/error states, correction, source-image linking, image-only fallback, one-step undo, persistence and relaunch
+  - `test:ocr`: block ordering, loading/success/no-text/error states, correction, source-image linking, image-only fallback, one-step undo, persistence and relaunch
 - `EXPO_NO_TELEMETRY=1 npx expo export --platform ios` bundles successfully.
 - `EXPO_NO_TELEMETRY=1 npx expo export --platform android` bundles successfully.
 - No ESLint config or lint script exists in this project, so there is no separate lint run.
-- Not verified: physical camera and native photo picker dialogs, native OCR recognition and its permission-free path, and Expo Go unavailable-state behaviour on real devices; these are covered by the pure suites and type-safe wrappers but still need a development build on a phone or simulator.
+- Not verified: physical camera and native photo picker dialogs, native OCR recognition and its permission-free path, and Expo Go unavailable-state behaviour on real devices; these are covered by the pure suites and type-safe wrappers but still need manual verification on a device.
 
 ## Known issues
 - Image files are stored locally in the app container. When boards are deleted in the future, orphaned media cleanup will be needed.
 - OCR recognition requires a development build (or EAS build). In Expo Go the review screen reports that text recognition is unavailable in this build; `Add image only` still works.
 - Native OCR, permission dialogs, physical-device relaunch, and offline recognition have not been exercised in this environment. Manual testing on iOS and Android is required to confirm engine availability and recognition quality.
 - iOS is pinned to Apple Vision (`iosEngine: "vision"`) and the iOS deployment target is 16.4. Android uses ML Kit's bundled Latin model; non-Latin scripts would need a different ML Kit artifact.
-- OCR reading order is inferred from line geometry. Clear side-by-side columns and a title above them are ordered correctly, but very dense, overlapping, or irregular layouts can still be misordered; the user can correct the text before adding it.
-- Source photos larger than the 4096 px working cap are recognized from the downsampled working pixels, because crop-screen geometry is measured against that working copy. The untouched original is used only while it still matches the working size.
+- OCR reading order is inferred from block geometry: blocks are sorted top to bottom then left to right. Very dense, overlapping, or multi-column layouts can still be misordered; the user can correct the text before adding it.
+- OCR reads the placed JPEG, so source photos larger than the 4096 px working cap are recognized from the downsampled working pixels rather than the untouched original.
 - Handwriting, glare, and very small or distant text remain best-effort; the recognizer has no contrast/grayscale retry or handwriting model yet.
 - OCR can only be started during import. Re-running recognition on an image already on a board, and removing a linked text block when its source image is deleted, are not exposed yet.
 - Touch interaction on actual mobile hardware was not exercised in this environment; manual testing of pinch-zoom crop is recommended.
@@ -230,9 +228,8 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - Reviewed OCR text is stored on the image even when the user chooses `Add image only`, so a later re-run or re-placement does not need to redo recognition.
 - Image and linked text are inserted with one `commands` action, so one placement is one undo step rather than two.
 - OCR metadata is parsed leniently: a malformed result is dropped while the image row still loads, matching the existing corrupt-row tolerance for the rest of the board.
-- OCR ordering is computed at line level, not block level. Apple Vision returns one block for the whole page, so block sorting would report one region and could interleave columns; flattening `blocks[].lines` and then choosing column-first or row-first order is platform-independent and needs no native patch.
-- Columns win over rows only when a blank gutter runs the full height of the group and both sides have at least two lines with overlapping vertical ranges. This keeps genuine columns and title/column layouts in order without turning scattered notes into columns.
-- The recognizer reads a lossless PNG of the crop in the cache directory instead of the placed JPEG. The copy comes from the untouched original while it still matches the working size, is enlarged up to 4× when the crop is small, and is deleted with the other temporary files; if it cannot be prepared, recognition falls back to the placed copy so OCR never blocks placement.
+- OCR ordering is computed from text blocks: sort top to bottom with a vertical tolerance for blocks that share a visual row, then left to right. The raw transcript is a fallback for engines that return no blocks. This keeps the review in a predictable order without depending on engine-specific line data.
+- The recognizer reads the placed JPEG rather than a separate preprocessing copy. That keeps the flow simple and matches the pixels the user sees on the board; if accuracy needs work later, preprocessing can be revisited as its own change.
 
 ## Next task
 Next: export and import (PNG/PDF export, share sheet, and versioned JSON board backup/restore).

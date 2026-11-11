@@ -18,8 +18,6 @@ import type { ImageCrop, ImageRotation } from '../canvas/document.ts';
 import {
   MAX_WORKING_DIMENSION,
   cropMetadata,
-  ocrSourceSize,
-  rotatedSize,
   safeBoardSegment,
   type PixelRect,
 } from './image-crop.ts';
@@ -202,66 +200,6 @@ export async function cropWorkingImage(
     width: result.width,
     height: result.height,
     mimeType: mimeForFormat(format),
-  };
-}
-
-/**
- * Build the recognizer's private copy from the sharpest pixels available.
- *
- * The placed asset is a compressed JPEG, so OCR gets a lossless PNG of the same
- * crop instead: rotate → crop → enlarge small crops. The caller picks the
- * source (the untouched original while it still matches the working size,
- * otherwise the rotated working copy); the file is deleted with the flow's
- * other cache files.
- */
-export async function prepareOcrImage(input: {
-  sourceUri: string;
-  sourceWidth: number;
-  sourceHeight: number;
-  /** Clockwise rotation applied before cropping; 0 when the source is already rotated. */
-  rotation?: ImageRotation;
-  /** Crop rectangle in rotated source pixels; omitted for the whole image. */
-  crop?: PixelRect | null;
-}): Promise<WorkingImage> {
-  const rotation = input.rotation ?? 0;
-  const rotated = rotatedSize(input.sourceWidth, input.sourceHeight, rotation);
-  const originX = Math.min(
-    Math.max(0, Math.round(input.crop?.x ?? 0)),
-    Math.max(0, rotated.width - 1),
-  );
-  const originY = Math.min(
-    Math.max(0, Math.round(input.crop?.y ?? 0)),
-    Math.max(0, rotated.height - 1),
-  );
-  const cropWidth = Math.max(
-    1,
-    Math.min(rotated.width - originX, Math.round(input.crop?.width ?? rotated.width)),
-  );
-  const cropHeight = Math.max(
-    1,
-    Math.min(rotated.height - originY, Math.round(input.crop?.height ?? rotated.height)),
-  );
-  const fullImage =
-    originX === 0 && originY === 0 && cropWidth === rotated.width && cropHeight === rotated.height;
-  const target = ocrSourceSize(cropWidth, cropHeight);
-
-  // The caller only passes sources that are already capped at
-  // MAX_WORKING_DIMENSION, so decoding at full size stays bounded.
-  const context = ImageManipulator.manipulate(input.sourceUri);
-  if (rotation !== 0) context.rotate(rotation);
-  if (!fullImage) context.crop({ originX, originY, width: cropWidth, height: cropHeight });
-  if (target.width !== cropWidth || target.height !== cropHeight) {
-    context.resize({ width: target.width, height: target.height });
-  }
-
-  const rendered = await context.renderAsync();
-  // PNG is lossless: no second JPEG pass on the pixels the recognizer reads.
-  const result = await rendered.saveAsync({ format: SaveFormat.PNG });
-  return {
-    uri: result.uri,
-    width: result.width,
-    height: result.height,
-    mimeType: 'image/png',
   };
 }
 

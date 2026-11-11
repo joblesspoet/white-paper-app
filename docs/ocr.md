@@ -39,34 +39,12 @@ and `Add image only` remains available.
 | `tesseract.js` 7.0.0 | Yes, WASM + language data | Poor | Words/lines | Large worker/WASM/trained-data bundle, slower on phones, and React Native worker/file integration is fragile |
 | `react-native-tesseract-ocr` 2.0.3 | Tesseract | Bare native wrapper | Plain text | Old, unmaintained, and Android-oriented |
 
-## Recognition quality
-
-Accuracy is improved in two places that do not depend on the native package:
-
-- **Reading order.** Both engines report `blocks[].lines[]`, so the service
-  flattens every block to its lines before ordering. Apple Vision's fallback
-  returns one block containing the whole page; line-level flattening is what
-  makes that page readable and stops the review screen from reporting one text
-  region. Ordering projects line boxes onto the x axis, finds blank gutters, and
-  reads genuine side-by-side columns left to right. Without a column, it splits
-  at paragraph-sized horizontal gaps and reads top to bottom, then left to right
-  within each row. A full-width title above two columns still reads first,
-  because it spans the gutter and forces a horizontal split before the column
-  split.
-- **Input pixels.** The recognizer no longer reads the placed JPEG. The import
-  flow builds a lossless PNG of the same crop, from the untouched original while
-  it still matches the working size, otherwise from the rotated working copy.
-  Crops with a long edge under 1600 px are enlarged up to 4× so their glyphs
-  clear the engines' minimum text size. The copy lives in the cache directory
-  and is deleted when the flow finishes.
-
 ## Flow and data model
 
 ```text
 Pick or capture image
   → crop/rotate
   → store durable original + placed copies
-  → build lossless OCR copy (cache)
   → OCR review screen (recognition starts immediately)
       loading / success / no text / error
       editable extracted text
@@ -104,23 +82,22 @@ Pick or capture image
 
 ## Limitations
 
-- Not exercised on a physical device or simulator in this environment. The
-  native module and both platform engines require a development build; Expo Go
-  only shows the unavailable error state.
+- Recognized text has not been verified on a physical device; the module is
+  installed in a development build, but Expo Go only shows the unavailable error
+  state.
 - iOS is pinned to Apple Vision through `iosEngine: "vision"` and the app's iOS
   deployment target is 16.4. Android uses ML Kit's bundled Latin model; other
   scripts would need a different ML Kit artifact and are not configured.
-- Reading order is inferred from line geometry. Genuine side-by-side columns
-  with a blank gutter are read column-first and a title above them stays first,
-  but very dense, overlapping, or irregular layouts can still be misordered; the
-  user can correct the text before adding it.
+- Reading order is inferred from block geometry: blocks are sorted top to bottom
+  with a row tolerance, then left to right. Very dense, overlapping, or
+  multi-column layouts can still be misordered; the user can correct the text
+  before adding it.
 - Recognition quality depends on the platform engine, image sharpness, and
   handwriting. Handwriting and stylised lettering are best-effort, and very
   small or glare-washed text can still be missed.
-- OCR reads a dedicated lossless copy of the placed crop. Source photos larger
-  than the 4096 px working cap are recognized from the downsampled working
-  pixels, not the untouched original, because the crop-screen geometry is
-  measured against that working copy.
+- OCR reads the placed JPEG, so source photos larger than the 4096 px working cap
+  are recognized from the downsampled working pixels rather than the untouched
+  original.
 - Recognition can only be started during import. Re-running OCR from an image
   already on a board, and cleaning up a linked text block when its source image
   is deleted, are not exposed yet.
@@ -130,15 +107,10 @@ Pick or capture image
 
 `scripts/verify-ocr.mts` exercises the platform-independent contract:
 
-- line-level flattening, including an Apple Vision payload with every line in a
-  single block;
-- out-of-order lines sort into reading order and join with newlines;
-- two side-by-side columns read column-first, and a full-width title above them
-  stays first;
-- two lines on one visual row are read left to right when neither side has
-  enough lines to be a column;
-- lossless OCR copy sizing: small crops are enlarged up to 4×, large crops keep
-  their source resolution;
+- out-of-order blocks sort top to bottom, then left to right, and join with
+  newlines;
+- transcript-only payloads become a single region, and whitespace-only output is
+  an empty result rather than a failure;
 - loading, success, no-text, and error states;
 - corrected text and the disabled `Add text to board` state for empty text;
 - permission-free adapter boundary: OCR only receives a local URI, and image
@@ -149,4 +121,4 @@ Pick or capture image
   or legacy OCR metadata.
 
 Native recognition, permission dialogs, device kill/relaunch, and offline
-behaviour still require a development build on a phone or simulator.
+behaviour still require verification on a phone or simulator.
