@@ -39,6 +39,7 @@ type BoardContextValue = {
   getBoard: (id: string) => Board | undefined;
   refreshBoards: () => Promise<void>;
   clearStorageError: () => void;
+  resetBoards: () => void;
 };
 
 const BoardContext = createContext<BoardContextValue | null>(null);
@@ -180,6 +181,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     [boards],
   );
   const clearStorageError = useCallback(() => setStorageError(null), []);
+  const resetBoards = useCallback(() => setBoards([]), []);
 
   const value = useMemo<BoardContextValue>(
     () => ({
@@ -192,6 +194,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
       getBoard,
       refreshBoards,
       clearStorageError,
+      resetBoards,
     }),
     [
       boards,
@@ -203,6 +206,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
       getBoard,
       refreshBoards,
       clearStorageError,
+      resetBoards,
     ],
   );
 

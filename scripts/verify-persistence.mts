@@ -195,16 +195,17 @@ const fullDocument: CanvasDocument = {
 async function testFreshDatabase(): Promise<void> {
   const test = openTestDatabase();
   try {
-    assert.deepEqual(planMigrations(0).map((migration) => migration.version), [1, 2]);
-    assert.deepEqual(planMigrations(1).map((migration) => migration.version), [2]);
+    assert.deepEqual(planMigrations(0).map((migration) => migration.version), [1, 2, 3]);
+    assert.deepEqual(planMigrations(1).map((migration) => migration.version), [2, 3]);
+    assert.deepEqual(planMigrations(2).map((migration) => migration.version), [3]);
     assert.deepEqual(planMigrations(SCHEMA_VERSION), []);
 
     const result = await migrateDatabase(test.database);
-    assert.deepEqual(result, { from: 0, to: SCHEMA_VERSION, applied: [1, 2] });
+    assert.deepEqual(result, { from: 0, to: SCHEMA_VERSION, applied: [1, 2, 3] });
     assert.equal(await readSchemaVersion(test.database), SCHEMA_VERSION);
 
     const tables = await tableNames(test.database);
-    for (const table of ['boards', 'board_pages', 'canvas_objects', 'media_assets']) {
+    for (const table of ['boards', 'board_pages', 'canvas_objects', 'media_assets', 'app_preferences']) {
       assert.ok(tables.includes(table), `missing table ${table}`);
     }
     assert.ok((await columnNames(test.database, 'boards')).includes('viewport_json'));
@@ -255,13 +256,29 @@ async function testVersionOneUpgrade(): Promise<void> {
     );
 
     const result = await migrateDatabase(test.database);
-    assert.deepEqual(result, { from: 1, to: SCHEMA_VERSION, applied: [2] });
+    assert.deepEqual(result, { from: 1, to: SCHEMA_VERSION, applied: [2, 3] });
     assert.ok((await columnNames(test.database, 'boards')).includes('viewport_json'));
 
     const snapshot = await loadBoardDocument(test.database, 'legacy');
     assert.equal(snapshot.viewport, null);
     assert.equal(snapshot.document.objects.length, 1);
     assert.deepEqual(snapshot.document.objects[0], textObject);
+  } finally {
+    test.close();
+  }
+}
+
+async function testVersionTwoUpgrade(): Promise<void> {
+  const test = openTestDatabase();
+  try {
+    for (const statement of MIGRATIONS[0].statements) await test.database.execAsync(statement);
+    for (const statement of MIGRATIONS[1].statements) await test.database.execAsync(statement);
+    await test.database.execAsync('PRAGMA user_version = 2');
+
+    const result = await migrateDatabase(test.database);
+    assert.deepEqual(result, { from: 2, to: SCHEMA_VERSION, applied: [3] });
+    const tables = await tableNames(test.database);
+    assert.ok(tables.includes('app_preferences'));
   } finally {
     test.close();
   }
@@ -569,6 +586,7 @@ async function testWriteQueueOrder(): Promise<void> {
 async function main(): Promise<void> {
   await testFreshDatabase();
   await testVersionOneUpgrade();
+  await testVersionTwoUpgrade();
   await testNewerDatabaseIsRefused();
   await testBoardMetadata();
   await testDocumentRoundTrip();

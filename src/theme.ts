@@ -61,6 +61,7 @@ export const darkColors: ThemeColors = {
   primary: colors.darkPrimary,
   accent: colors.darkAccent,
   ring: colors.darkPrimary,
+  muted: '#164A45',
 };
 
 export const spacing = {

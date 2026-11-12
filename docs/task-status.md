@@ -1,9 +1,22 @@
 # Task status
 
 ## Current phase
-Export and import (Milestone 3): local PNG/JPEG/PDF export, native share sheet, and versioned `.flowcanvas.json` backup/restore.
+Settings (Milestone 3): local user preferences, theme switching, canvas and drawing defaults, haptics, export format preference, about/privacy, and destructive data clear.
 
 ## Status
+`implemented-unverified` — local MVP Settings are implemented with no cloud sync:
+- Settings screen (`app/settings.tsx`) organized into 6 flat sections matching Stitch designs (`55-settings-01-default-light.png`, `56-settings-02-dark.png`, `57-settings-03-ipad-portrait.png`, `58-clear-local-data-01-confirm-dialog.png`): Appearance, Canvas, Interaction, Export, About, and Data.
+- Theme switching: System, Light, and Dark mode via 3-way segmented control; applied globally via `PreferencesProvider` (`src/settings/preferences-context.tsx`) dynamically styling header bars, status bar style, background, card borders, and toolbars across Home, Editor, and Settings.
+- Default canvas background and texture: options for Light/Dark canvas background and Blank/Dot Grid texture persisted and automatically applied to new boards (`app/index.tsx`) and the customisation sheet.
+- Default pen color and width: preferences from the 16-color WCAG AA canvas palette and standard stroke widths (2, 4, 8, 12) applied on board open in `app/editor.tsx`.
+- Haptics feedback toggle: toggles tactile feedback on tool switching, tray toggling, undo/redo, and preferences changes, using a resilient native wrapper (`src/utils/haptics.ts`).
+- Export format preference: default format (PNG, JPEG, PDF, backup) saved and pre-selected when opening `ExportSheet.tsx`.
+- About and Privacy modals (`src/components/SettingsPickers.tsx`): offline architecture, local Skia engine details, zero telemetry, zero analytics, zero external network requests.
+- Clear local data flow (`src/components/ClearLocalDataDialog.tsx`): displays real live counts of active boards, sticky notes, vector drawings, and database media bytes; requires explicit checkbox acknowledgement before enabling the destructive "Delete everything" action; atomically wipes SQLite tables, removes durable media files, resets preferences to defaults, clears in-memory boards, and navigates cleanly back to Home empty state.
+- Durability: append-only SQLite schema migration 3 creates `app_preferences` table with WAL mode and serialized transactional writes.
+- Verification suite added at `scripts/verify-settings.mts` (`npm run test:settings`) covering preference parsing, SQLite roundtrip, on-disk recovery, real data purge, and default fallback.
+- The next task is responsive tablet support.
+
 `implemented-unverified` — local export and import are implemented with no cloud sync:
 - Visible-board and selected-region raster export (`PNG` and `JPEG`) render offscreen via `@shopify/react-native-skia` (`src/export/export-service.ts`, `src/export/regions.ts`) with clamped pixel bounds (`MAX_EXPORT_DIMENSION = 4096`), selection padding (`EXPORT_SELECTION_PADDING = 24`), and periodic event-loop yields (`RENDER_BATCH_SIZE = 20`) so large boards never freeze the editor.
 - Local PDF export (`exportBoardPdf`) uses `expo-print` (`Print.printToFileAsync`) on iOS and Android to generate a single-page PDF sized to the rendered region aspect ratio, and returns an actionable error on unsupported platforms (web).

@@ -12,6 +12,7 @@ import { pickBackupFile } from '../src/export/backup-store';
 import { colors, darkColors, radii, spacing, touchTarget, typography } from '../src/theme';
 import { homeStyles as styles } from '../src/screens/home.styles';
 import { useBoards } from '../src/board-context';
+import { usePreferences } from '../src/settings/preferences-context';
 
 const initialBoards: BoardSummary[] = [];
 
@@ -19,24 +20,32 @@ export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const isDark = useColorScheme() === 'dark';
-  const theme = isDark ? darkColors : colors;
+  const { theme, isDark, preferences } = usePreferences();
   const { boards, createBoard, ready, storageError, refreshBoards } = useBoards();
   const [sheetVisible, setSheetVisible] = useState(false);
   const [importState, setImportState] = useState<ImportModalState>({ status: 'closed' });
-  const [canvasBackground, setCanvasBackground] = useState<'light' | 'dark'>(isDark ? 'dark' : 'light');
-  const [canvasStyle, setCanvasStyle] = useState<'blank' | 'dots'>('blank');
+  const [canvasBackground, setCanvasBackground] = useState<'light' | 'dark'>(preferences.canvasBackground);
+  const [canvasStyle, setCanvasStyle] = useState<'blank' | 'dots'>(preferences.canvasStyle);
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
   const columns = width >= 768 ? 4 : 2;
   const horizontalPadding = width >= 768 ? spacing.xl : spacing.lg;
   const contentStyle = useMemo(() => ({ paddingHorizontal: horizontalPadding, paddingBottom: spacing.xl + insets.bottom }), [horizontalPadding, insets.bottom]);
 
   const createBoardNow = useCallback((settings?: { background: 'light' | 'dark'; style: 'blank' | 'dots'; orientation: 'portrait' | 'landscape' }) => {
-    const board = createBoard(settings);
+    const defaultSettings = {
+      background: preferences.canvasBackground,
+      style: preferences.canvasStyle,
+      orientation: 'portrait' as const,
+    };
+    const board = createBoard(settings ?? defaultSettings);
     router.push({ pathname: '/editor', params: { boardId: board.id } });
-  }, [createBoard, router]);
+  }, [createBoard, preferences.canvasBackground, preferences.canvasStyle, router]);
 
-  const openCustomize = useCallback(() => setSheetVisible(true), []);
+  const openCustomize = useCallback(() => {
+    setCanvasBackground(preferences.canvasBackground);
+    setCanvasStyle(preferences.canvasStyle);
+    setSheetVisible(true);
+  }, [preferences.canvasBackground, preferences.canvasStyle]);
   const createCustomizedBoard = useCallback(() => {
     setSheetVisible(false);
     createBoardNow({ background: canvasBackground, style: canvasStyle, orientation });

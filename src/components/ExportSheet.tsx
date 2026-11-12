@@ -30,6 +30,7 @@ type ExportSheetProps = {
   canvasSize: { width: number; height: number };
   settings: BoardSettings;
   selectedIds: readonly string[];
+  defaultFormat?: ExportFileFormat;
   onClose: () => void;
 };
 
@@ -50,13 +51,14 @@ export function ExportSheet({
   canvasSize,
   settings,
   selectedIds,
+  defaultFormat = 'png',
   onClose,
 }: ExportSheetProps) {
   const insets = useSafeAreaInsets();
   const hasSelection = selectedIds.length > 0;
   const pdfSupported = Platform.OS !== 'web';
 
-  const [format, setFormat] = useState<ExportFileFormat>('png');
+  const [format, setFormat] = useState<ExportFileFormat>(defaultFormat);
   const [scope, setScope] = useState<ExportScope>('visible');
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -73,10 +75,11 @@ export function ExportSheet({
       setErrorMessage(null);
       return;
     }
+    setFormat(defaultFormat);
     if (!hasSelection && scope === 'selection') {
       setScope('visible');
     }
-  }, [hasSelection, scope, visible]);
+  }, [defaultFormat, hasSelection, scope, visible]);
 
   const formatOptions: FormatOption[] = [
     { format: 'png', label: 'PNG image', subtitle: 'Lossless raster image', supported: true },

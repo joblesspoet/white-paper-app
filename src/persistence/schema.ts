@@ -100,6 +100,17 @@ export const MIGRATIONS: readonly Migration[] = [
         ON canvas_objects(page_id, type)`,
     ],
   },
+  {
+    version: 3,
+    name: 'create app preferences table',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS app_preferences (
+        key TEXT PRIMARY KEY NOT NULL,
+        value_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
 ] as const;
 
 /** Latest schema version this build understands. */
@@ -166,3 +177,89 @@ export function serializeViewport(viewport: Viewport): string {
 export function serializeBoardSettings(settings: BoardSettings): string {
   return JSON.stringify(settings);
 }
+
+export type AppTheme = 'system' | 'light' | 'dark';
+export type DefaultCanvasBackground = 'light' | 'dark';
+export type DefaultCanvasStyle = 'blank' | 'dots';
+export type DefaultExportFormat = 'png' | 'jpeg' | 'pdf' | 'backup';
+
+export type AppPreferences = {
+  theme: AppTheme;
+  canvasBackground: DefaultCanvasBackground;
+  canvasStyle: DefaultCanvasStyle;
+  defaultPenColor: string;
+  defaultPenWidth: number;
+  haptics: boolean;
+  exportFormat: DefaultExportFormat;
+};
+
+export const DEFAULT_APP_PREFERENCES: AppPreferences = {
+  theme: 'system',
+  canvasBackground: 'light',
+  canvasStyle: 'blank',
+  defaultPenColor: 'ink',
+  defaultPenWidth: 4,
+  haptics: true,
+  exportFormat: 'png',
+};
+
+const VALID_THEMES: readonly AppTheme[] = ['system', 'light', 'dark'];
+const VALID_BACKGROUNDS: readonly DefaultCanvasBackground[] = ['light', 'dark'];
+const VALID_STYLES: readonly DefaultCanvasStyle[] = ['blank', 'dots'];
+const VALID_EXPORT_FORMATS: readonly DefaultExportFormat[] = ['png', 'jpeg', 'pdf', 'backup'];
+const VALID_PEN_WIDTHS = [2, 4, 8, 12] as const;
+
+export function parseAppPreferences(raw: string | null | undefined): AppPreferences {
+  if (!raw) return { ...DEFAULT_APP_PREFERENCES };
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!isRecord(value)) return { ...DEFAULT_APP_PREFERENCES };
+    const theme: AppTheme =
+      typeof value.theme === 'string' && VALID_THEMES.includes(value.theme as AppTheme)
+        ? (value.theme as AppTheme)
+        : DEFAULT_APP_PREFERENCES.theme;
+    const canvasBackground: DefaultCanvasBackground =
+      typeof value.canvasBackground === 'string' &&
+      VALID_BACKGROUNDS.includes(value.canvasBackground as DefaultCanvasBackground)
+        ? (value.canvasBackground as DefaultCanvasBackground)
+        : DEFAULT_APP_PREFERENCES.canvasBackground;
+    const canvasStyle: DefaultCanvasStyle =
+      typeof value.canvasStyle === 'string' &&
+      VALID_STYLES.includes(value.canvasStyle as DefaultCanvasStyle)
+        ? (value.canvasStyle as DefaultCanvasStyle)
+        : DEFAULT_APP_PREFERENCES.canvasStyle;
+    const defaultPenColor =
+      typeof value.defaultPenColor === 'string' && value.defaultPenColor.trim().length > 0
+        ? value.defaultPenColor.trim()
+        : DEFAULT_APP_PREFERENCES.defaultPenColor;
+    const defaultPenWidth =
+      typeof value.defaultPenWidth === 'number' &&
+      VALID_PEN_WIDTHS.includes(value.defaultPenWidth as (typeof VALID_PEN_WIDTHS)[number])
+        ? value.defaultPenWidth
+        : DEFAULT_APP_PREFERENCES.defaultPenWidth;
+    const haptics =
+      typeof value.haptics === 'boolean' ? value.haptics : DEFAULT_APP_PREFERENCES.haptics;
+    const exportFormat: DefaultExportFormat =
+      typeof value.exportFormat === 'string' &&
+      VALID_EXPORT_FORMATS.includes(value.exportFormat as DefaultExportFormat)
+        ? (value.exportFormat as DefaultExportFormat)
+        : DEFAULT_APP_PREFERENCES.exportFormat;
+
+    return {
+      theme,
+      canvasBackground,
+      canvasStyle,
+      defaultPenColor,
+      defaultPenWidth,
+      haptics,
+      exportFormat,
+    };
+  } catch {
+    return { ...DEFAULT_APP_PREFERENCES };
+  }
+}
+
+export function serializeAppPreferences(prefs: AppPreferences): string {
+  return JSON.stringify(prefs);
+}
+

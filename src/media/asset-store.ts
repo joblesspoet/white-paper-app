@@ -216,3 +216,23 @@ export async function deleteFile(uri: string): Promise<void> {
 export async function deleteStoredAsset(storagePath: string): Promise<void> {
   await deleteFile(resolveMediaUri(storagePath));
 }
+
+/**
+ * Remove all durable media assets and working cache directories when the user
+ * clears all local data.
+ */
+export async function clearAllMediaFiles(): Promise<void> {
+  try {
+    const root = mediaRoot();
+    if (root.exists) root.delete();
+  } catch {
+    // Best-effort cleanup.
+  }
+  try {
+    const working = workingRoot();
+    if (working.exists) working.delete();
+  } catch {
+    // Best-effort cleanup.
+  }
+}
+

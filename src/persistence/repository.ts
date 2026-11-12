@@ -30,6 +30,10 @@ import {
   serializeBoardSettings,
   serializeViewport,
   type BoardSettings,
+  type AppPreferences,
+  DEFAULT_APP_PREFERENCES,
+  parseAppPreferences,
+  serializeAppPreferences,
 } from './schema.ts';
 
 export type BoardRecord = {
@@ -762,3 +766,171 @@ export async function insertImportedBoard(
 /** Re-exported so verification can assert a save/load round-trip precisely. */
 export { documentsEqual };
 export { DEFAULT_BOARD_SETTINGS };
+
+// ------------------------------------------------------------- preferences
+
+export type LocalDataStats = {
+  boardCount: number;
+  stickyCount: number;
+  strokeCount: number;
+  shapeCount: number;
+  connectorCount: number;
+  textCount: number;
+  imageCount: number;
+  totalObjectCount: number;
+  mediaAssetCount: number;
+  mediaBytes: number;
+};
+
+const PREFERENCES_KEY = 'app_preferences';
+
+export async function loadAppPreferences(
+  database: PersistenceDatabase,
+): Promise<AppPreferences> {
+  try {
+    const row = await database.getFirstAsync<{ value_json?: string | null }>(
+      'SELECT value_json FROM app_preferences WHERE key = ?',
+      [PREFERENCES_KEY],
+    );
+    return parseAppPreferences(row?.value_json);
+  } catch {
+    return { ...DEFAULT_APP_PREFERENCES };
+  }
+}
+
+export async function saveAppPreference<K extends keyof AppPreferences>(
+  database: PersistenceDatabase,
+  key: K,
+  value: AppPreferences[K],
+  now = new Date().toISOString(),
+): Promise<AppPreferences> {
+  const current = await loadAppPreferences(database);
+  const updated: AppPreferences = { ...current, [key]: value };
+  await database.runAsync(
+    `INSERT OR REPLACE INTO app_preferences (key, value_json, updated_at)
+     VALUES (?, ?, ?)`,
+    [PREFERENCES_KEY, serializeAppPreferences(updated), now],
+  );
+  return updated;
+}
+
+export async function saveAllAppPreferences(
+  database: PersistenceDatabase,
+  prefs: AppPreferences,
+  now = new Date().toISOString(),
+): Promise<void> {
+  await database.runAsync(
+    `INSERT OR REPLACE INTO app_preferences (key, value_json, updated_at)
+     VALUES (?, ?, ?)`,
+    [PREFERENCES_KEY, serializeAppPreferences(prefs), now],
+  );
+}
+
+export async function resetAppPreferences(
+  database: PersistenceDatabase,
+  now = new Date().toISOString(),
+): Promise<AppPreferences> {
+  await database.runAsync(
+    `INSERT OR REPLACE INTO app_preferences (key, value_json, updated_at)
+     VALUES (?, ?, ?)`,
+    [PREFERENCES_KEY, serializeAppPreferences(DEFAULT_APP_PREFERENCES), now],
+  );
+  return { ...DEFAULT_APP_PREFERENCES };
+}
+
+// ----------------------------------------------------------------- data stats & wipe
+
+export async function getLocalDataStats(
+  database: PersistenceDatabase,
+): Promise<LocalDataStats> {
+  const boardRow = await database.getFirstAsync<{ count?: number | null }>(
+    'SELECT COUNT(*) as count FROM boards',
+  );
+  const boardCount = Number(boardRow?.count ?? 0);
+
+  const objectRows = await database.getAllAsync<{ type: string; count: number }>(
+    'SELECT type, COUNT(*) as count FROM canvas_objects GROUP BY type',
+  );
+
+  let stickyCount = 0;
+  let strokeCount = 0;
+  let shapeCount = 0;
+  let connectorCount = 0;
+  let textCount = 0;
+  let imageCount = 0;
+  let totalObjectCount = 0;
+
+  for (const row of objectRows) {
+    const count = Number(row.count ?? 0);
+    totalObjectCount += count;
+    switch (row.type) {
+      case 'sticky':
+        stickyCount += count;
+        break;
+      case 'ink':
+        strokeCount += count;
+        break;
+      case 'shape':
+        shapeCount += count;
+        break;
+      case 'connector':
+        connectorCount += count;
+        break;
+      case 'text':
+        textCount += count;
+        break;
+      case 'image':
+        imageCount += count;
+        break;
+    }
+  }
+
+  const mediaRow = await database.getFirstAsync<{ count?: number | null; total_bytes?: number | null }>(
+    'SELECT COUNT(*) as count, SUM(bytes) as total_bytes FROM media_assets',
+  );
+  const mediaAssetCount = Number(mediaRow?.count ?? 0);
+  const mediaBytes = Number(mediaRow?.total_bytes ?? 0);
+
+  return {
+    boardCount,
+    stickyCount,
+    strokeCount,
+    shapeCount,
+    connectorCount,
+    textCount,
+    imageCount,
+    totalObjectCount,
+    mediaAssetCount,
+    mediaBytes,
+  };
+}
+
+export async function clearAllLocalData(
+  database: PersistenceDatabase,
+): Promise<{
+  boardsCleared: number;
+  objectsCleared: number;
+  mediaCleared: number;
+}> {
+  let boardsCleared = 0;
+  let objectsCleared = 0;
+  let mediaCleared = 0;
+
+  await database.withTransactionAsync(async () => {
+    const mediaRes = await database.runAsync('DELETE FROM media_assets');
+    mediaCleared = mediaRes.changes;
+
+    const objectsRes = await database.runAsync('DELETE FROM canvas_objects');
+    objectsCleared = objectsRes.changes;
+
+    await database.runAsync('DELETE FROM board_pages');
+
+    const boardsRes = await database.runAsync('DELETE FROM boards');
+    boardsCleared = boardsRes.changes;
+
+    await database.runAsync('DELETE FROM app_preferences');
+  });
+
+  return { boardsCleared, objectsCleared, mediaCleared };
+}
+

@@ -321,3 +321,30 @@ export function RedoIcon({ size = 24, color = colors.foreground }: IconProps) {
     </Svg>
   );
 }
+
+export function InfoIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx={12} cy={12} r={9} stroke={color} strokeWidth={2} />
+      <Path d="M12 8h.01M12 12v4" stroke={color} strokeWidth={2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+export function DatabaseIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M4 6c0-1.66 3.58-3 8-3s8 1.34 8 3v12c0 1.66-3.58 3-8 3s-8-1.34-8-3V6Z"
+        stroke={color}
+        strokeWidth={2}
+      />
+      <Path
+        d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3M4 6c0 1.66 3.58 3 8 3s8-1.34 8-3"
+        stroke={color}
+        strokeWidth={2}
+      />
+    </Svg>
+  );
+}
+

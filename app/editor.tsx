@@ -15,7 +15,10 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBoards } from '../src/board-context';
+import { usePreferences } from '../src/settings/preferences-context';
+import { triggerHapticFeedback } from '../src/utils/haptics';
 import {
+  CANVAS_COLORS,
   DEFAULT_STICKY_COLOR,
   DEFAULT_STICKY_FONT_SIZE,
   DEFAULT_TEXT_COLOR,
@@ -143,8 +146,8 @@ export default function BoardEditorScreen() {
   useEffect(() => { if (boardTitle) setTitle(boardTitle); }, [board?.id]);
   const insets = useSafeAreaInsets();
   const { width, height: windowHeight } = useWindowDimensions();
-  const dark = useColorScheme() === 'dark';
-  const theme = dark ? darkColors : colors;
+  const { preferences, theme, isDark } = usePreferences();
+  const dark = isDark;
   const tablet = width >= 768;
 
   const [history, dispatch] = useReducer(documentReducer, createDocumentHistory());
@@ -176,8 +179,19 @@ export default function BoardEditorScreen() {
   const [connectorColorKey, setConnectorColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
   const [connectorStrokeWidth, setConnectorStrokeWidth] = useState(4);
 
-  const [color, setColor] = useState<string>(theme.foreground);
-  const [strokeWidth, setStrokeWidth] = useState(4);
+  const resolveInitialColor = () => {
+    const token = CANVAS_COLORS.find(
+      (c) =>
+        c.key === preferences.defaultPenColor ||
+        c.light.toLowerCase() === preferences.defaultPenColor.toLowerCase() ||
+        c.dark.toLowerCase() === preferences.defaultPenColor.toLowerCase(),
+    );
+    if (token) return dark ? token.dark : token.light;
+    return preferences.defaultPenColor || theme.foreground;
+  };
+
+  const [color, setColor] = useState<string>(resolveInitialColor);
+  const [strokeWidth, setStrokeWidth] = useState(preferences.defaultPenWidth ?? 4);
   const [opacity, setOpacity] = useState(1);
   const [eraserRadius, setEraserRadius] = useState(24);
   const [inkOptionsVisible, setInkOptionsVisible] = useState(false);
@@ -631,6 +645,7 @@ export default function BoardEditorScreen() {
   const isInkingTool = activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser';
 
   const pressTool = useCallback((tool: InkTool) => {
+    void triggerHapticFeedback('selection', preferences.haptics);
     if (editingRef.current) commitEditing();
     setStylingObjectId(null);
     if (tool !== 'select') setSelectedObjectIds([]);
@@ -666,9 +681,10 @@ export default function BoardEditorScreen() {
       return;
     }
     setActiveTool(tool);
-  }, [activeTool, boardId, commitEditing, tablet]);
+  }, [activeTool, boardId, commitEditing, preferences.haptics, tablet]);
 
   const toggleInking = useCallback(() => {
+    void triggerHapticFeedback('selection', preferences.haptics);
     if (editingRef.current) commitEditing();
     setStylingObjectId(null);
     setSelectedObjectIds([]);
@@ -709,19 +725,21 @@ export default function BoardEditorScreen() {
 
   /** An open edit is committed first; it is not the thing undo should remove. */
   const undo = useCallback(() => {
+    void triggerHapticFeedback('selection', preferences.haptics);
     if (editingRef.current) {
       commitEditing();
       return;
     }
     dispatch({ type: 'undo' });
-  }, [commitEditing]);
+  }, [commitEditing, preferences.haptics]);
   const redo = useCallback(() => {
+    void triggerHapticFeedback('selection', preferences.haptics);
     if (editingRef.current) {
       commitEditing();
       return;
     }
     dispatch({ type: 'redo' });
-  }, [commitEditing]);
+  }, [commitEditing, preferences.haptics]);
 
   const selectedObjects = document.objects.filter((object) => selectedObjectIds.includes(object.id));
   const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null;
@@ -1171,6 +1189,7 @@ export default function BoardEditorScreen() {
         }}
         settings={board?.settings ?? DEFAULT_BOARD_SETTINGS}
         selectedIds={selectedObjectIds}
+        defaultFormat={preferences.exportFormat}
         onClose={() => setExportSheetVisible(false)}
       />
     </View>
