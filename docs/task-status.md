@@ -1,9 +1,21 @@
 # Task status
 
 ## Current phase
-Responsive tablet support (Milestone 3): adaptive layouts, safe areas, orientation transitions, keyboard behavior, canvas sizing, and touch targets across small phones, large phones, Android phones, iPad portrait, and iPad landscape.
+Smart Teaching & Presentation Differentiation Architecture (Phases A–F planning, prompt creation, feature specifications, and design handoff updates on branch `feat/teaching-board-architecture`).
 
 ## Status
+`complete` — architecture, per-phase feature specifications (`docs/phase-a-*.md` through `docs/phase-h-*.md`), implementation session prompts (`prompts/20-phase-a-*.md` through `prompts/27-phase-h-*.md`), and design system handoff updates (`design/tokens.md`, `design/flows.md`, `design/screen-inventory.md`, `design/component-handoff.md`) are defined:
+- `prompts/18-quality-hardening.md` and `prompts/19-design-to-react-native.md` are paused until Phases A–H (`prompts/20-*` through `prompts/27-*`) are implemented and verified.
+- **Phase A (`prompts/20-phase-a-teaching-utilities.md`, `docs/phase-a-teaching-utilities.md`):** Laser pointer (`laser`) with `1200 ms` decaying Skia trail, teaching canvas backgrounds (`grid`, `ruled`, `isometric`), draggable `FloatingTimer` (countdown + stopwatch + `Pin to board`), and draggable `FloatingCalculator` (standard + scientific evaluator + `Paste to board`).
+- **Phase B (`prompts/21-phase-b-geometry-shapes-tables.md`, `docs/phase-b-geometry-shapes-tables.md`):** Interactive Skia Geometry Box (`Ruler`, `Protractor`, `Compass`, `Set Square` with magnetic pen edge snapping and arc sweeping), expanded 45+ 2D/3D/graph/STEM shape library, and `TableObject` with in-place cell editing.
+- **Phase C (`prompts/22-phase-c-math-recognition-stylus.md`, `docs/phase-c-math-recognition-stylus.md`):** `MathObject` & `MathKeyboardSheet` equation builder, `350 ms` hold-to-snap freehand shape recognition, lasso handwritten ink-to-text OCR, stylus pressure-sensitive variable-width strokes, and `stylusOnlyDrawing` palm rejection.
+- **Phase D (`prompts/23-phase-d-multipage-pdf-annotation.md`, `docs/phase-d-multipage-pdf-annotation.md`):** Multi-page board switcher & page sorter activating `board_pages`, locked background worksheet objects, multi-page PDF import for markup, and multi-page PDF/backup export.
+- **Phase E (`prompts/24-phase-e-lesson-recorder-facecam.md`, `docs/phase-e-lesson-recorder-facecam.md`):** Draggable corner-snapping `FaceCamBubble` PiP camera and in-editor `LessonRecorderBar` (`480p`/`720p`/`1080p` + deterministic 60 FPS canvas timeline replay).
+- **Phase F (`prompts/25-phase-f-live-classroom.md`, `docs/phase-f-live-classroom.md`):** Live Classroom broadcasting with 6-digit numeric code & SVG QR code join, zero-account student mode, real-time stroke/laser/page/timer sync, Raise Hand (`👋`) queue, Pass-the-Marker (`can-draw`) permission grant, Student Boards Gallery, and Lock Class.
+- **Phase G (`prompts/26-phase-g-interactive-stem-mindmap.md`, `docs/phase-g-interactive-stem-mindmap.md`):** Magnetic object connectors (`startBinding`/`endBinding`), `+` quick-branching handles, Lasso `Tidy up` auto-layout, Live Function Plotter (`MathObject` → interactive curve), `TableObject` → Vector Chart generator, and Spatial OCR `Explode into sticky notes`.
+- **Phase H (`prompts/27-phase-h-active-recall-voice-presenter.md`, `docs/phase-h-active-recall-voice-presenter.md`):** Tap-to-Reveal Answer Tape (`RevealTapeObject`), Stage Curtain / Spotlight Shade, Spatial Voice-Pin Stickers (`VoicePinObject`), Presenter-only Private Teleprompter Layer (`isPrivate`), Live Class Pop-Quiz Polls (`A/B/C/D`), and 1-Thumb Flashcard Study Mode.
+- The next task is `Session 20 — Phase A: Smart Teaching & Presentation Utilities` (`prompts/20-phase-a-teaching-utilities.md`).
+
 `implemented-unverified` — responsive phone and tablet support is implemented across all target device profiles with no new product features:
 - Orientation unlocked in `app.json` (`"orientation": "default"`) so phones and tablets smoothly transition between portrait and landscape.
 - Centralized responsive layout engine (`src/responsive/layout.ts`) classifying viewports (`small-phone`, `phone`, `phone-landscape`, `tablet-portrait`, `tablet-landscape`) using both `shortEdge >= 600` and `width >= 768` so large phones in landscape (`932×430`, `915×412`) and iPad Split View compact windows (`507×768`) are never misclassified as full tablets.
@@ -276,4 +288,4 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - No cloud sync or network storage: all export and import operations are strictly local to the device filesystem.
 
 ## Next task
-Next: quality hardening.
+Next: Session 20 — Phase A: Smart Teaching & Presentation Utilities (`prompts/20-phase-a-teaching-utilities.md` & `docs/phase-a-teaching-utilities.md`). Note: `prompts/18-quality-hardening.md` and `prompts/19-design-to-react-native.md` are paused until Phases A–F (`20`–`25`) are completed.

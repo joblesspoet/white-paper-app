@@ -147,6 +147,22 @@ One vector family only, no emoji, icon-only controls always carry an accessible 
 | focus | 2px `--color-ring`, 3:1 minimum |
 | motion | 150–200 ms ease-out, transform-free, honour reduced motion |
 
+## Smart Teaching & Differentiation tokens (Phases A–F)
+
+All Phase A–F surfaces strictly follow the master Flat Design rule (`1px` border, zero drop shadows, zero CSS gradients, `44pt` minimum touch targets):
+
+| Token | Light value | Dark value | Usage |
+|---|---|---|---|
+| `laser-red-core` / `halo` | `#FCA5A5` / `rgba(239, 68, 68, 0.28)` | `#FCA5A5` / `rgba(239, 68, 68, 0.34)` | Phase A Laser pointer default trail |
+| `laser-teal-core` / `halo` | `#99F6E4` / `rgba(20, 184, 166, 0.28)` | `#99F6E4` / `rgba(45, 212, 191, 0.34)` | Phase A Laser pointer teal preset |
+| `laser-amber-core` / `halo` | `#FDE68A` / `rgba(245, 158, 11, 0.28)` | `#FDE68A` / `rgba(251, 191, 36, 0.34)` | Phase A Laser pointer amber preset |
+| `canvas-grid-minor` | `rgba(19, 78, 74, 0.10)` | `rgba(230, 244, 241, 0.10)` | Phase A `grid`, `ruled`, `isometric` minor lines (`24pt`/`32pt`/`28pt`) |
+| `canvas-grid-major` | `rgba(19, 78, 74, 0.20)` | `rgba(230, 244, 241, 0.20)` | Phase A `grid` `5×5` major subdivision lines (`120pt`) |
+| `instrument-surface` | `rgba(240, 253, 250, 0.88)` | `rgba(16, 59, 55, 0.88)` | Phase B Skia Geometry Box (`Ruler`, `Protractor`, `Compass`, `Set Square`) |
+| `instrument-border` | `#0D9488` (`1.5px`) | `#2DD4BF` (`1.5px`) | Phase B Geometry instrument active snap edge and ticks |
+| `table-header-fill` | `rgba(13, 148, 136, 0.12)` | `rgba(45, 212, 191, 0.14)` | Phase B `TableObject` optional header row fill |
+| `recording-live` | `#DC2626` | `#EF4444` | Phase E & F recording indicator dot, active Face-Cam ring, and `LIVE` badge |
+
 ## Not recorded here
 
 The following appeared in Stitch output but conflict with the master, so they are **not** tokens:

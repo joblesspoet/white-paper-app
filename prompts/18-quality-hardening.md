@@ -1,5 +1,5 @@
-# Session 18 — Quality hardening
+# Session 18 — Quality hardening (Paused until after Session 25 / Phase F)
 
-Read all project docs, task status, and inspect the complete local MVP. Perform a focused release-readiness pass without adding new product features.
+Read all project docs (`docs/phase-a-teaching-utilities.md` through `docs/phase-f-live-classroom.md`), task status, and inspect the complete application including Phases A–F. Perform a focused release-readiness pass without adding new product features.
 
-Add/fix error boundaries, loading/empty/error states, accessibility labels and roles, minimum touch targets, dark mode contrast, reduced motion, permissions, crash-safe recovery, memory/performance issues, and large-board behavior. Test offline use, app restart, drawing, object editing, OCR failure, export/import, permissions, and data clearing. Run available typecheck, lint, tests, and production build checks. Review the diff for unrelated changes. Update task status with the final MVP verification and remaining known issues.
+Add/fix error boundaries, loading/empty/error states, accessibility labels and roles, minimum touch targets, dark mode contrast, reduced motion, permissions (camera, photo library, microphone, PDF files), crash-safe recovery, memory/performance issues, and large-board / multi-page behavior. Test offline use, app restart, drawing, teaching utilities, geometry box, tables, math formulas, smart recognition, multi-page PDF markup, lesson recording, live classroom sync, OCR failure, export/import, permissions, and data clearing. Run available typecheck, lint, tests, and production build checks. Review the diff for unrelated changes. Update task status with the final verification and remaining known issues.

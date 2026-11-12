@@ -13,6 +13,14 @@ The app supports an infinite canvas with handwriting, sticky notes, shapes, arro
 - [Architecture](docs/architecture.md) — system design, services, data flow, and security
 - [Feature plan](docs/feature-plan.md) — feature-by-feature implementation sequence
 - [Local OCR](docs/ocr.md) — OCR engine evaluation, on-device flow, and limitations
+- [Phase A: Teaching utilities](docs/phase-a-teaching-utilities.md) — laser pointer, teaching grids, floating timer, and scientific calculator
+- [Phase B: Geometry box, shapes & tables](docs/phase-b-geometry-shapes-tables.md) — interactive ruler/protractor/compass/set-square, 45+ 2D/3D/STEM shapes, and tables
+- [Phase C: Math, smart recognition & stylus](docs/phase-c-math-recognition-stylus.md) — math formula builder, hold-to-snap shapes, ink-to-text OCR, and stylus pressure/palm rejection
+- [Phase D: Multi-page & PDF annotation](docs/phase-d-multipage-pdf-annotation.md) — multi-page switcher over `board_pages`, PDF worksheet import/markup, and multi-page export
+- [Phase E: Lesson recorder & face-cam](docs/phase-e-lesson-recorder-facecam.md) — draggable face-cam PiP bubble and in-app lesson recorder/replay
+- [Phase F: Live classroom broadcasting](docs/phase-f-live-classroom.md) — 6-digit code & QR join, zero-account student mode, Raise Hand, and student boards gallery
+- [Phase G: Interactive STEM & mind-mapping](docs/phase-g-interactive-stem-mindmap.md) — magnetic connectors, `+` quick-branching, lasso tidy, function plotter, table-to-chart, and spatial OCR explode
+- [Phase H: Active recall, voice pins & presenter layer](docs/phase-h-active-recall-voice-presenter.md) — tap-to-reveal answer tape, stage curtain, voice-pin stickers, presenter-only layer, and live pop-quiz polls
 - [AI cost model](docs/ai-cost-model.md) — assumptions, usage scenarios, and estimated monthly costs
 - [MVP roadmap](docs/roadmap.md) — milestones, acceptance criteria, and delivery order
 

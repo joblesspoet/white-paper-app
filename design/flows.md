@@ -111,6 +111,35 @@ Camera permission denied: the library path stays fully available.
 3. `Delete everything` is enabled only after acknowledgement.
 4. Everything local is deleted; the app returns to Home in its empty state.
 
+### 11. Editor → Smart Teaching Utilities (Phase A)
+1. **Laser pointer:** tap `Draw` → select `Laser` in `InkingQuickTray` (or tablet rail) → drag across the canvas. A glowing trail follows the finger/stylus and fades to `0%` opacity over `1200 ms` after release without adding an undo entry.
+2. **Floating Timer:** `Insert` → `Utilities` → `Timer` opens `FloatingTimer`. Choose a preset (`1m`, `5m`, `10m`) or `Stopwatch` → `Start`. Minimize to a `104×40pt` corner pill while drawing, or tap `Pin to board` to place a summary note on the canvas.
+3. **Floating Calculator:** `Insert` → `Utilities` → `Calculator` opens `FloatingCalculator`. Evaluate standard/scientific expressions (`sin(30°) × 12`) → tap `Paste to board` to insert `sin(30°) × 12 = 6` at the viewport center as one undoable command.
+
+### 12. Editor → Geometry Box, 2D/3D Shapes & Table Creator (Phase B)
+1. **Geometry Box:** `Insert` → `Geometry Box` toggles `Ruler`, `Protractor`, `Compass`, or `Set Square` on the Skia overlay. Drag to move, drag rotation handle to angle, and draw with `Pen` near the ruler/set-square edge to snap dead-straight measured lines, or sweep arcs with the compass/protractor.
+2. **45+ Shapes & STEM Stamps:** `Insert` → `Shapes` opens categorized tabs (`2D Polygons`, `3D Solids`, `Graphs & Venn`, `STEM Stamps`). Tap or drag on canvas to place.
+3. **Table Creator:** `Insert` → `Table` (`3×3` default) places a `TableObject`. Tap any cell on a selected table to edit cell text in place; use selection rail actions (`+ Row`, `- Row`, `+ Col`, `- Col`, `Header`) to adjust structure.
+
+### 13. Editor → Math Formula, Smart Recognition & Stylus Polish (Phase C)
+1. **Math Formula Builder:** `Insert` → `Math Formula` opens `MathKeyboardSheet`. Build fractions, roots, integrals, or matrices with live preview → `Insert formula` commits a vector `MathObject` on the canvas. Tap an existing `MathObject` to re-edit.
+2. **Hold-to-Snap Shape:** draw a rough circle, rectangle, triangle, line, or arrow with `Pen` and hold still for `350 ms` at stroke end → stroke snaps into a crisp `ShapeObject`/`ConnectorObject`. Pressing `Undo` once reverts to the original freehand stroke.
+3. **Lasso Ink-to-Text:** select handwritten strokes → tap `Convert to text` → review in `OcrReviewScreen` → `Replace with text` or `Add text beside`.
+
+### 14. Editor → Multi-Page Boards & PDF Annotation (Phase D)
+1. **Page navigation:** use the top-right `PageNavigator` pill (`< 1 / 3 > +`) to switch or add pages, or tap `1 / 3` to open `PageSorterSheet` (add, duplicate, reorder, delete pages).
+2. **PDF Import for markup:** `Insert` / Overflow → `Import PDF` → pick `.pdf` → select page range → pages are added with locked worksheet backgrounds ready for pen and highlighter annotation.
+3. **Multi-Page Export:** `ExportSheet` → scope `All pages` → exports a multi-page PDF or multi-page `.flowcanvas.json` backup.
+
+### 15. Editor → Face-Cam & Lesson Recorder (Phase E)
+1. Toggle `Face-Cam` to show a draggable, corner-snapping picture-in-picture bubble (`88pt`/`124pt`/`164pt`).
+2. Tap `Record Lesson` → choose `480p`/`720p`/`1080p` and mic toggle → `3-2-1` countdown → `LessonRecorderBar` shows `Rec ● MM:SS`, `Pause`, and `Stop`.
+3. `Stop` opens the Lesson Review & Replay modal to scrub/replay at `0.5×–2×` or share the recorded video/lesson package.
+
+### 16. Live Classroom Host & Zero-Account Student Join (Phase F)
+1. **Teacher Host:** in Editor, tap `Live Class` → `Start Live Class` generates a 6-digit room code and QR code in `LiveClassHostSheet`. Teacher draws, uses laser, and switches pages; everything streams live to connected students. Teacher can answer `👋 Raise Hand` requests by toggling `Allow to draw` (`Pass the Marker`), inspect the `Student Boards Gallery`, or `Lock class`.
+2. **Student Join:** on Home, tap `Join live class` → enter 6-digit code + display name (no login required) → opens the live classroom board in `View-only` mode with `👋 Raise Hand` and `My Scratchpad` toggle.
+
 ## Back, cancel, and interruption rules
 
 - System back and the header back chevron behave identically. `anchor = 'index'` guarantees Home underneath.

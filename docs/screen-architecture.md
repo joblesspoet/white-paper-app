@@ -11,16 +11,23 @@ AppRoot
  ├─ HomeScreen
  │   ├─ BoardSearchScreen (later, optional)
  │   ├─ BoardOptionsSheet
- │   └─ ImportBoardScreen
+ │   ├─ ImportBoardScreen
+ │   └─ JoinClassModal (Phase F: 6-digit code & student name)
  ├─ BoardEditorScreen
- │   ├─ ToolPickerSheet
- │   ├─ ObjectInspectorSheet
- │   ├─ InsertMenuSheet
+ │   ├─ ToolPickerSheet & InkingQuickTray (with Laser Pointer & Palm Rejection toggle)
+ │   ├─ ObjectInspectorSheet / EditorInspectorPanel (Table, Math, Locked object actions)
+ │   ├─ InsertMenuSheet (QuickCreationSheet: 45+ 2D/3D/STEM shapes, Table, Math, Utilities, PDF import)
+ │   ├─ FloatingTimer & FloatingCalculator (Phase A: draggable classroom widgets)
+ │   ├─ GeometryBoxOverlay (Phase B: Skia Ruler, Protractor, Compass, Set Square)
+ │   ├─ MathKeyboardSheet (Phase C: structured equation builder)
+ │   ├─ PageNavigator & PageSorterSheet (Phase D: multi-page board switcher & PDF markup)
+ │   ├─ FaceCamBubble & LessonRecorderBar (Phase E: PiP camera & lesson recording/replay)
+ │   ├─ LiveClassHostSheet & ClassroomHud (Phase F: 6-digit code, QR, Raise Hand, Student Boards)
  │   ├─ ImageImportFlow
  │   │   ├─ ImageSourceScreen
  │   │   ├─ ImageCropScreen
  │   │   └─ OcrReviewScreen
- │   ├─ ExportSheet
+ │   ├─ ExportSheet (Single page, Selection, or All pages PDF/Backup)
  │   └─ BoardSettingsSheet
  └─ AppSettingsScreen
 ```
@@ -304,5 +311,12 @@ MVP settings:
 9. Add OCR adapter and review screen.
 10. Add export/import and settings.
 11. Test phone, tablet, landscape, accessibility, and crash recovery.
+12. **Phase A (`docs/phase-a-teaching-utilities.md`):** Laser pointer (`laser`), teaching canvas grids (`grid`, `ruled`, `isometric`), `FloatingTimer`, and `FloatingCalculator` (`Paste to board`).
+13. **Phase B (`docs/phase-b-geometry-shapes-tables.md`):** `GeometryBoxOverlay` (`Ruler`, `Protractor`, `Compass`, `Set Square`), 45+ 2D/3D/graph/STEM shapes, and `TableObject` with in-place cell editing.
+14. **Phase C (`docs/phase-c-math-recognition-stylus.md`):** `MathObject` & `MathKeyboardSheet`, `350 ms` hold-to-snap shape recognition, lasso ink-to-text OCR, stylus pressure strokes, and palm rejection.
+15. **Phase D (`docs/phase-d-multipage-pdf-annotation.md`):** `PageNavigator` & `PageSorterSheet` over `board_pages`, locked PDF worksheet backgrounds, multi-page PDF import, and multi-page PDF/backup export.
+16. **Phase E (`docs/phase-e-lesson-recorder-facecam.md`):** `FaceCamBubble` PiP camera, `LessonRecorderBar` (`480p`/`720p`/`1080p`), and deterministic 60 FPS lesson replay.
+17. **Phase F (`docs/phase-f-live-classroom.md`):** `LiveClassHostSheet` (6-digit code & QR code), `JoinClassModal` on Home, `ClassroomHud`, Raise Hand queue, Pass-the-Marker, and Student Boards gallery.
+18. **Quality hardening (`prompts/18-quality-hardening.md`):** release-readiness pass across all slices.
 
 Each slice should be runnable, manually tested, and committed before starting the next slice.

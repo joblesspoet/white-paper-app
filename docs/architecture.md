@@ -2,31 +2,33 @@
 
 ## 1. Product architecture
 
-FlowCanvas has four client-facing modes:
+FlowCanvas has five client-facing modes:
 
-1. **Capture** — pen, text, sticky note, shape, image, voice, camera import.
-2. **Understand** — OCR, handwriting recognition, transcription, object detection, grouping.
-3. **Organize** — AI-generated structure, summaries, task extraction, layout suggestions.
-4. **Act** — collaboration, assignments, reminders, export, prototype links, history.
+1. **Capture** — pen (with stylus pressure & palm rejection), laser pointer, text, sticky note, 45+ 2D/3D/STEM shapes, table, math equation, image, voice/lesson recording, camera & multi-page PDF import.
+2. **Draft & Measure** — interactive Skia Geometry Box (Ruler, Protractor, Compass, Set Square), teaching canvas grids (`blank`, `dots`, `grid`, `ruled`, `isometric`), floating scientific calculator, and classroom timer.
+3. **Understand** — on-device OCR, hold-to-snap shape recognition, lasso handwritten ink-to-text conversion, object grouping.
+4. **Organize** — multi-page boards (`board_pages`), locked PDF worksheet backgrounds, AI-generated structure, summaries, task extraction.
+5. **Teach & Act** — in-app lesson video/replay recorder with floating face-cam bubble, Live Classroom broadcasting (6-digit code & QR code join, Raise Hand, Pass-the-Marker, Student Boards gallery), multi-page PDF export, and `.flowcanvas.json` backups.
 
-The system should keep drawing responsive even when the network and AI are unavailable.
+The system keeps drawing and teaching utilities 100% responsive even when the network and cloud services are unavailable.
 
 ## 2. High-level system
 
 ```text
 React Native mobile app
-  ├─ Canvas renderer (Skia)
-  ├─ Local document store (SQLite)
-  ├─ Operation queue + sync engine
-  ├─ Media pipeline (image/audio)
+  ├─ Canvas renderer (Skia: strokes, 2D/3D shapes, tables, math, laser, geometry box)
+  ├─ Teaching utilities (Floating Timer, Scientific Calculator, Face-Cam, Lesson Recorder)
+  ├─ Local document store (SQLite: boards, multi-page board_pages, canvas_objects, media_assets)
+  ├─ On-device intelligence (ML Kit / Vision OCR, hold-to-snap shape recognizer, math layout)
+  ├─ Classroom transport adapter (LocalLoopbackTransport + SupabaseRealtimeTransport)
   └─ AI action client
           │ HTTPS / WebSocket
           ▼
-Optional post-MVP cloud layer
-  ├─ Auth
+Optional cloud & live-classroom layer
+  ├─ Live Classroom Realtime channels (6-digit code / QR join, zero-account student mode)
+  ├─ Auth (optional for cloud workspaces)
   ├─ Postgres + Row Level Security
   ├─ Storage (board media and exports)
-  ├─ Realtime (presence and operations)
   └─ Edge Functions (AI gateway, webhooks, exports)
           │
           ├─ AI provider APIs
@@ -37,16 +39,18 @@ Optional post-MVP cloud layer
 ## 3. Mobile application layers
 
 ### Presentation
-- Expo Router for screens and deep links.
-- Skia canvas for rendering and touch interaction.
-- Gesture Handler + Reanimated for pan, pinch, selection, and transform gestures.
-- Accessibility actions for selecting, editing, and navigating objects without drawing gestures.
+- Expo Router for screens and deep links (`flowcanvas://join?code=...`).
+- Skia canvas for rendering objects, pressure-sensitive ink, ephemeral laser trails, and interactive Geometry Box overlays.
+- Gesture Handler + Reanimated for pan, pinch, stylus/palm filtering, selection, transform, and floating widget dragging.
+- Accessibility actions for selecting, editing, and navigating objects and classroom tools without drawing gestures.
 
 ### Domain
-- `BoardDocument`: board metadata, viewport, pages, and object references.
-- `CanvasObject`: text, ink, sticky, shape, connector, image, audio, frame, task.
+- `BoardDocument`: per-page strokes and typed `CanvasObject` collection.
+- `BoardPageRecord`: ordered page within a board (`order_index`, `document`, `viewport`, optional locked PDF `backgroundAssetId`).
+- `CanvasObject`: `text`, `sticky`, `shape` (45+ 2D/3D/graph/STEM kinds), `connector`, `image` (with optional `locked` background flag and `ocr`), `table` (rows, columns, cells), and `math` (LaTeX subset + layout AST).
+- Ephemeral overlays: `EphemeralLaserStroke`, `GeometryInstrumentState` (`ruler`, `protractor`, `compass`, `set-square`), `TimerState`, `CalculatorState`, `FaceCamState`, and `LessonRecordingTimeline`.
 - `Operation`: append-only mutation with `id`, `actorId`, `deviceId`, `clientSeq`, timestamp, and payload.
-- Commands such as `createObject`, `updateObject`, `deleteObject`, `groupObjects`, and `moveObject`.
+- Commands (`stroke.add`, `strokes.erase`, `object.create`, `object.update`, `object.delete`, `objects.geometry`, `batch`).
 
 ### Data
 - SQLite for offline boards, pending operations, cached thumbnails, and sync checkpoints.

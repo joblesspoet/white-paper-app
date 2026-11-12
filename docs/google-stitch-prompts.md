@@ -33,3 +33,37 @@ Design the FlowCanvas export bottom sheet and local settings screen. Export acti
 ## Prototype interaction prompt
 
 Create a clickable prototype for these flows: Home → New board → Editor; Editor → Pen options → draw; Editor → Sticky note → type → save; Editor → Image → Crop → OCR review → Add text to board; Editor → Export → Share. Include back behavior, cancel behavior, undo/redo feedback, keyboard presentation, loading states, and error recovery. Prioritize fast, predictable interactions over decorative animation.
+
+## Prompt 6 — Phase A: Teaching utilities (Laser, Timer, Calculator & Grids)
+
+Design the FlowCanvas smart teaching utilities inside the board editor while preserving the flat design system (`#F0FDFA` light / `#0B2B28` dark canvas, `#0D9488` teal primary, `#EA580C` orange accent, 1px `#99F6E4` borders, zero drop shadows). Show:
+1. A decaying glowing red/teal **Laser Pointer** stroke trail on a math square-grid (`grid`) or isometric (`isometric`) canvas background.
+2. A compact, draggable **Floating Classroom Timer** card (`MM:SS`, `1m`/`5m`/`10m` presets, progress bar, `Start/Pause`, `Pin to board`, and minimized pill state).
+3. A draggable **Floating Scientific Calculator** card (`sin`, `cos`, `tan`, `DEG/RAD`, `√`, `xʸ`, `π`, expression preview, and a primary `Paste to board` action).
+
+## Prompt 7 — Phase B: Geometry Box, 45+ 2D/3D Shapes & Table Creator
+
+Design the FlowCanvas drafting and structured diagramming surfaces:
+1. **Interactive Geometry Box overlay** on the canvas: translucent flat-bordered **Ruler** (with cm ticks and live angle badge `30.0°`), **Protractor** (`0°–180°` arc with ray handles), **Compass** (needle pivot + pencil arm sweeping an arc), and **Set Square** triangle.
+2. **Categorized Shape & STEM Picker sheet:** tabs for `2D Polygons`, `3D Solids` (cube, cylinder, cone, pyramid with dashed hidden edges), `Graphs & Venn` (4-quadrant axes, 2/3-set Venn), and `STEM Stamps` (resistor, capacitor, battery, beaker, atom).
+3. **Canvas Table Object (`TableObject`):** a selected `4×3` table with teal header tint, in-place cell text editing, and selection rail actions (`+ Row`, `+ Col`, `Header`, `Style`, `Delete`).
+
+## Prompt 8 — Phase C: Math Formula Builder, Smart Recognition & Stylus Controls
+
+Design the FlowCanvas **Math Keyboard Sheet** and smart ink states:
+1. Bottom/popover **Math Formula Builder** with live equation preview (`\frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`), category tabs (`Fractions & Powers`, `Calculus & Sums`, `Matrices`, `Greek & Logic`, `Quick Formulas`), and `Insert formula` CTA.
+2. **Hold-to-Snap toast/indicator** showing a rough hand-drawn circle snapping into a crisp vector ellipse, and a `Convert ink to text` action on lasso-selected handwriting.
+3. **Stylus & Palm Rejection controls** in `InkingQuickTray` (`Stylus-only drawing` toggle and pressure-sensitive fountain pen mode).
+
+## Prompt 9 — Phase D: Multi-Page Switcher & PDF Worksheet Markup
+
+Design the FlowCanvas multi-page and PDF annotation experience:
+1. Compact top-right **Page Navigator pill** (`< Page 2 / 5 > +`) and slide-up **Page Sorter Sheet** showing page thumbnails, page titles, `Add page`, `Duplicate`, reorder handles, and `Import PDF for markup`.
+2. **PDF Import Range modal** allowing teachers to import all or selected pages of a `.pdf` worksheet into locked background pages with highlighter and red-pen grading annotations on top.
+
+## Prompt 10 — Phase E & F: Lesson Recorder, Face-Cam & Live Classroom Broadcast
+
+Design the FlowCanvas recording and live classroom surfaces:
+1. **Floating Face-Cam Bubble** (circular `124pt` camera feed with `2px` teal ring docked in the corner) and top-center **Lesson Recorder HUD** (`Rec ● 04:12`, mic level, `Pause`, `Stop`, quality badge `720p`).
+2. **Live Class Host Sheet:** large 6-digit classroom code (`482 - 910`), scannable QR code card, student roster with **Raise Hand (`👋`)** badges, per-student `Pass the Marker` (`Allow to draw`) toggle, `Student Boards Gallery` grid, and `Lock class` switch.
+3. **Student Join Modal** on Home: zero-account entry with 6-digit code input and display name field.

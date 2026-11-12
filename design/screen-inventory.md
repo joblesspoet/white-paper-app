@@ -251,3 +251,47 @@ This is a design reference. It does not authorise any scope beyond `docs/screen-
 | 14 Clear Local Data Confirmation | 1 | complete |
 
 61 screens total. Gaps and deviations are listed in `design/stitch-notes.md`.
+
+---
+
+## 15. Smart Teaching & Presentation Utilities (Phase A)
+
+- **Purpose:** provide ephemeral teaching aids (`LaserPointer`, `FloatingTimer`, `FloatingCalculator`) and subject-specific canvas grids (`grid`, `ruled`, `isometric`) inside the editor.
+- **Components:** `LaserToolButton`, `CanvasGridLayer`, `FloatingTimer` (full card + `104×40pt` minimized pill), `FloatingCalculator` (standard + scientific keypad + `Paste to board` CTA).
+- **Phone & Tablet layout:** floating cards clamp to safe-area canvas bounds and stack above `ACTION_ISLAND_HEIGHT` on phones or inside the canvas workspace between the left `ToolRail` and right `EditorInspectorPanel` on tablets.
+
+---
+
+## 16. Geometry Box, 45+ 2D/3D Shapes & Table Creator (Phase B)
+
+- **Purpose:** precision drafting and structured STEM/table diagramming on the Skia canvas.
+- **Components:** `GeometryBoxOverlay` (`RulerInstrument`, `ProtractorInstrument`, `CompassInstrument`, `SetSquareInstrument`), `CategorizedShapePicker` (`2D`, `3D Solids`, `Graphs & Venn`, `STEM Stamps`), `TableObjectView`, `TableCellEditor`, `TableActionRail`.
+- **Implementation notes:** all geometry instruments use `1.5px` `--color-primary` borders and translucent flat surfaces with `44×44pt` handle hit areas; `TableObject` cells edit in-place using the viewport-scaled `TextInput` overlay.
+
+---
+
+## 17. Math Formula Builder, Smart Recognition & Stylus Controls (Phase C)
+
+- **Purpose:** structured mathematical notation, instant freehand-to-shape/text conversion, and palm-rejected stylus writing.
+- **Components:** `MathKeyboardSheet`, `MathFormulaPreview`, `MathObjectView`, `HoldToSnapIndicator`, `StylusOnlyToggle`, `PressureStrokeToggle`.
+
+---
+
+## 18. Multi-Page Switcher & PDF Worksheet Markup (Phase D)
+
+- **Purpose:** manage multi-page boards (`board_pages`) and annotate multi-page PDF documents.
+- **Components:** `PageNavigator` (`< Page X / N > +`), `PageSorterSheet`, `PdfImportRangeModal`, `LockedBackgroundBadge`.
+
+---
+
+## 19. Lesson Recorder & Floating Face-Cam (Phase E)
+
+- **Purpose:** record asynchronous video/replay lessons with voice narration and a draggable face-cam picture-in-picture bubble.
+- **Components:** `FaceCamBubble`, `LessonRecorderBar` (`Rec ● MM:SS`, `Pause`, `Stop`, quality badge), `LessonReplayModal` (timeline scrubber + `0.5×–2×` speed).
+
+---
+
+## 20. Live Classroom Host & Student Join (Phase F)
+
+- **Purpose:** broadcast a live board to students via a 6-digit numeric code or QR code without requiring student accounts.
+- **Components:** `LiveClassHostSheet` (6-digit code, SVG QR code, student roster, `Raise Hand` badges, `Pass the Marker` toggle, `Lock class`), `StudentBoardsGalleryModal`, `ClassroomHud`, `JoinClassModal` (on Home).
