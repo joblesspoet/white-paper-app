@@ -44,7 +44,7 @@ import {
   type TextualObject,
 } from '../canvas/document';
 import { inkPathData, type InkStroke } from '../canvas/ink';
-import { buildBackgroundLayers } from '../canvas/background';
+import { buildBackgroundLayers, resolveCanvasBackgroundHex } from '../canvas/background';
 import type { Viewport } from '../canvas/viewport';
 import { resolveMediaUri } from '../media/asset-store';
 import type { BoardSettings } from '../persistence/schema';
@@ -334,7 +334,8 @@ async function renderRegionBase64(
 
   const canvas = surface.getCanvas();
   const theme = input.dark ? darkColors : colors;
-  canvas.clear(Skia.Color(theme.background));
+  const bgHex = resolveCanvasBackgroundHex(input.settings.background, input.dark);
+  canvas.clear(Skia.Color(bgHex));
   canvas.save();
   canvas.scale(pixelSize.scale, pixelSize.scale);
   canvas.translate(-region.x, -region.y);

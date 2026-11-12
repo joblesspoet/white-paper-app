@@ -116,7 +116,13 @@ export default function SettingsScreen() {
   };
 
   const styleLabel = BOARD_STYLE_OPTIONS.find((opt) => opt.key === preferences.canvasStyle)?.label ?? 'Blank';
-  const canvasLabel = `${preferences.canvasBackground === 'dark' ? 'Dark' : 'Light'} · ${styleLabel}`;
+  const bgLabel =
+    preferences.canvasBackground === 'dark'
+      ? 'Dark'
+      : preferences.canvasBackground === 'white'
+        ? 'White'
+        : 'Light';
+  const canvasLabel = `${bgLabel} · ${styleLabel}`;
 
   return (
     <ScrollView

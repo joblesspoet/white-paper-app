@@ -48,6 +48,7 @@ export function CanvasPickerModal({
 
   const bgOptions: { key: DefaultCanvasBackground; label: string; desc: string }[] = [
     { key: 'light', label: 'Light canvas', desc: 'Soft mint paper background (#F0FDFA)' },
+    { key: 'white', label: 'White canvas', desc: 'Pure white paper background (#FFFFFF)' },
     { key: 'dark', label: 'Dark canvas', desc: 'Deep teal contrast background (#0B2B28)' },
   ];
 

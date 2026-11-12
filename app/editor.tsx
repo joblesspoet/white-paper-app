@@ -95,7 +95,7 @@ import {
   TrashIcon,
   UndoIcon,
 } from '../src/components/icons';
-import { BOARD_STYLE_OPTIONS, type BoardStyle } from '../src/persistence/schema';
+import { BOARD_STYLE_OPTIONS, type BoardBackground, type BoardStyle } from '../src/persistence/schema';
 import type { LaserColorKey } from '../src/canvas/laser';
 import { createTimerPinCommand, type TimerState } from '../src/timer/timer-model';
 import { createCalculatorPasteCommand } from '../src/calculator/calculator-engine';
@@ -969,6 +969,7 @@ export default function BoardEditorScreen() {
             <View style={styles.canvasClip}>
               <CanvasViewport
                 dark={dark}
+                boardBackground={board?.settings.background ?? DEFAULT_BOARD_SETTINGS.background}
                 boardStyle={board?.settings.style ?? DEFAULT_BOARD_SETTINGS.style}
                 initialViewport={initialViewport}
                 activeTool={activeTool}
@@ -1502,6 +1503,38 @@ export default function BoardEditorScreen() {
                 <Text style={[styles.styleModalDone, { color: theme.primary }]}>Done</Text>
               </Pressable>
             </View>
+            <View style={styles.bgColorRow}>
+              {(['light', 'white', 'dark'] as const).map((bg) => {
+                const currentBg = board?.settings.background ?? DEFAULT_BOARD_SETTINGS.background;
+                const active = currentBg === bg;
+                const label = bg === 'white' ? 'White' : bg === 'dark' ? 'Dark' : 'Light';
+                return (
+                  <Pressable
+                    key={bg}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`${label} canvas color`}
+                    onPress={() => {
+                      if (boardId) {
+                        const base = board?.settings ?? DEFAULT_BOARD_SETTINGS;
+                        updateSettings(boardId, { ...base, background: bg as BoardBackground });
+                      }
+                    }}
+                    style={[
+                      styles.bgColorChip,
+                      {
+                        borderColor: active ? theme.primary : theme.border,
+                        backgroundColor: active ? theme.primary + '16' : theme.background,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.bgColorChipText, { color: active ? theme.primary : theme.foreground }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
             <View style={[styles.styleOptionList, { borderColor: theme.border, backgroundColor: theme.background }]}>
               {BOARD_STYLE_OPTIONS.map((opt, idx) => {
                 const currentStyle = board?.settings.style ?? DEFAULT_BOARD_SETTINGS.style;
@@ -1702,6 +1735,21 @@ const styles = StyleSheet.create({
   },
   styleModalDone: {
     ...typography.bodyStrong,
+  },
+  bgColorRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  bgColorChip: {
+    flex: 1,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  bgColorChipText: {
+    ...typography.caption,
+    fontWeight: '600',
   },
   styleOptionList: {
     borderRadius: radii.sm,

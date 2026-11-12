@@ -22,7 +22,7 @@ import { resolveHomeLayout } from '../src/responsive/layout';
 import { colors, radii, spacing, touchTarget, typography } from '../src/theme';
 import { homeStyles as styles } from '../src/screens/home.styles';
 import { useBoards } from '../src/board-context';
-import { BOARD_STYLE_OPTIONS, type BoardStyle } from '../src/persistence/schema';
+import { BOARD_STYLE_OPTIONS, type BoardBackground, type BoardStyle } from '../src/persistence/schema';
 import { usePreferences } from '../src/settings/preferences-context';
 
 export default function HomeScreen() {
@@ -33,7 +33,7 @@ export default function HomeScreen() {
   const { boards, createBoard, ready, storageError, refreshBoards } = useBoards();
   const [sheetVisible, setSheetVisible] = useState(false);
   const [importState, setImportState] = useState<ImportModalState>({ status: 'closed' });
-  const [canvasBackground, setCanvasBackground] = useState<'light' | 'dark'>(preferences.canvasBackground);
+  const [canvasBackground, setCanvasBackground] = useState<BoardBackground>(preferences.canvasBackground);
   const [canvasStyle, setCanvasStyle] = useState<BoardStyle>(preferences.canvasStyle);
   const [orientation] = useState<'portrait' | 'landscape'>('portrait');
 
@@ -54,7 +54,7 @@ export default function HomeScreen() {
     [layout.paddingBottom, layout.paddingLeft, layout.paddingRight, twoPane],
   );
 
-  const createBoardNow = useCallback((settings?: { background: 'light' | 'dark'; style: BoardStyle; orientation: 'portrait' | 'landscape' }) => {
+  const createBoardNow = useCallback((settings?: { background: BoardBackground; style: BoardStyle; orientation: 'portrait' | 'landscape' }) => {
     const defaultSettings = {
       background: preferences.canvasBackground,
       style: preferences.canvasStyle,
@@ -332,6 +332,7 @@ export default function HomeScreen() {
             <Text style={[sheetStyles.label, { color: theme.foreground }]}>Canvas background</Text>
             <View style={sheetStyles.choiceRow}>
               <Choice label="Light" active={canvasBackground === 'light'} onPress={() => setCanvasBackground('light')} theme={theme} />
+              <Choice label="White" active={canvasBackground === 'white'} onPress={() => setCanvasBackground('white')} theme={theme} />
               <Choice label="Dark" active={canvasBackground === 'dark'} onPress={() => setCanvasBackground('dark')} theme={theme} />
             </View>
             <Text style={[sheetStyles.label, { color: theme.foreground }]}>Canvas surface</Text>

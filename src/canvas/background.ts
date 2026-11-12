@@ -5,7 +5,17 @@
  * (offscreen PNG/JPEG/PDF export) so exported boards match the live editor.
  */
 
-import type { BoardStyle } from '../persistence/schema';
+import type { BoardBackground, BoardStyle } from '../persistence/schema';
+
+export function resolveCanvasBackgroundHex(
+  background: BoardBackground | undefined,
+  darkFallback = false,
+): string {
+  if (background === 'white') return '#FFFFFF';
+  if (background === 'dark') return '#0B2B28';
+  if (background === 'light') return darkFallback ? '#0B2B28' : '#F0FDFA';
+  return darkFallback ? '#0B2B28' : '#F0FDFA';
+}
 
 export type BackgroundBounds = {
   x: number;

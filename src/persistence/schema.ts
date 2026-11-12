@@ -13,9 +13,11 @@
 
 import { clampScale, type Viewport } from '../canvas/viewport.ts';
 
-export type BoardBackground = 'light' | 'dark';
+export type BoardBackground = 'light' | 'white' | 'dark';
 export type BoardStyle = 'blank' | 'dots' | 'grid' | 'ruled' | 'isometric';
 export type BoardOrientation = 'landscape' | 'portrait';
+
+export const VALID_BOARD_BACKGROUNDS: readonly BoardBackground[] = ['light', 'white', 'dark'];
 
 export const BOARD_STYLE_OPTIONS: ReadonlyArray<{
   key: BoardStyle;
@@ -155,7 +157,11 @@ export function parseBoardSettings(raw: string | null | undefined): BoardSetting
   try {
     const value: unknown = JSON.parse(raw);
     if (!isRecord(value)) return { ...DEFAULT_BOARD_SETTINGS };
-    const background: BoardBackground = value.background === 'dark' ? 'dark' : 'light';
+    const background: BoardBackground =
+      typeof value.background === 'string' &&
+      VALID_BOARD_BACKGROUNDS.includes(value.background as BoardBackground)
+        ? (value.background as BoardBackground)
+        : 'light';
     const style: BoardStyle =
       typeof value.style === 'string' && VALID_BOARD_STYLES.includes(value.style as BoardStyle)
         ? (value.style as BoardStyle)
@@ -203,7 +209,7 @@ export function serializeBoardSettings(settings: BoardSettings): string {
 }
 
 export type AppTheme = 'system' | 'light' | 'dark';
-export type DefaultCanvasBackground = 'light' | 'dark';
+export type DefaultCanvasBackground = BoardBackground;
 export type DefaultCanvasStyle = BoardStyle;
 export type DefaultExportFormat = 'png' | 'jpeg' | 'pdf' | 'backup';
 
@@ -228,7 +234,7 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
 };
 
 const VALID_THEMES: readonly AppTheme[] = ['system', 'light', 'dark'];
-const VALID_BACKGROUNDS: readonly DefaultCanvasBackground[] = ['light', 'dark'];
+const VALID_BACKGROUNDS: readonly DefaultCanvasBackground[] = VALID_BOARD_BACKGROUNDS;
 const VALID_STYLES: readonly DefaultCanvasStyle[] = VALID_BOARD_STYLES;
 const VALID_EXPORT_FORMATS: readonly DefaultExportFormat[] = ['png', 'jpeg', 'pdf', 'backup'];
 const VALID_PEN_WIDTHS = [2, 4, 8, 12] as const;

@@ -81,7 +81,7 @@ import {
 } from '../canvas/viewport';
 import { colors, darkColors, radii, spacing, touchTarget, typography } from '../theme';
 import { resolveMediaUri } from '../media/asset-store';
-import { buildBackgroundLayers } from '../canvas/background';
+import { buildBackgroundLayers, resolveCanvasBackgroundHex } from '../canvas/background';
 import {
   LASER_CORE_OPACITY,
   LASER_CORE_WIDTH,
@@ -96,7 +96,7 @@ import {
   type EphemeralLaserStroke,
   type LaserColorKey,
 } from '../canvas/laser';
-import type { BoardStyle } from '../persistence/schema';
+import type { BoardBackground, BoardStyle } from '../persistence/schema';
 
 export { canvasToScreen, screenToCanvas } from '../canvas/viewport';
 export type { InkStroke } from '../canvas/ink';
@@ -131,6 +131,7 @@ type TransformGesture = {
 
 type CanvasViewportProps = {
   dark?: boolean;
+  boardBackground?: BoardBackground;
   boardStyle?: BoardStyle;
   initialViewport?: Viewport;
   activeTool?: InkTool;
@@ -168,6 +169,7 @@ type CanvasViewportProps = {
 
 export function CanvasViewport({
   dark = false,
+  boardBackground,
   boardStyle = 'blank',
   initialViewport,
   activeTool = 'select',
@@ -813,6 +815,8 @@ export function CanvasViewport({
       height: viewportSize.height / safeScale + pad * 2,
     });
   }, [boardStyle, viewport, viewportSize]);
+  const canvasBackgroundColor = resolveCanvasBackgroundHex(boardBackground, dark);
+  const patternTheme = boardBackground === 'dark' ? darkColors : boardBackground === 'white' || boardBackground === 'light' ? colors : theme;
   const zoomLabel = `${Math.round(viewport.scale * 100)}%`;
 
   return (
@@ -827,14 +831,14 @@ export function CanvasViewport({
       <GestureDetector gesture={gesture}>
         <Canvas style={StyleSheet.absoluteFill} accessibilityLabel="Drawing canvas">
           <Group transform={transform}>
-            <Rect x={-4000} y={-4000} width={8000} height={8000} color={theme.background} />
+            <Rect x={-4000} y={-4000} width={8000} height={8000} color={canvasBackgroundColor} />
             {backgroundLayers.map((layer, index) => (
               <BackgroundPatternView
                 key={`${boardStyle}-${index}`}
                 svgPath={layer.svgPath}
                 strokeWidth={layer.strokeWidth / Math.max(viewport.scale, 0.5)}
                 opacity={layer.opacity}
-                color={layer.isMargin ? theme.accent : theme.foreground}
+                color={layer.isMargin ? patternTheme.accent : patternTheme.foreground}
               />
             ))}
             {renderedStrokes.map((stroke) => (
