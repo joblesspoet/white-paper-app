@@ -641,6 +641,124 @@ export async function listMediaAssets(
   });
 }
 
+/**
+ * A plan produced by the export/import slice. It is a structural type here, not
+ * a type import from `backup.ts`, so the repository can stay free of a runtime
+ * cycle: the backup module imports this file, this file never imports it back.
+ */
+export type ImportedBoardPlan = {
+  board: {
+    id: string;
+    title: string;
+    settings: BoardSettings;
+    createdAt: string;
+  };
+  viewport: Viewport | null;
+  document: CanvasDocument;
+  media: readonly {
+    assetId: string;
+    storagePath: string;
+    mimeType: string;
+    bytes: number;
+    width: number;
+    height: number;
+  }[];
+};
+
+/**
+ * Insert a fully-planned imported board in one transaction: board row, first
+ * page, every media asset row, and every canvas object row. Media files are
+ * written by the caller; this function only records the references, so a
+ * failure here leaves no orphaned database rows.
+ */
+export async function insertImportedBoard(
+  database: PersistenceDatabase,
+  plan: ImportedBoardPlan,
+  now = plan.board.createdAt,
+): Promise<void> {
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `INSERT OR IGNORE INTO boards (id, title, created_at, updated_at, settings_json, viewport_json)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        plan.board.id,
+        plan.board.title,
+        plan.board.createdAt,
+        now,
+        serializeBoardSettings(plan.board.settings),
+        plan.viewport ? serializeViewport(plan.viewport) : null,
+      ],
+    );
+    await database.runAsync(
+      `INSERT OR IGNORE INTO board_pages (id, board_id, name, order_index, created_at, updated_at)
+       VALUES (?, ?, ?, 0, ?, ?)`,
+      [defaultPageId(plan.board.id), plan.board.id, 'Page 1', plan.board.createdAt, now],
+    );
+    const pageId = defaultPageId(plan.board.id);
+
+    for (const asset of plan.media) {
+      await database.runAsync(
+        `INSERT OR REPLACE INTO media_assets
+          (id, board_id, owner_id, storage_path, mime_type, bytes, metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          asset.assetId,
+          plan.board.id,
+          null,
+          asset.storagePath,
+          asset.mimeType,
+          asset.bytes,
+          JSON.stringify({ width: asset.width, height: asset.height }),
+          plan.board.createdAt,
+        ],
+      );
+    }
+
+    let zIndex = 0;
+    for (const stroke of plan.document.strokes) {
+      await insertCanvasRow(database, {
+        id: stroke.id,
+        pageId,
+        type: 'ink',
+        zIndex,
+        x: null,
+        y: null,
+        width: null,
+        height: null,
+        rotation: 0,
+        content: stroke,
+        style: {
+          color: stroke.color,
+          width: stroke.width,
+          opacity: stroke.opacity,
+          tool: stroke.tool,
+        },
+        createdAt: stroke.createdAt,
+        updatedAt: now,
+      });
+      zIndex += 1;
+    }
+    for (const object of plan.document.objects) {
+      await insertCanvasRow(database, {
+        id: object.id,
+        pageId,
+        type: object.type,
+        zIndex,
+        x: object.x,
+        y: object.y,
+        width: object.width,
+        height: object.height,
+        rotation: object.rotation,
+        content: object,
+        style: objectStyle(object),
+        createdAt: now,
+        updatedAt: now,
+      });
+      zIndex += 1;
+    }
+  });
+}
+
 /** Re-exported so verification can assert a save/load round-trip precisely. */
 export { documentsEqual };
 export { DEFAULT_BOARD_SETTINGS };

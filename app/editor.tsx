@@ -60,6 +60,7 @@ import { screenToCanvas, type Point, type Viewport } from '../src/canvas/viewpor
 import { storageErrorMessage } from '../src/persistence/errors';
 import { getLocalDatabase } from '../src/persistence/expo-store';
 import {
+  DEFAULT_BOARD_SETTINGS,
   loadBoardDocument,
   saveBoardDocument,
   saveBoardViewport,
@@ -95,6 +96,7 @@ import { ActionIsland, ACTION_ISLAND_HEIGHT } from '../src/components/ActionIsla
 import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
 import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
+import { ExportSheet } from '../src/components/ExportSheet';
 import { colors, darkColors, radii, spacing, touchTarget, typography, type ThemeColors } from '../src/theme';
 
 const TOOLS = [
@@ -181,6 +183,7 @@ export default function BoardEditorScreen() {
   const [inkOptionsVisible, setInkOptionsVisible] = useState(false);
   const [objectOptionsVisible, setObjectOptionsVisible] = useState(false);
   const [shapeOptionsVisible, setShapeOptionsVisible] = useState(false);
+  const [exportSheetVisible, setExportSheetVisible] = useState(false);
 
   const [imageFlowOpen, setImageFlowOpen] = useState(false);
   const [imageFlowId, setImageFlowId] = useState<string | null>(null);
@@ -782,7 +785,14 @@ export default function BoardEditorScreen() {
         <View style={styles.actions}>
           <Pressable accessibilityRole="button" accessibilityLabel="Undo" accessibilityHint={canUndo ? (undoLabel ? `Undo ${undoLabel}` : 'Reverts the last change') : 'Nothing to undo'} accessibilityState={{ disabled: !canUndo }} disabled={!canUndo} onPress={undo} style={[styles.action, !canUndo && styles.actionDisabled]}><UndoIcon size={22} color={theme.foreground} /></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Redo" accessibilityHint={canRedo ? (redoLabel ? `Redo ${redoLabel}` : 'Reapplies the last undone change') : 'Nothing to redo'} accessibilityState={{ disabled: !canRedo }} disabled={!canRedo} onPress={redo} style={[styles.action, !canRedo && styles.actionDisabled]}><RedoIcon size={22} color={theme.foreground} /></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="More board options" style={styles.iconButton}><MoreIcon color={theme.foreground} /></Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Export and board options"
+            onPress={() => { commitEditing(); setExportSheetVisible(true); }}
+            style={styles.iconButton}
+          >
+            <MoreIcon color={theme.foreground} />
+          </Pressable>
         </View>
       </View>
 
@@ -1148,6 +1158,21 @@ export default function BoardEditorScreen() {
           onClose={() => { setImageFlowOpen(false); setImageFlowId(null); }}
         />
       )}
+      <ExportSheet
+        visible={exportSheetVisible}
+        theme={theme}
+        dark={dark}
+        boardTitle={title}
+        document={document}
+        viewport={viewport}
+        canvasSize={{
+          width: canvasRect.width > 0 ? canvasRect.width : width,
+          height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
+        }}
+        settings={board?.settings ?? DEFAULT_BOARD_SETTINGS}
+        selectedIds={selectedObjectIds}
+        onClose={() => setExportSheetVisible(false)}
+      />
     </View>
   );
 }

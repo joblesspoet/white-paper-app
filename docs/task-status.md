@@ -1,19 +1,17 @@
 # Task status
 
 ## Current phase
-Local OCR (Milestone 3): on-device text recognition with an editable review step.
+Export and import (Milestone 3): local PNG/JPEG/PDF export, native share sheet, and versioned `.flowcanvas.json` backup/restore.
 
 ## Status
-`implemented-unverified` — local OCR is implemented on top of the image import flow:
-- `expo-mlkit-ocr` 0.2.7 is wrapped by `src/ocr/`: Apple Vision on iOS (`iosEngine: "vision"`) and Google ML Kit Text Recognition v2 on Android. Recognition is entirely on-device; there is no cloud OCR, AI provider, or network call.
-- The native module is loaded lazily, so Expo Go or a build without the module shows an `unavailable` error state in the review screen instead of crashing the board.
-- `src/ocr/ocr-service.ts` is the platform-independent contract: block-level normalization, top-to-bottom then left-to-right reading order with row tolerance, loading/success/no-text/error states, engine and region-count copy, correction handling, and error messages that always remind the user the image can still be added.
-- `src/components/OcrReviewScreen.tsx` previews the durable placed image, shows a progress state while recognition runs, reports how many text regions and which engine produced them, exposes a multiline editable field for correction, and offers `Add text to board` (disabled when the text is empty) and `Add image only`.
-- `src/components/ImageImportFlow.tsx` now runs pick → crop/rotate → durable store → OCR review → placement. Recognition reads the placed local copy, so a slow, empty, or failed pass can never block image placement.
-- `ImageObject.ocr` keeps the reviewed text, engine id, region count, and recognition timestamp; `TextObject.sourceImageId` links an extracted text block back to its photo. Both are optional, so older boards still load, and malformed OCR metadata is dropped without rejecting the image.
-- `Add text to board` places a normal editable text block directly below the image at the image's width and inserts image + text in one batched command, so the placement is a single undo step. `Add image only` keeps the OCR metadata attached to the image but creates no text block.
-- Reviewed OCR text is also mirrored onto the placed `media_assets` row.
-- The next task is export/import.
+`implemented-unverified` — local export and import are implemented with no cloud sync:
+- Visible-board and selected-region raster export (`PNG` and `JPEG`) render offscreen via `@shopify/react-native-skia` (`src/export/export-service.ts`, `src/export/regions.ts`) with clamped pixel bounds (`MAX_EXPORT_DIMENSION = 4096`), selection padding (`EXPORT_SELECTION_PADDING = 24`), and periodic event-loop yields (`RENDER_BATCH_SIZE = 20`) so large boards never freeze the editor.
+- Local PDF export (`exportBoardPdf`) uses `expo-print` (`Print.printToFileAsync`) on iOS and Android to generate a single-page PDF sized to the rendered region aspect ratio, and returns an actionable error on unsupported platforms (web).
+- Native share sheet (`src/export/share.ts`, `src/export/share-outcome.ts`) wraps `expo-sharing` and classifies outcomes (`shared`, `cancelled`, `unavailable`, `failed`).
+- Versioned editable `.flowcanvas.json` backups (`src/export/backup.ts`, `src/export/backup-store.ts`, `src/persistence/repository.ts`) embed board metadata, viewport, document, and base64-encoded media files; import validates schemas, repairs legacy unversioned (version 0) objects, rejects newer schema versions (`version > BACKUP_VERSION`) and oversized files (`MAX_BACKUP_BYTES = 64 MB`), skips unsafe media paths, and always creates a new board (`(imported)`) atomically in SQLite without overwriting existing boards.
+- UI wiring: `src/components/ExportSheet.tsx` is wired to the editor top bar's `MoreIcon` button (`app/editor.tsx`) with scope selection (Visible board / Selection), format selection, progress bar for large exports, and share-sheet handoff; `src/components/ImportBoardModal.tsx` is wired to `"Import a board"` on `app/index.tsx` (both empty state and footer).
+- Verification suite added at `scripts/verify-export.mts` (`npm run test:export`) covering empty boards, large boards, selections, invalid files, version mismatch, SQLite round-trip import, and share cancellation.
+- The next task is settings.
 
 `implemented-unverified` — image import and capture are implemented:
 - Camera and photo library permissions are declared in `app.json` (iOS usage descriptions and Android permissions) and requested on-demand via `expo-image-picker`.
@@ -174,11 +172,25 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - `package.json` / `package-lock.json` — dependencies `expo-mlkit-ocr` and `expo-build-properties`, plus `test:ocr`.
 - `scripts/verify-ocr.mts` (new) — OCR normalization, reading order, review states, correction, linking, image-only fallback, one-step undo, and persistence/relaunch checks.
 - `docs/ocr.md` (new) — OCR option evaluation, chosen package, flow, permissions/privacy, limitations, and verification approach.
+- `src/export/regions.ts` (new) — pure export geometry: visible-board mapping, padded selection export bounds, raster dimensions clamped to [64, 4096], large export thresholding, file stem sanitization, and timestamped file naming.
+- `src/export/share-outcome.ts` (new) — pure share-sheet outcome classifier mapping resolutions and native exceptions into `shared`, `cancelled`, `unavailable`, and `failed`.
+- `src/export/share.ts` (new) — `expo-sharing` wrapper with platform availability checks and classified results.
+- `src/export/export-service.ts` (new) — offscreen Skia rendering for raster (PNG/JPEG), `expo-print` single-page PDF generation, versioned JSON backup packaging with embedded base64 media, event loop yielding (`RENDER_BATCH_SIZE = 20`) to keep the UI responsive, and temporary file lifecycle management.
+- `src/export/backup.ts` (new) — pure backup schema validation, legacy format/version-0 repair, unsupported version/format guards, safe media path validation, size limits (64 MB), new board planning with id/path rewriting, and summary formatting.
+- `src/export/backup-store.ts` (new) — document picker integration (`.flowcanvas.json`), media file persistence under `media/<newBoardId>/imported/`, and transactional board creation with rollback.
+- `src/components/ExportSheet.tsx` (new) — bottom sheet for scope (visible vs selection) and format (PNG, JPEG, PDF, Backup) selection, progress tracking with progress bar and labels, and share-sheet handoff.
+- `src/components/ImportBoardModal.tsx` (new) — import preview modal showing board summary, embedded media count, non-fatal warnings, progress bar, and atomic creation confirmation.
+- `src/persistence/repository.ts` — `insertImportedBoard` transactional multi-row insertion for board, page, media asset rows, and canvas objects.
+- `app/editor.tsx` — top-bar "More board options" button wired to `ExportSheet`.
+- `app/index.tsx` — "Import a board" button wired to file picker and `ImportBoardModal` on empty state and board list footer.
+- `app.json` — added `expo-sharing` plugin.
+- `package.json` — added `test:export` verification script to `npm test`.
+- `scripts/verify-export.mts` (new) — automated verification suite for empty boards, large boards, selections, invalid files, version mismatch, SQLite round-trip import, and share cancellation.
 - `docs/task-status.md` — this update.
 
 ## Verification
 - `npm run typecheck` (`tsc --noEmit`) passes with 0 errors.
-- `npm test` passes all 8 verification suites:
+- `npm test` passes all 9 verification suites:
   - `test:viewport`: conversion, pan, zoom limits, focal anchoring, reset
   - `test:ink`: zoomed drawing, tool styles, smoothing, erasing, eraser scaling
   - `test:history`: command stacks, multiple strokes, erase sweeps, undo/redo, redo clearing, bounded history
@@ -187,10 +199,11 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
   - `test:persistence`: schema migrations, document round-trip, corrupt row tolerance, media assets, write queue, relaunch recovery
   - `test:image`: permission copy, cancel, large image, crop, rotate, placement, resize, history, persistence and relaunch
   - `test:ocr`: block ordering, loading/success/no-text/error states, correction, source-image linking, image-only fallback, one-step undo, persistence and relaunch
+  - `test:export`: empty boards, large boards, selections, invalid files, version mismatch, round-trip SQLite import, and share cancellation
 - `EXPO_NO_TELEMETRY=1 npx expo export --platform ios` bundles successfully.
 - `EXPO_NO_TELEMETRY=1 npx expo export --platform android` bundles successfully.
 - No ESLint config or lint script exists in this project, so there is no separate lint run.
-- Not verified: physical camera and native photo picker dialogs, native OCR recognition and its permission-free path, and Expo Go unavailable-state behaviour on real devices; these are covered by the pure suites and type-safe wrappers but still need manual verification on a device.
+- Not verified: physical camera and native photo picker dialogs, native OCR recognition and its permission-free path, physical share sheet presentation on device hardware, and Expo Go unavailable-state behaviour on real devices; these are covered by the pure suites and type-safe wrappers but still need manual verification on a device.
 
 ## Known issues
 - Image files are stored locally in the app container. When boards are deleted in the future, orphaned media cleanup will be needed.
@@ -202,34 +215,20 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - Handwriting, glare, and very small or distant text remain best-effort; the recognizer has no contrast/grayscale retry or handwriting model yet.
 - OCR can only be started during import. Re-running recognition on an image already on a board, and removing a linked text block when its source image is deleted, are not exposed yet.
 - Touch interaction on actual mobile hardware was not exercised in this environment; manual testing of pinch-zoom crop is recommended.
+- PDF generation on web is unsupported (`expo-print` HTML printing is mobile-only). On web, export offers PNG, JPEG, and backup formats.
 
 ## Decisions
-- Crop-screen gestures call `.runOnJS(true)` instead of being rewritten as worklets. The crop maths in `src/media/image-crop.ts` is shared with the pure verification suite, so keeping it plain JS and running the gesture callbacks on the JS thread avoids duplicating every helper as a worklet while removing the UI-thread crash.
-- Modal-based image import: the flow owns its own window so it cannot be interleaved with editor chrome, and it is the same primitive the insert sheet uses for the same reason.
-- The inking tray uses two fixed rows rather than a horizontal scroller. A drawing toolbar needs every control visible at once; a horizontal list hides options off-screen with no affordance and asks for a sideways drag that competes with the canvas pan gesture. Two rows also stay inside a 320pt-wide screen, which a single row of the same controls cannot.
-- The image flow dismisses itself after a successful placement, because the placed copy is already durable and leaving the source sheet up asked the user to close the flow twice.
-- The phone dock is two-tier because nine flat buttons cannot meet the 48pt target and the label legibility the design system asks for at once. Tier one holds the four things that are one tap away in practice; everything else lives in tier two.
-- `ACTION_ISLAND_HEIGHT` is exported from `ActionIsland` and consumed by `app/editor.tsx` so the ink tray and style sheets stack above the pill from a single number instead of a repeated magic offset.
-- The insert sheet is a `Modal` rather than an absolutely positioned `View`: it gets the platform slide animation, hardware back handling via `onRequestClose`, and correct modal focus for screen readers.
-- The insert sheet does not run OCR itself. The media card is a plain "Photo" card that hands off to the image flow; recognition only happens after the image has been picked, cropped, and stored.
-- The island, the insert sheet, and the inking tray are flat. The design tokens forbid drop shadows, so depth is a 1px border and elevation is never used.
-- Quick-colour rows show six presets per kind with a `+` for the full picker, instead of the fifteen overflowing swatches the old dock carried.
-- Stored media asset paths are stored relative to the document directory (`media/<boardId>/...`) rather than as absolute paths, so app container path shifts across iOS/Android OS updates and restores never break image references.
-- Working image copies live in the cache directory (`flowcanvas-images`) and are purged upon placement or cancellation; only original and placed assets are durable.
-- Original source images are always preserved untouched alongside placed/cropped images, allowing future OCR re-runs or re-cropping from the source photo.
-- Image objects scale proportionally during corner resize to prevent visual stretching/distortion.
-- Image objects expose duplicate and delete actions; text editing and style sheets are suppressed for images.
-- Images render as Skia primitives (`useImage`) at the bottom of the object layer.
-- `expo-mlkit-ocr` was chosen over `expo-text-extractor`, `expo-ocr-kit`, `@infinitered/react-native-mlkit-text-recognition`, `@react-native-ml-kit/text-recognition`, `react-native-image-analysis`, `tesseract.js`, and `react-native-tesseract-ocr`. It fits the Expo config-plugin workflow, returns blocks with image-space bounding boxes for multi-region review, and reports device support. The full comparison is in `docs/ocr.md`.
-- iOS uses Apple Vision (`iosEngine: "vision"`) instead of shipping Google ML Kit pods. This keeps the iOS build simulator-friendly and smaller; Android keeps ML Kit's bundled Latin model for offline recognition.
-- The OCR module is resolved with `requireOptionalNativeModule('ExpoMlkitOcr')`, not a static import of `expo-mlkit-ocr`. The package's JS wrapper calls the throwing `requireNativeModule` while loading, so importing it would take down the editor in Expo Go; the optional lookup turns a missing module into an error state next to an image that can still be placed.
-- Durable image storage happens before recognition. OCR is an enhancement layered on an already-placeable image, so loading, no-text, and error states cannot block `Add image only` or lose the imported photo.
-- Extracted text is a normal editable `TextObject` placed below the image, not a pinned overlay. It can be selected, moved, restyled, duplicated, and edited like any other text; `sourceImageId` keeps the trace back to the photo.
-- Reviewed OCR text is stored on the image even when the user chooses `Add image only`, so a later re-run or re-placement does not need to redo recognition.
-- Image and linked text are inserted with one `commands` action, so one placement is one undo step rather than two.
-- OCR metadata is parsed leniently: a malformed result is dropped while the image row still loads, matching the existing corrupt-row tolerance for the rest of the board.
-- OCR ordering is computed from text blocks: sort top to bottom with a vertical tolerance for blocks that share a visual row, then left to right. The raw transcript is a fallback for engines that return no blocks. This keeps the review in a predictable order without depending on engine-specific line data.
-- The recognizer reads the placed JPEG rather than a separate preprocessing copy. That keeps the flow simple and matches the pixels the user sees on the board; if accuracy needs work later, preprocessing can be revisited as its own change.
+- Offscreen Skia rendering (`Skia.Surface.MakeOffscreen`) is used for raster exports. This ensures the live editor canvas does not flicker, re-render, or shift viewport during export.
+- Batch rendering with event loop yields (`RENDER_BATCH_SIZE = 20`, `yieldToEventLoop`) ensures large boards with hundreds of strokes or objects never freeze the JS thread or drop animation frames.
+- Export output pixels are clamped to `[MIN_EXPORT_DIMENSION = 64, MAX_EXPORT_DIMENSION = 4096]` with a default 2x pixel ratio to prevent OOMs on massive boards while keeping tiny selections sharp.
+- Local PDF generation utilizes `expo-print` (`printToFileAsync`) with an HTML wrapper embedding the rendered PNG as base64, maintaining exact visual fidelity with canvas rendering without introducing heavy native PDF libraries.
+- Backups (`.flowcanvas.json`) embed referenced media files as base64 data strings directly within the JSON document. This makes backup files completely portable, self-contained, and shareable across devices without separate archive/zip machinery.
+- Imports always create a brand-new board titled `<Original Title> (imported)` with unique generated IDs. An import never overwrites or mutates existing boards or media assets.
+- Schema versioning guards imports: legacy version-0 unversioned boards have missing style fields migrated on the fly; newer schema versions (`> BACKUP_VERSION`) are rejected with an explicit prompt to update the app.
+- Corrupt individual objects or strokes within an imported file are skipped with non-fatal warnings rather than failing the entire board import.
+- Native sharing via `expo-sharing` is wrapped with pure classification (`classifyShareResult`) to cleanly handle cancellations, missing native capabilities, and share-sheet completion without unhandled promise rejections.
+- Exported files are written to a cache directory (`flowcanvas-exports`) and temporary files are cleaned up after sharing or failure.
+- No cloud sync or network storage: all export and import operations are strictly local to the device filesystem.
 
 ## Next task
-Next: export and import (PNG/PDF export, share sheet, and versioned JSON board backup/restore).
+Next: settings.

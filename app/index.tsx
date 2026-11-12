@@ -6,6 +6,9 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AppButton } from '../src/components/AppButton';
 import { BoardCard, BoardSummary } from '../src/components/BoardCard';
 import { BoardIcon, PlusIcon, SettingsIcon } from '../src/components/icons';
+import { ImportBoardModal, type ImportModalState } from '../src/components/ImportBoardModal';
+import { importErrorMessage } from '../src/export/backup';
+import { pickBackupFile } from '../src/export/backup-store';
 import { colors, darkColors, radii, spacing, touchTarget, typography } from '../src/theme';
 import { homeStyles as styles } from '../src/screens/home.styles';
 import { useBoards } from '../src/board-context';
@@ -18,8 +21,9 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
   const isDark = useColorScheme() === 'dark';
   const theme = isDark ? darkColors : colors;
-  const { boards, createBoard, ready, storageError } = useBoards();
+  const { boards, createBoard, ready, storageError, refreshBoards } = useBoards();
   const [sheetVisible, setSheetVisible] = useState(false);
+  const [importState, setImportState] = useState<ImportModalState>({ status: 'closed' });
   const [canvasBackground, setCanvasBackground] = useState<'light' | 'dark'>(isDark ? 'dark' : 'light');
   const [canvasStyle, setCanvasStyle] = useState<'blank' | 'dots'>('blank');
   const [orientation, setOrientation] = useState<'portrait' | 'landscape'>('portrait');
@@ -41,6 +45,25 @@ export default function HomeScreen() {
   const renderBoard = useCallback(({ item }: { item: BoardSummary }) => (
     <BoardCard board={item} onPress={() => router.push({ pathname: '/editor', params: { boardId: item.id } })} onMenuPress={() => undefined} />
   ), [router]);
+
+  const startImport = useCallback(async () => {
+    try {
+      const picked = await pickBackupFile();
+      if (picked.canceled) return;
+      setImportState({
+        status: 'ready',
+        plan: picked.plan,
+        backup: picked.backup,
+        warnings: picked.warnings,
+        size: picked.size,
+      });
+    } catch (error) {
+      setImportState({
+        status: 'error',
+        message: importErrorMessage(error),
+      });
+    }
+  }, []);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top', 'left', 'right']}>
@@ -90,10 +113,13 @@ export default function HomeScreen() {
                 <PlusIcon />
                 <Text style={styles.emptyButtonText}>Create your first board</Text>
               </Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel="Import a board" onPress={() => { void startImport(); }} style={styles.import}>
+                <Text style={[styles.importText, { color: theme.primary }]}>Import a board</Text>
+              </Pressable>
             </View>
           )
         }
-        ListFooterComponent={boards.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Import a board" style={styles.import}><Text style={[styles.importText, { color: theme.primary }]}>Import a board</Text></Pressable> : undefined}
+        ListFooterComponent={boards.length > 0 ? <Pressable accessibilityRole="button" accessibilityLabel="Import a board" onPress={() => { void startImport(); }} style={styles.import}><Text style={[styles.importText, { color: theme.primary }]}>Import a board</Text></Pressable> : undefined}
         showsVerticalScrollIndicator={false}
         ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
       />
@@ -114,6 +140,17 @@ export default function HomeScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <ImportBoardModal
+        state={importState}
+        theme={theme}
+        onClose={() => setImportState({ status: 'closed' })}
+        onImported={(boardId) => {
+          setImportState({ status: 'closed' });
+          void refreshBoards();
+          router.push({ pathname: '/editor', params: { boardId } });
+        }}
+      />
     </SafeAreaView>
   );
 }
