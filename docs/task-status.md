@@ -1,9 +1,30 @@
 # Task status
 
 ## Current phase
-Settings (Milestone 3): local user preferences, theme switching, canvas and drawing defaults, haptics, export format preference, about/privacy, and destructive data clear.
+Responsive tablet support (Milestone 3): adaptive layouts, safe areas, orientation transitions, keyboard behavior, canvas sizing, and touch targets across small phones, large phones, Android phones, iPad portrait, and iPad landscape.
 
 ## Status
+`implemented-unverified` — responsive phone and tablet support is implemented across all target device profiles with no new product features:
+- Orientation unlocked in `app.json` (`"orientation": "default"`) so phones and tablets smoothly transition between portrait and landscape.
+- Centralized responsive layout engine (`src/responsive/layout.ts`) classifying viewports (`small-phone`, `phone`, `phone-landscape`, `tablet-portrait`, `tablet-landscape`) using both `shortEdge >= 600` and `width >= 768` so large phones in landscape (`932×430`, `915×412`) and iPad Split View compact windows (`507×768`) are never misclassified as full tablets.
+- Home screen (`app/index.tsx`, `src/screens/home.styles.ts`, `src/components/BoardCard.tsx`): adapts gutters (`16pt` on phones, `32pt` on tablets + left/right safe-area insets), columns (`2` on phone portrait, `2–3` on phone landscape, `4` on iPad portrait, and a two-pane `268pt` sidebar + `3–4` column board grid on iPad landscape), and deterministic `cardWidth` sizing so partial rows never stretch across wide screens. BoardCard now honors the active theme in dark mode.
+- Editor navigation & inspector presentation (`app/editor.tsx`, `src/components/EditorInspectorPanel.tsx`):
+  - Phones (portrait and landscape) use the bottom `ActionIsland` and bottom sheets; compact landscape viewports use a `48pt` top bar and tighter margins so the canvas stays dominant.
+  - Tablets (`iPad portrait` and `iPad landscape`) use the left `84pt` vertical `ToolRail` wrapped in a safe-area `ScrollView` with `48×48pt` (`DOCK_TOUCH_TARGET`) buttons, and anchor tool option sheets (`InkOptionsSheet`, `ObjectOptionsSheet`, `ShapeOptionsSheet`) as `rail-popover` cards beside the rail instead of full-width bottom sheets.
+  - Tablet inspector (`src/components/EditorInspectorPanel.tsx`): in iPad landscape, selecting one or more objects docks a `288pt` right-hand inspector panel with capability-aware Quick Actions (`Edit`, `Duplicate`, `Delete`), inline colour/typography/shape/connector style controls, and dimensions metadata while keeping the canvas dominant (`>= 60%` width); in iPad portrait, the inspector defaults to a `44pt` right-edge tab and slides over as an `overlay` panel when opened.
+- Safe areas, keyboard avoidance, and rotation (`app/editor.tsx`, `app/settings.tsx`):
+  - Left and right safe-area insets (`insets.left`, `insets.right`) are applied to the editor top bar, workspace, storage alert banner, `QuickCreationSheet`, and `SettingsScreen`.
+  - Canvas window bounds (`measureCanvas`) automatically re-measure on dimension, navigation mode, or inspector presentation changes.
+  - Software vs hardware keyboard detection (`isSoftwareKeyboardVisible`) avoids false offsets from iPad hardware keyboard shortcut bars while panning the canvas (`keepObjectAboveKeyboard`) whenever multiline text growth or software keyboards overlap the active `TextInput`, accompanied by a floating `Style` / `Done` bar while editing.
+- Modals & secondary flows (`src/components/ExportSheet.tsx`, `src/components/ImportBoardModal.tsx`, `src/components/ImageSourceSheet.tsx`, `src/components/ImageCropScreen.tsx`, `src/components/OcrReviewScreen.tsx`):
+  - `ExportSheet`, `ImportBoardModal`, and Home's "Customize your board" modal render as centered `480pt`-max-width dialogs on tablets and landscape phones.
+  - `ImageSourceSheet` centers at `560pt` max width and lays out "Take photo" and "Choose from library" side-by-side in two columns on tablets.
+  - `ImageCropScreen` moves its controls into a right-hand vertical rail (`cropToolbarPlacement === 'right-rail'`) in landscape so the 4:3 crop frame gets full vertical height.
+  - `OcrReviewScreen` switches to a side-by-side two-column layout (`ocrLayout === 'two-column'`) on tablets and wide landscape screens with the image preview on the left and the editable transcript on the right.
+- Touch targets (`src/components/InkingQuickTray.tsx`, `src/components/ColorPicker.tsx`, `app/editor.tsx`): all interactive controls meet or exceed `44×44pt` (`touchTarget`, including horizontal and vertical `hitSlop` on compact tray chips and hue sliders) and `48×48pt` (`DOCK_TOUCH_TARGET`) on dock/rail buttons.
+- Verification suite added at `scripts/verify-responsive.mts` (`npm run test:responsive`) testing all 13 target device profiles across `small phone`, `large phone`, `Android phone`, `iPad portrait`, and `iPad landscape`.
+- The next task is quality hardening.
+
 `implemented-unverified` — local MVP Settings are implemented with no cloud sync:
 - Settings screen (`app/settings.tsx`) organized into 6 flat sections matching Stitch designs (`55-settings-01-default-light.png`, `56-settings-02-dark.png`, `57-settings-03-ipad-portrait.png`, `58-clear-local-data-01-confirm-dialog.png`): Appearance, Canvas, Interaction, Export, About, and Data.
 - Theme switching: System, Light, and Dark mode via 3-way segmented control; applied globally via `PreferencesProvider` (`src/settings/preferences-context.tsx`) dynamically styling header bars, status bar style, background, card borders, and toolbars across Home, Editor, and Settings.
@@ -199,11 +220,20 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - `app.json` — added `expo-sharing` plugin.
 - `package.json` — added `test:export` verification script to `npm test`.
 - `scripts/verify-export.mts` (new) — automated verification suite for empty boards, large boards, selections, invalid files, version mismatch, SQLite round-trip import, and share cancellation.
+- `src/responsive/layout.ts` (new) — pure responsive viewport profiler and layout calculators (`resolveViewportProfile`, `resolveHomeLayout`, `resolveEditorLayout`, `resolveFlowModalLayout`, `isSoftwareKeyboardVisible`).
+- `src/components/EditorInspectorPanel.tsx` (new) — tablet right-side object inspector supporting `docked`, `overlay`, and `edge-tab` presentations with capability-aware quick actions, inline style controls, and dimensions summary.
+- `app.json` — unlocked orientation (`"orientation": "default"`).
+- `app/index.tsx`, `src/screens/home.styles.ts`, `src/components/BoardCard.tsx` — responsive gutters (`16pt`/`32pt`), 2/4-column grids, iPad landscape two-pane sidebar + grid layout, non-stretching `cardWidth`, dark theme card support, and centered modal sheet on tablet/landscape.
+- `app/editor.tsx` — wired `resolveEditorLayout`, scrollable `ToolRail` with `48pt` targets, `EditorInspectorPanel`, `rail-popover` tool option sheets on tablet, safe-area left/right insets, rotation re-measurement, multiline keyboard avoidance, and floating `Style`/`Done` bar during text editing.
+- `src/components/InkOptionsSheet.tsx`, `src/components/ObjectOptionsSheet.tsx`, `src/components/ShapeOptionsSheet.tsx` — added `rail-popover` variant anchored beside the tablet tool rail and viewport-clamped `ScrollView` height.
+- `src/components/ExportSheet.tsx`, `src/components/ImportBoardModal.tsx`, `src/components/ImageSourceSheet.tsx`, `src/components/ImageCropScreen.tsx`, `src/components/OcrReviewScreen.tsx`, `src/components/QuickCreationSheet.tsx` — centered tablet modals, two-column image source cards, landscape right-rail crop toolbar, two-column tablet OCR review, and safe-area insets.
+- `src/components/InkingQuickTray.tsx`, `src/components/ColorPicker.tsx`, `app/settings.tsx` — horizontal/vertical `hitSlop` for `44pt` touch targets and safe-area horizontal gutters on Settings.
+- `scripts/verify-responsive.mts` (new) & `package.json` — automated verification across 13 target phone and tablet viewport profiles (`npm run test:responsive`).
 - `docs/task-status.md` — this update.
 
 ## Verification
 - `npm run typecheck` (`tsc --noEmit`) passes with 0 errors.
-- `npm test` passes all 9 verification suites:
+- `npm test` passes all 11 verification suites:
   - `test:viewport`: conversion, pan, zoom limits, focal anchoring, reset
   - `test:ink`: zoomed drawing, tool styles, smoothing, erasing, eraser scaling
   - `test:history`: command stacks, multiple strokes, erase sweeps, undo/redo, redo clearing, bounded history
@@ -213,10 +243,12 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
   - `test:image`: permission copy, cancel, large image, crop, rotate, placement, resize, history, persistence and relaunch
   - `test:ocr`: block ordering, loading/success/no-text/error states, correction, source-image linking, image-only fallback, one-step undo, persistence and relaunch
   - `test:export`: empty boards, large boards, selections, invalid files, version mismatch, round-trip SQLite import, and share cancellation
+  - `test:settings`: preference parser, SQLite roundtrip, on-disk recovery, data stats, and clear-local-data purge
+  - `test:responsive`: viewport classification, Home 2/4-col & two-pane layouts, Editor island/rail & inspector modes, canvas dominance, orientation transitions, modal/flow layouts, keyboard overlap, and touch targets across 13 target device profiles (`small phone`, `large phone`, `Android phone`, `iPad portrait`, `iPad landscape`)
 - `EXPO_NO_TELEMETRY=1 npx expo export --platform ios` bundles successfully.
 - `EXPO_NO_TELEMETRY=1 npx expo export --platform android` bundles successfully.
 - No ESLint config or lint script exists in this project, so there is no separate lint run.
-- Not verified: physical camera and native photo picker dialogs, native OCR recognition and its permission-free path, physical share sheet presentation on device hardware, and Expo Go unavailable-state behaviour on real devices; these are covered by the pure suites and type-safe wrappers but still need manual verification on a device.
+- Not verified: physical camera and native photo picker dialogs, native OCR recognition and its permission-free path, physical share sheet presentation on device hardware, physical iPad Split View drag-resizing gestures, and Expo Go unavailable-state behaviour on real devices; these are covered by the pure suites and type-safe wrappers but still need manual verification on a device.
 
 ## Known issues
 - Image files are stored locally in the app container. When boards are deleted in the future, orphaned media cleanup will be needed.
@@ -244,4 +276,4 @@ Selection and editing are capability-aware: text and sticky notes expose text ed
 - No cloud sync or network storage: all export and import operations are strictly local to the device filesystem.
 
 ## Next task
-Next: settings.
+Next: quality hardening.

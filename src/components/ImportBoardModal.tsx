@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -9,6 +9,7 @@ import {
 } from '../export/backup';
 import { importBackup } from '../export/backup-store';
 import { formatBytes } from '../export/regions';
+import { resolveFlowModalLayout } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { AppButton } from './AppButton';
 
@@ -37,6 +38,8 @@ export function ImportBoardModal({
   onImported,
 }: ImportBoardModalProps) {
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const { centeredModal, modalMaxWidth } = resolveFlowModalLayout(width, height);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState('');
@@ -73,23 +76,35 @@ export function ImportBoardModal({
     <Modal
       transparent
       visible={visible}
-      animationType="slide"
+      animationType={centeredModal ? 'fade' : 'slide'}
       statusBarTranslucent
       onRequestClose={() => { if (!busy) onClose(); }}
     >
-      <Pressable style={styles.scrim} onPress={() => { if (!busy) onClose(); }}>
+      <Pressable
+        style={[styles.scrim, centeredModal && styles.scrimCentered]}
+        onPress={() => { if (!busy) onClose(); }}
+      >
         <Pressable
           style={[
             styles.sheet,
-            {
-              backgroundColor: theme.surface,
-              borderColor: theme.border,
-              paddingBottom: Math.max(spacing.lg, insets.bottom + spacing.md),
-            },
+            centeredModal
+              ? [
+                  styles.sheetModal,
+                  {
+                    maxWidth: modalMaxWidth,
+                    borderColor: theme.border,
+                    paddingBottom: spacing.lg,
+                  },
+                ]
+              : {
+                  borderColor: theme.border,
+                  paddingBottom: Math.max(spacing.lg, insets.bottom + spacing.md),
+                },
+            { backgroundColor: theme.surface },
           ]}
           onPress={() => undefined}
         >
-          <View style={[styles.grabber, { backgroundColor: theme.border }]} />
+          {!centeredModal && <View style={[styles.grabber, { backgroundColor: theme.border }]} />}
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.foreground }]}>
               {state.status === 'error' ? 'Cannot import board' : 'Import board'}
@@ -184,6 +199,7 @@ export function ImportBoardModal({
 
 const styles = StyleSheet.create({
   scrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000055' },
+  scrimCentered: { justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
   sheet: {
     borderTopLeftRadius: radii.lg,
     borderTopRightRadius: radii.lg,
@@ -191,6 +207,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     gap: spacing.md,
+  },
+  sheetModal: {
+    width: '100%',
+    borderRadius: radii.lg,
+    borderWidth: 1,
   },
   grabber: { width: 44, height: 4, borderRadius: 2, alignSelf: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

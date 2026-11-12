@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { isCustomColor, SHAPE_COLORS, SHAPE_FILLS } from '../canvas/document';
 import { CONNECTOR_STROKE_WIDTHS, SHAPE_STROKE_WIDTHS, STROKE_WIDTH_LABELS, type ConnectorStyle, type ShapeKind } from '../canvas/shapes';
+import type { ToolOptionsVariant } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
 import { EllipseIcon, LineIcon, PlusIcon, RectangleIcon } from './icons';
@@ -18,6 +19,10 @@ type Props = {
   connectorStrokeWidth: number;
   /** Distance from the bottom of the screen, so the sheet clears the tool dock. */
   bottomOffset: number;
+  variant?: ToolOptionsVariant;
+  leftOffset?: number;
+  topOffset?: number;
+  maxWidth?: number;
   onShapeKind: (value: ShapeKind) => void;
   onShapeColor: (value: string) => void;
   onShapeFill: (value: string | null) => void;
@@ -34,10 +39,14 @@ const SHAPE_CHOICES = [
   { kind: 'line', label: 'Line', Icon: LineIcon },
 ] as const satisfies ReadonlyArray<{ kind: ShapeKind; label: string; Icon: typeof RectangleIcon }>;
 
-/** Compact shape/connector sheet: every control stays reachable by scrolling. */
+/** Compact shape/connector sheet: docked above the island on phone or beside the rail on tablet. */
 export function ShapeOptionsSheet({
   theme, mode, shapeKind, shapeColorKey, shapeFillKey, shapeStrokeWidth,
   connectorStyle, connectorColorKey, connectorStrokeWidth, bottomOffset,
+  variant = 'bottom-sheet',
+  leftOffset = spacing.md,
+  topOffset = spacing.md,
+  maxWidth = 460,
   onShapeKind, onShapeColor, onShapeFill, onShapeStrokeWidth,
   onConnectorStyle, onConnectorColor, onConnectorStrokeWidth, onDone,
 }: Props) {
@@ -49,13 +58,31 @@ export function ShapeOptionsSheet({
   const customFill = shapeFillKey ? isCustomColor(shapeFillKey) : false;
   const strokeColorKey = shape ? shapeColorKey : connectorColorKey;
   const customStroke = isCustomColor(strokeColorKey);
+  const isPopover = variant === 'rail-popover';
 
-  // The sheet sits above the dock; cap it so the stroke row scrolls into view
-  // on short screens instead of running off the bottom.
-  const maxSheetHeight = Math.max(240, windowHeight - bottomOffset - spacing.lg);
+  const maxSheetHeight = isPopover
+    ? Math.max(220, windowHeight - topOffset - bottomOffset - 80)
+    : Math.max(180, windowHeight - bottomOffset - 72);
+
   return (
-    <View style={[styles.layer, { bottom: bottomOffset }]} pointerEvents="box-none">
-      <View style={[styles.sheet, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+    <View
+      style={
+        isPopover
+          ? [styles.popoverLayer, { left: leftOffset, top: topOffset }]
+          : [styles.layer, { bottom: bottomOffset }]
+      }
+      pointerEvents="box-none"
+    >
+      <View
+        style={[
+          styles.sheet,
+          {
+            maxWidth: isPopover ? Math.min(380, maxWidth) : maxWidth,
+            backgroundColor: theme.surface,
+            borderColor: theme.border,
+          },
+        ]}
+      >
         <ScrollView
           style={{ maxHeight: maxSheetHeight }}
           contentContainerStyle={styles.sheetContent}
@@ -64,7 +91,14 @@ export function ShapeOptionsSheet({
         >
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.foreground }]}>{shape ? 'Shape options' : 'Connector options'}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Done" onPress={onDone} style={styles.done}><Text style={{ color: theme.primary }}>Done</Text></Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Done"
+              onPress={onDone}
+              style={styles.done}
+            >
+              <Text style={[styles.doneText, { color: theme.primary }]}>Done</Text>
+            </Pressable>
           </View>
           {customTarget === 'fill' ? (
             <ColorPicker
@@ -236,12 +270,14 @@ function ShapeChoice({ label, Icon, selected, theme, onPress }: { label: string;
 function Choice({ label, selected, theme, onPress }: { label: string; selected: boolean; theme: ThemeColors; onPress: () => void }) { return <Pressable accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ selected }} onPress={onPress} style={[styles.choice, { borderColor: selected ? theme.primary : theme.border }, selected && { backgroundColor: theme.primary }]}><Text style={{ color: selected ? theme.surface : theme.foreground }}>{label}</Text></Pressable>; }
 
 const styles = StyleSheet.create({
-  layer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: spacing.md },
+  layer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: spacing.md, zIndex: 25 },
+  popoverLayer: { position: 'absolute', zIndex: 25 },
   sheet: { width: '100%', maxWidth: 460, borderWidth: 1, borderRadius: radii.md, padding: spacing.md },
   sheetContent: { gap: spacing.sm },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { ...typography.bodyStrong },
-  done: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: spacing.sm },
+  done: { minHeight: touchTarget, minWidth: touchTarget, alignItems: 'flex-end', justifyContent: 'center', paddingHorizontal: spacing.sm },
+  doneText: { ...typography.bodyStrong },
   label: { ...typography.caption },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, alignItems: 'center' },
   choice: { minWidth: touchTarget, minHeight: touchTarget, paddingHorizontal: spacing.sm, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },

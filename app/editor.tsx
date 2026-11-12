@@ -5,10 +5,10 @@ import {
   AppState,
   Keyboard,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  useColorScheme,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -100,7 +100,13 @@ import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptions
 import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
 import { ExportSheet } from '../src/components/ExportSheet';
-import { colors, darkColors, radii, spacing, touchTarget, typography, type ThemeColors } from '../src/theme';
+import { EditorInspectorPanel } from '../src/components/EditorInspectorPanel';
+import {
+  DOCK_TOUCH_TARGET,
+  isSoftwareKeyboardVisible,
+  resolveEditorLayout,
+} from '../src/responsive/layout';
+import { radii, spacing, touchTarget, typography, type ThemeColors } from '../src/theme';
 
 const TOOLS = [
   { tool: 'select', label: 'Select', Icon: SelectIcon },
@@ -148,7 +154,6 @@ export default function BoardEditorScreen() {
   const { width, height: windowHeight } = useWindowDimensions();
   const { preferences, theme, isDark } = usePreferences();
   const dark = isDark;
-  const tablet = width >= 768;
 
   const [history, dispatch] = useReducer(documentReducer, createDocumentHistory());
   const document = history.present;
@@ -160,8 +165,33 @@ export default function BoardEditorScreen() {
   const [activeTool, setActiveTool] = useState<InkTool>('select');
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [stylingObjectId, setStylingObjectId] = useState<string | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
   const [editing, setEditing] = useState<Editing | null>(null);
   const editingRef = useRef<Editing | null>(null);
+
+  const selectedObjects = document.objects.filter((object) => selectedObjectIds.includes(object.id));
+  const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null;
+  const layout = resolveEditorLayout(
+    width,
+    windowHeight,
+    insets,
+    {
+      hasSelection: selectedObjects.length > 0,
+      inspectorOpen,
+      isEditingText: Boolean(editing),
+    },
+    ACTION_ISLAND_HEIGHT,
+  );
+  const tablet = layout.navigationMode === 'rail';
+
+  // Default inspector open state by tablet orientation when a new selection begins.
+  const prevSelectionCount = useRef(0);
+  useEffect(() => {
+    if (selectedObjects.length > 0 && prevSelectionCount.current === 0) {
+      setInspectorOpen(layout.profile.isTabletLandscape);
+    }
+    prevSelectionCount.current = selectedObjects.length;
+  }, [selectedObjects.length, layout.profile.isTabletLandscape]);
 
   const [textColorKey, setTextColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
   const [textSize, setTextSize] = useState(DEFAULT_TEXT_FONT_SIZE);
@@ -463,6 +493,13 @@ export default function BoardEditorScreen() {
     });
   }, []);
 
+  // Re-measure canvas window coordinates when orientation or docked panels change.
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = setTimeout(measureCanvas, 32);
+    return () => clearTimeout(timer);
+  }, [hydrated, width, windowHeight, layout.navigationMode, layout.inspectorPresentation, measureCanvas]);
+
   const setEditingState = useCallback((next: Editing | null) => {
     editingRef.current = next;
     setEditing(next);
@@ -593,9 +630,17 @@ export default function BoardEditorScreen() {
   /** Style is available for one selected object at a time, ink excepted. */
   const toggleStyleSheet = useCallback(() => {
     if (selectedObjectIds.length !== 1) return;
+    if (tablet) {
+      setInspectorOpen((open) => !open);
+      return;
+    }
     const id = selectedObjectIds[0];
     setStylingObjectId((current) => (current === id ? null : id));
-  }, [selectedObjectIds]);
+  }, [selectedObjectIds, tablet]);
+
+  const updateObjectStyleById = useCallback((id: string, patch: ObjectStylePatch) => {
+    dispatch({ type: 'command', command: { type: 'object.update', id, ...patch } });
+  }, []);
 
   const updateStyledObject = useCallback((patch: ObjectStylePatch) => {
     if (!stylingObjectId) return;
@@ -615,9 +660,10 @@ export default function BoardEditorScreen() {
   // The keyboard must never cover the object being edited. Only the viewport
   // moves; the object keeps its board position.
   const editingId = editing?.object.id ?? null;
+  const editingObjectHeight = editing?.object.height ?? 0;
   useEffect(() => {
     const current = editingRef.current;
-    if (!current || keyboardHeight <= 0 || canvasRect.width === 0) return;
+    if (!current || !isSoftwareKeyboardVisible(keyboardHeight) || canvasRect.width === 0) return;
     const rect = objectScreenRect(current.object, viewportLive.current);
     const next = keepObjectAboveKeyboard({
       object: {
@@ -632,7 +678,7 @@ export default function BoardEditorScreen() {
       bottomInset: keyboardOverlap(keyboardHeight, canvasRect, windowHeight) + sheetHeight + spacing.sm,
     });
     if (next.x !== viewportLive.current.x || next.y !== viewportLive.current.y) requestViewport(next);
-  }, [editingId, keyboardHeight, sheetHeight, canvasRect, windowHeight, requestViewport]);
+  }, [editingId, editingObjectHeight, keyboardHeight, sheetHeight, canvasRect, windowHeight, requestViewport]);
 
   // A selection can vanish through undo, redo, or a delete from elsewhere.
   useEffect(() => {
@@ -741,11 +787,9 @@ export default function BoardEditorScreen() {
     dispatch({ type: 'redo' });
   }, [commitEditing, preferences.haptics]);
 
-  const selectedObjects = document.objects.filter((object) => selectedObjectIds.includes(object.id));
-  const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null;
   const sheetTool: InkSheetTool = activeTool === 'eraser' ? 'eraser' : activeTool === 'highlighter' ? 'highlighter' : 'pen';
-  const islandBottom = Math.max(spacing.md, insets.bottom + spacing.xs);
-  const optionsBottom = tablet ? spacing.md : ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom;
+  const islandBottom = layout.islandBottom;
+  const optionsBottom = layout.optionsBottom;
   const showGuidance = !documentHasContent(document) && !editing;
   const editingTextObject = editing && isTextualObject(editing.object) ? editing.object : null;
   const overlayRect = editingTextObject ? objectScreenRect(editingTextObject, viewport) : null;
@@ -784,7 +828,17 @@ export default function BoardEditorScreen() {
   return (
     <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={[styles.topBar, { borderBottomColor: theme.border }]}>
+      <View
+        style={[
+          styles.topBar,
+          {
+            minHeight: layout.topBarHeight,
+            borderBottomColor: theme.border,
+            paddingLeft: spacing.sm + insets.left,
+            paddingRight: spacing.sm + insets.right,
+          },
+        ]}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Back to boards"
@@ -817,7 +871,15 @@ export default function BoardEditorScreen() {
       {storageError && (
         <View
           accessibilityRole="alert"
-          style={[styles.storageBanner, { borderColor: theme.border, backgroundColor: theme.muted }]}
+          style={[
+            styles.storageBanner,
+            {
+              borderColor: theme.border,
+              backgroundColor: theme.muted,
+              marginLeft: spacing.md + insets.left,
+              marginRight: spacing.md + insets.right,
+            },
+          ]}
         >
           <Text style={[styles.storageBannerText, { color: theme.destructive }]}>
             Not saved: {storageError} The board stays editable and the next change retries the save.
@@ -825,8 +887,23 @@ export default function BoardEditorScreen() {
         </View>
       )}
 
-      <View style={styles.workspace}>
-        {tablet && <ToolRail theme={theme} activeTool={activeTool} onToolPress={pressTool} />}
+      <View
+        style={[
+          styles.workspace,
+          {
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+          },
+        ]}
+      >
+        {tablet && (
+          <ToolRail
+            theme={theme}
+            activeTool={activeTool}
+            bottomInset={insets.bottom}
+            onToolPress={pressTool}
+          />
+        )}
         {!hydrated ? (
           <View style={styles.editorLoading}>
             <ActivityIndicator color={theme.primary} />
@@ -836,7 +913,14 @@ export default function BoardEditorScreen() {
           <View
             ref={canvasRef}
             onLayout={measureCanvas}
-            style={[styles.canvas, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            style={[
+              styles.canvas,
+              {
+                margin: layout.canvasMargin,
+                backgroundColor: theme.surface,
+                borderColor: theme.border,
+              },
+            ]}
           >
             <View style={styles.canvasClip}>
               <CanvasViewport
@@ -980,9 +1064,103 @@ export default function BoardEditorScreen() {
                 </Pressable>
               </View>
             )}
+
+            {editingTextObject && (
+              <View
+                style={[
+                  styles.editingFloatingBar,
+                  {
+                    backgroundColor: theme.surface,
+                    borderColor: theme.border,
+                    top: spacing.sm,
+                    right: spacing.sm,
+                  },
+                ]}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Text style options"
+                  onPress={() => setObjectOptionsVisible((v) => !v)}
+                  style={({ pressed }) => [
+                    styles.editingBarButton,
+                    objectOptionsVisible && { backgroundColor: theme.primary + '1F' },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <StyleIcon size={16} color={objectOptionsVisible ? theme.primary : theme.foreground} />
+                  <Text style={[styles.editingBarLabel, { color: objectOptionsVisible ? theme.primary : theme.foreground }]}>
+                    Style
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Done editing text"
+                  onPress={commitEditing}
+                  style={({ pressed }) => [
+                    styles.editingBarButton,
+                    { backgroundColor: theme.primary },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={[styles.editingBarLabel, { color: '#FFFFFF', fontWeight: '700' }]}>
+                    Done
+                  </Text>
+                </Pressable>
+              </View>
+            )}
           </View>
         )}
+
+        {tablet &&
+          !editing &&
+          selectedObjects.length > 0 &&
+          (layout.inspectorPresentation === 'docked' ||
+            layout.inspectorPresentation === 'overlay' ||
+            layout.inspectorPresentation === 'edge-tab') && (
+            <EditorInspectorPanel
+              theme={theme}
+              dark={dark}
+              presentation={layout.inspectorPresentation}
+              width={layout.inspectorWidth}
+              selectedObjects={selectedObjects}
+              onToggleOpen={() => setInspectorOpen((open) => !open)}
+              onEditTextObject={startEditingExisting}
+              onDuplicateSelected={duplicateSelected}
+              onDeleteSelected={deleteSelected}
+              onUpdateObjectStyle={updateObjectStyleById}
+            />
+          )}
       </View>
+
+      {editingTextObject && objectOptionsVisible && (
+        <ObjectOptionsSheet
+          theme={theme}
+          dark={dark}
+          kind={editingTextObject.type}
+          colorKey={editingTextObject.colorKey}
+          fontSize={editingTextObject.fontSize}
+          fontWeight={editingTextObject.fontWeight ?? 'normal'}
+          fontStyle={editingTextObject.fontStyle ?? 'normal'}
+          bottomOffset={
+            isSoftwareKeyboardVisible(keyboardHeight)
+              ? keyboardHeight + spacing.xs
+              : optionsBottom
+          }
+          variant={layout.toolOptionsVariant}
+          leftOffset={layout.toolPopoverLeft}
+          topOffset={layout.toolPopoverTop}
+          maxWidth={layout.toolPopoverMaxWidth}
+          doneLabel="Close"
+          doneHint="Closes text style options while keeping the editor active"
+          showScrim={false}
+          onHeightChange={setSheetHeight}
+          onColorChange={(key) => updateDraft({ colorKey: key })}
+          onFontSizeChange={(size) => updateDraft({ fontSize: size })}
+          onFontWeightChange={(weight) => updateDraft({ fontWeight: weight })}
+          onFontStyleChange={(style) => updateDraft({ fontStyle: style })}
+          onDone={closeObjectOptions}
+        />
+      )}
 
       {!editing && objectOptionsVisible && (activeTool === 'text' || activeTool === 'sticky') && (
         <ObjectOptionsSheet
@@ -994,6 +1172,10 @@ export default function BoardEditorScreen() {
           fontWeight={activeTool === 'sticky' ? (stickyBold ? 'bold' : 'normal') : (textBold ? 'bold' : 'normal')}
           fontStyle={activeTool === 'sticky' ? (stickyItalic ? 'italic' : 'normal') : (textItalic ? 'italic' : 'normal')}
           bottomOffset={optionsBottom}
+          variant={layout.toolOptionsVariant}
+          leftOffset={layout.toolPopoverLeft}
+          topOffset={layout.toolPopoverTop}
+          maxWidth={layout.toolPopoverMaxWidth}
           doneLabel="Done"
           doneHint="Closes the style options"
           // Selecting the tool opens this sheet, so a full-screen scrim would
@@ -1025,6 +1207,10 @@ export default function BoardEditorScreen() {
           connectorColorKey={connectorColorKey}
           connectorStrokeWidth={connectorStrokeWidth}
           bottomOffset={optionsBottom}
+          variant={layout.toolOptionsVariant}
+          leftOffset={layout.toolPopoverLeft}
+          topOffset={layout.toolPopoverTop}
+          maxWidth={layout.toolPopoverMaxWidth}
           onShapeKind={setShapeKind}
           onShapeColor={setShapeColorKey}
           onShapeFill={setShapeFillKey}
@@ -1036,7 +1222,7 @@ export default function BoardEditorScreen() {
         />
       )}
 
-      {!editing && stylingTextObject && (
+      {!editing && !tablet && stylingTextObject && (
         <ObjectOptionsSheet
           theme={theme}
           dark={dark}
@@ -1056,7 +1242,7 @@ export default function BoardEditorScreen() {
         />
       )}
 
-      {!editing && stylingGeometricObject && (
+      {!editing && !tablet && stylingGeometricObject && (
         <ShapeOptionsSheet
           theme={theme}
           mode={stylingGeometricObject.type}
@@ -1089,6 +1275,10 @@ export default function BoardEditorScreen() {
           opacity={opacity}
           eraserRadius={eraserRadius}
           bottomOffset={optionsBottom}
+          variant={layout.toolOptionsVariant}
+          leftOffset={layout.toolPopoverLeft}
+          topOffset={layout.toolPopoverTop}
+          maxWidth={layout.toolPopoverMaxWidth}
           onToolChange={selectInkTool}
           onColorChange={setColor}
           onWidthChange={setStrokeWidth}
@@ -1196,30 +1386,48 @@ export default function BoardEditorScreen() {
   );
 }
 
-function ToolRail({ theme, activeTool, onToolPress }: { theme: ThemeColors; activeTool: InkTool; onToolPress: (tool: InkTool) => void }) {
+function ToolRail({
+  theme,
+  activeTool,
+  bottomInset,
+  onToolPress,
+}: {
+  theme: ThemeColors;
+  activeTool: InkTool;
+  bottomInset: number;
+  onToolPress: (tool: InkTool) => void;
+}) {
   return (
-    <View style={[styles.rail, { borderRightColor: theme.border }]}>
-      {TOOLS.map((definition) => {
-        const { Icon, label, tool } = definition;
-        const selected = activeTool === tool;
-        const color = selected ? theme.primary : theme.foreground;
-        return (
-          <Pressable
-            key={tool}
-            accessibilityRole="button"
-            accessibilityLabel={label}
-            accessibilityHint={tool !== 'select' ? 'Opens the tool options when selected again' : undefined}
-            accessibilityState={{ selected }}
-            onPress={() => onToolPress(tool)}
-            style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-          >
-            <View style={[styles.toolIconWrap, selected && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-              <Icon size={22} color={color} />
-            </View>
-            <Text style={[styles.toolLabel, { color }]} numberOfLines={1}>{label}</Text>
-          </Pressable>
-        );
-      })}
+    <View style={[styles.rail, { borderRightColor: theme.border, backgroundColor: theme.surface }]}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.railContent,
+          { paddingBottom: bottomInset + spacing.md },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {TOOLS.map((definition) => {
+          const { Icon, label, tool } = definition;
+          const selected = activeTool === tool;
+          const color = selected ? theme.primary : theme.foreground;
+          return (
+            <Pressable
+              key={tool}
+              accessibilityRole="button"
+              accessibilityLabel={label}
+              accessibilityHint={tool !== 'select' ? 'Opens the tool options when selected again' : undefined}
+              accessibilityState={{ selected }}
+              onPress={() => onToolPress(tool)}
+              style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+            >
+              <View style={[styles.toolIconWrap, selected && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+                <Icon size={22} color={color} />
+              </View>
+              <Text style={[styles.toolLabel, { color }]} numberOfLines={1}>{label}</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 }
@@ -1232,22 +1440,47 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', alignItems: 'center' },
   action: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
   actionDisabled: { opacity: 0.3 },
-  workspace: { flex: 1, flexDirection: 'row' },
-  rail: { width: 84, borderRightWidth: 1, alignItems: 'center', paddingTop: spacing.md, gap: spacing.xs },
+  workspace: { flex: 1, flexDirection: 'row', position: 'relative' },
+  rail: { width: 84, borderRightWidth: 1 },
+  railContent: { alignItems: 'center', paddingTop: spacing.md, gap: spacing.xs },
   canvas: { flex: 1, margin: spacing.md, borderWidth: 1, borderRadius: radii.md },
   canvasClip: { flex: 1, overflow: 'hidden', borderRadius: radii.md },
   canvasGuidance: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.lg },
   canvasTitle: { ...typography.subtitle },
   canvasBody: { ...typography.body, opacity: 0.7, textAlign: 'center' },
   /** Tablet tool rail entries (the phone layout uses ActionIsland). */
-  tool: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2, gap: 2 },
-  toolIconWrap: { width: 34, height: 30, borderWidth: 1, borderColor: 'transparent', borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
+  tool: { minWidth: DOCK_TOUCH_TARGET, minHeight: DOCK_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, gap: 2 },
+  toolIconWrap: { width: 36, height: 32, borderWidth: 1, borderColor: 'transparent', borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
   toolLabel: { ...typography.caption, fontSize: 11, textAlign: 'center' },
   toolPressed: { opacity: 0.65 },
   objectEditor: { position: 'absolute', zIndex: 10, textAlignVertical: 'top' },
   selectionRail: { position: 'absolute', zIndex: 20, borderWidth: 1, borderRadius: radii.sm, overflow: 'hidden' },
   selectionAction: { height: touchTarget, alignItems: 'center', justifyContent: 'center' },
   selectionActionSeparator: { borderTopWidth: 1 },
+  editingFloatingBar: {
+    position: 'absolute',
+    zIndex: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    padding: 4,
+    borderRadius: radii.md,
+    borderWidth: 1,
+  },
+  editingBarButton: {
+    minWidth: touchTarget,
+    minHeight: touchTarget,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  editingBarLabel: {
+    ...typography.caption,
+    fontWeight: '600',
+  },
   pressed: { opacity: 0.65 },
   storageBanner: { marginHorizontal: spacing.md, marginTop: spacing.sm, padding: spacing.md, borderWidth: 1, borderRadius: radii.sm },
   storageBannerText: { ...typography.caption, lineHeight: 18 },

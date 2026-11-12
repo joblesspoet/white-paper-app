@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ import { deleteExportFile, exportBoard } from '../export/export-service';
 import { formatBytes, type ExportFileFormat, type ExportScope } from '../export/regions';
 import { isShareAvailable, shareFile } from '../export/share';
 import type { BoardSettings } from '../persistence/schema';
+import { resolveFlowModalLayout } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { AppButton } from './AppButton';
 
@@ -55,6 +57,9 @@ export function ExportSheet({
   onClose,
 }: ExportSheetProps) {
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const modalLayout = resolveFlowModalLayout(width, height);
+  const { centeredModal, modalMaxWidth } = modalLayout;
   const hasSelection = selectedIds.length > 0;
   const pdfSupported = Platform.OS !== 'web';
 
@@ -168,23 +173,35 @@ export function ExportSheet({
     <Modal
       transparent
       visible={visible}
-      animationType="slide"
+      animationType={centeredModal ? 'fade' : 'slide'}
       statusBarTranslucent
       onRequestClose={() => { if (!busy) onClose(); }}
     >
-      <Pressable style={styles.scrim} onPress={() => { if (!busy) onClose(); }}>
+      <Pressable
+        style={[styles.scrim, centeredModal && styles.scrimCentered]}
+        onPress={() => { if (!busy) onClose(); }}
+      >
         <Pressable
           style={[
             styles.sheet,
-            {
-              backgroundColor: theme.surface,
-              borderColor: theme.border,
-              paddingBottom: Math.max(spacing.lg, insets.bottom + spacing.md),
-            },
+            centeredModal
+              ? [
+                  styles.sheetModal,
+                  {
+                    maxWidth: modalMaxWidth,
+                    borderColor: theme.border,
+                    paddingBottom: spacing.lg,
+                  },
+                ]
+              : {
+                  borderColor: theme.border,
+                  paddingBottom: Math.max(spacing.lg, insets.bottom + spacing.md),
+                },
+            { backgroundColor: theme.surface },
           ]}
           onPress={() => undefined}
         >
-          <View style={[styles.grabber, { backgroundColor: theme.border }]} />
+          {!centeredModal && <View style={[styles.grabber, { backgroundColor: theme.border }]} />}
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.foreground }]}>Export board</Text>
             <Pressable
@@ -327,6 +344,7 @@ export function ExportSheet({
 
 const styles = StyleSheet.create({
   scrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000055' },
+  scrimCentered: { justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
   sheet: {
     borderTopLeftRadius: radii.lg,
     borderTopRightRadius: radii.lg,
@@ -335,6 +353,11 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     gap: spacing.md,
     maxHeight: '85%',
+  },
+  sheetModal: {
+    width: '100%',
+    borderRadius: radii.lg,
+    borderWidth: 1,
   },
   grabber: { width: 44, height: 4, borderRadius: 2, alignSelf: 'center' },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

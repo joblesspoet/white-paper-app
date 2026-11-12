@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -18,6 +18,7 @@ import {
   type ImageRotation,
   type PixelRect,
 } from '../media/image-crop';
+import { resolveFlowModalLayout } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 
 type Props = {
@@ -43,6 +44,10 @@ export function ImageCropScreen({
   onCancel,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const { cropToolbarPlacement, cropRailWidth, profile } = resolveFlowModalLayout(winWidth, winHeight);
+  const useRightRail = cropToolbarPlacement === 'right-rail';
+
   const [rotation, setRotation] = useState<ImageRotation>(initialRotation);
   const rotationRef = useRef<ImageRotation>(initialRotation);
   rotationRef.current = rotation;
@@ -60,10 +65,6 @@ export function ImageCropScreen({
   const gestureStart = useRef<CropTransform>(transform);
 
   const pan = Gesture.Pan()
-    // Reanimated workletizes gesture callbacks and runs them on the UI thread,
-    // but this crop maths and `setTransform` are plain JS. Running the callbacks
-    // on the JS thread keeps them synchronous instead of throwing a
-    // "non-worklet function on the UI thread" crash on the first drag.
     .runOnJS(true)
     .onStart(() => {
       gestureStart.current = transformRef.current;
@@ -141,7 +142,7 @@ export function ImageCropScreen({
   const onLayout = (event: { nativeEvent: { layout: { width: number; height: number } } }) => {
     const { width: w, height: h } = event.nativeEvent.layout;
     if (w <= 0 || h <= 0) return;
-    const padding = spacing.lg * 2;
+    const padding = (profile.isCompactHeight ? spacing.md : spacing.lg) * 2;
     const maxW = Math.max(1, w - padding);
     const maxH = Math.max(1, h - padding);
     let frameW = maxW;
@@ -193,84 +194,127 @@ export function ImageCropScreen({
     <View
       style={[
         styles.root,
-        { backgroundColor: theme.background, paddingTop: insets.top, paddingBottom: insets.bottom },
+        {
+          backgroundColor: theme.background,
+          paddingTop: insets.top,
+          paddingBottom: useRightRail ? 0 : insets.bottom,
+          paddingLeft: insets.left,
+        },
       ]}
     >
-      <View style={styles.header}>
+      <View
+        style={[
+          styles.header,
+          profile.isCompactHeight && styles.headerCompact,
+          { borderBottomColor: theme.border, paddingRight: insets.right },
+        ]}
+      >
         <Text style={[styles.title, { color: theme.foreground }]}>Crop & Rotate</Text>
       </View>
-      <View style={styles.stage} onLayout={onLayout}>
-        {frameSize.width > 0 && frameSize.height > 0 && (
-          <GestureDetector gesture={composed}>
-            <View
-              style={[
-                styles.cropFrame,
-                {
-                  width: frameSize.width,
-                  height: frameSize.height,
-                  borderColor: theme.primary,
-                },
-              ]}
-            >
+
+      <View style={[styles.workspace, useRightRail && styles.workspaceRow]}>
+        <View style={styles.stage} onLayout={onLayout}>
+          {frameSize.width > 0 && frameSize.height > 0 && (
+            <GestureDetector gesture={composed}>
               <View
                 style={[
-                  styles.imageContainer,
+                  styles.cropFrame,
                   {
-                    width: displayW,
-                    height: displayH,
-                    transform: [
-                      { translateX: transform.translateX },
-                      { translateY: transform.translateY },
-                    ],
+                    width: frameSize.width,
+                    height: frameSize.height,
+                    borderColor: theme.primary,
                   },
                 ]}
               >
-                <Image
-                  source={{ uri }}
+                <View
                   style={[
-                    styles.rawImage,
+                    styles.imageContainer,
                     {
-                      width: rawW,
-                      height: rawH,
-                      left: imageOffsetX,
-                      top: imageOffsetY,
-                      transform: [{ rotate: `${rotation}deg` }],
+                      width: displayW,
+                      height: displayH,
+                      transform: [
+                        { translateX: transform.translateX },
+                        { translateY: transform.translateY },
+                      ],
                     },
                   ]}
-                  resizeMode="stretch"
-                />
+                >
+                  <Image
+                    source={{ uri }}
+                    style={[
+                      styles.rawImage,
+                      {
+                        width: rawW,
+                        height: rawH,
+                        left: imageOffsetX,
+                        top: imageOffsetY,
+                        transform: [{ rotate: `${rotation}deg` }],
+                      },
+                    ]}
+                    resizeMode="stretch"
+                  />
+                </View>
               </View>
-            </View>
-          </GestureDetector>
-        )}
-      </View>
-      <View style={[styles.controls, { borderTopColor: theme.border, backgroundColor: theme.surface }]}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Cancel"
-          onPress={onCancel}
-          style={styles.controlBtn}
+            </GestureDetector>
+          )}
+        </View>
+
+        <View
+          style={[
+            useRightRail ? styles.rightRail : styles.controls,
+            useRightRail
+              ? {
+                  width: cropRailWidth + insets.right,
+                  paddingRight: spacing.md + insets.right,
+                  paddingBottom: Math.max(spacing.md, insets.bottom),
+                  borderLeftColor: theme.border,
+                  backgroundColor: theme.surface,
+                }
+              : {
+                  paddingRight: insets.right,
+                  borderTopColor: theme.border,
+                  backgroundColor: theme.surface,
+                },
+          ]}
         >
-          <Text style={[styles.controlLabel, { color: theme.foreground }]}>Cancel</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Rotate 90 degrees clockwise"
-          onPress={handleRotate}
-          style={styles.controlBtn}
-        >
-          <RotateIcon size={22} color={theme.foreground} />
-          <Text style={[styles.controlLabel, { color: theme.foreground }]}>Rotate</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Done"
-          onPress={handleDone}
-          style={[styles.controlBtn, styles.doneBtn, { backgroundColor: theme.primary }]}
-        >
-          <CheckIcon size={22} color={theme.onPrimary} />
-          <Text style={[styles.controlLabel, { color: theme.onPrimary }]}>Done</Text>
-        </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Rotate 90 degrees clockwise"
+            onPress={handleRotate}
+            style={[
+              styles.controlBtn,
+              useRightRail && [styles.railBtn, { borderColor: theme.border }],
+            ]}
+          >
+            <RotateIcon size={22} color={theme.foreground} />
+            <Text style={[styles.controlLabel, { color: theme.foreground }]}>Rotate</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Done"
+            onPress={handleDone}
+            style={[
+              styles.controlBtn,
+              styles.doneBtn,
+              useRightRail && styles.railPrimaryBtn,
+              { backgroundColor: theme.primary },
+            ]}
+          >
+            <CheckIcon size={22} color={theme.onPrimary} />
+            <Text style={[styles.controlLabel, { color: theme.onPrimary }]}>Done</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+            onPress={onCancel}
+            style={[
+              styles.controlBtn,
+              useRightRail && [styles.railBtn, { borderColor: theme.border }],
+            ]}
+          >
+            <Text style={[styles.controlLabel, { color: theme.foreground }]}>Cancel</Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -283,8 +327,18 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
+    borderBottomWidth: 1,
+  },
+  headerCompact: {
+    paddingVertical: spacing.xs + 2,
   },
   title: { ...typography.title },
+  workspace: {
+    flex: 1,
+  },
+  workspaceRow: {
+    flexDirection: 'row',
+  },
   stage: {
     flex: 1,
     alignItems: 'center',
@@ -313,6 +367,13 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.lg,
     borderTopWidth: 1,
   },
+  rightRail: {
+    borderLeftWidth: 1,
+    paddingLeft: spacing.md,
+    paddingTop: spacing.lg,
+    justifyContent: 'center',
+    gap: spacing.md,
+  },
   controlBtn: {
     alignItems: 'center',
     justifyContent: 'center',
@@ -322,10 +383,20 @@ const styles = StyleSheet.create({
     minHeight: touchTarget,
     minWidth: touchTarget,
   },
+  railBtn: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+  },
   doneBtn: {
     borderRadius: radii.sm,
     paddingHorizontal: spacing.lg,
     flexDirection: 'row',
+  },
+  railPrimaryBtn: {
+    width: '100%',
   },
   controlLabel: { ...typography.caption, fontWeight: '600' },
 });

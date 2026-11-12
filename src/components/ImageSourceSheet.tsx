@@ -1,8 +1,9 @@
-import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from './AppButton';
 import { IMAGE_SOURCE_COPY, type ImageSource } from '../media/image-source';
+import { resolveFlowModalLayout } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 
 type Props = {
@@ -14,9 +15,12 @@ type Props = {
 
 export function ImageSourceSheet({ theme, errorMessage, onClose, onPick }: Props) {
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const { centeredModal, wideModalMaxWidth, imageSourceTwoColumn } = resolveFlowModalLayout(width, height);
   const sources: ImageSource[] = ['camera', 'library'];
+
   return (
-    <View style={styles.layer}>
+    <View style={[styles.layer, centeredModal && styles.layerCentered]}>
       <Pressable
         style={styles.scrim}
         onPress={onClose}
@@ -26,11 +30,19 @@ export function ImageSourceSheet({ theme, errorMessage, onClose, onPick }: Props
       <View
         style={[
           styles.sheet,
-          {
-            backgroundColor: theme.surface,
-            borderColor: theme.border,
-            paddingBottom: insets.bottom,
-          },
+          centeredModal
+            ? [
+                styles.sheetModal,
+                {
+                  maxWidth: wideModalMaxWidth,
+                  borderColor: theme.border,
+                },
+              ]
+            : {
+                borderColor: theme.border,
+                paddingBottom: insets.bottom,
+              },
+          { backgroundColor: theme.surface },
         ]}
       >
         <View style={[styles.header, { borderBottomColor: theme.border }]}>
@@ -55,16 +67,27 @@ export function ImageSourceSheet({ theme, errorMessage, onClose, onPick }: Props
               )}
             </View>
           )}
-          {sources.map((source) => {
-            const copy = IMAGE_SOURCE_COPY[source];
-            return (
-              <View key={source} style={styles.card}>
-                <Text style={[styles.cardTitle, { color: theme.foreground }]}>{copy.title}</Text>
-                <Text style={[styles.cardHint, { color: theme.foreground }]}>{copy.hint}</Text>
-                <AppButton label={copy.action} accessibilityHint={copy.hint} onPress={() => onPick(source)} />
-              </View>
-            );
-          })}
+          <View style={imageSourceTwoColumn ? styles.cardsRow : styles.cardsStack}>
+            {sources.map((source) => {
+              const copy = IMAGE_SOURCE_COPY[source];
+              return (
+                <View
+                  key={source}
+                  style={[
+                    styles.card,
+                    imageSourceTwoColumn && [
+                      styles.cardColumn,
+                      { borderColor: theme.border, backgroundColor: theme.background },
+                    ],
+                  ]}
+                >
+                  <Text style={[styles.cardTitle, { color: theme.foreground }]}>{copy.title}</Text>
+                  <Text style={[styles.cardHint, { color: theme.foreground }]}>{copy.hint}</Text>
+                  <AppButton label={copy.action} accessibilityHint={copy.hint} onPress={() => onPick(source)} />
+                </View>
+              );
+            })}
+          </View>
         </ScrollView>
       </View>
     </View>
@@ -76,6 +99,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
   },
+  layerCentered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
   scrim: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(19, 78, 74, 0.24)' },
   sheet: {
     width: '100%',
@@ -84,7 +112,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    maxHeight: '80%',
+    maxHeight: '85%',
+  },
+  sheetModal: {
+    borderRadius: radii.lg,
+    borderWidth: 1,
   },
   header: {
     flexDirection: 'row',
@@ -95,7 +127,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   title: { ...typography.title },
-  close: { padding: spacing.sm, minHeight: touchTarget, justifyContent: 'center' },
+  close: { padding: spacing.sm, minHeight: touchTarget, minWidth: touchTarget, alignItems: 'flex-end', justifyContent: 'center' },
   content: { padding: spacing.lg, gap: spacing.lg },
   errorBanner: {
     padding: spacing.md,
@@ -110,6 +142,8 @@ const styles = StyleSheet.create({
     color: '#991B1B',
   },
   settingsBtn: {
+    minHeight: touchTarget,
+    justifyContent: 'center',
     paddingVertical: spacing.xs,
     paddingHorizontal: spacing.sm,
     alignSelf: 'flex-start',
@@ -121,7 +155,16 @@ const styles = StyleSheet.create({
     color: '#B91C1C',
     fontWeight: '600',
   },
+  cardsStack: { gap: spacing.lg },
+  cardsRow: { flexDirection: 'row', gap: spacing.md },
   card: { gap: spacing.sm },
+  cardColumn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+    justifyContent: 'space-between',
+  },
   cardTitle: { ...typography.bodyStrong },
   cardHint: { ...typography.body },
 });

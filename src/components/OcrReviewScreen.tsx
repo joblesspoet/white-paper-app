@@ -8,6 +8,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +20,7 @@ import {
   ocrRegionLabel,
   type OcrReviewState,
 } from '../ocr/ocr-service';
+import { resolveFlowModalLayout } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 
 type Props = {
@@ -37,8 +39,8 @@ type Props = {
 
 /**
  * OCR review: preview the placed image, correct the recognized text, then
- * either add the text with the image or place the image alone. The image action
- * stays available in loading, empty, and error states by design.
+ * either add the text with the image or place the image alone. Adapts to a
+ * two-column layout on tablets and landscape viewports.
  */
 export function OcrReviewScreen({
   theme,
@@ -53,16 +55,155 @@ export function OcrReviewScreen({
   onClose,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  const { ocrLayout, profile } = resolveFlowModalLayout(winWidth, winHeight);
+  const twoColumn = ocrLayout === 'two-column';
+
   const canAddText = canAddRecognizedText(state);
   const ratio = height > 0 ? width / height : 1;
   const previewRatio = Math.min(Math.max(ratio, 0.55), 2.4);
 
+  const previewSection = (
+    <View style={[styles.previewColumn, twoColumn && styles.previewColumnTwoPane]}>
+      <View
+        style={[
+          styles.preview,
+          { borderColor: theme.border, backgroundColor: theme.muted },
+        ]}
+      >
+        <Image
+          source={{ uri }}
+          style={[
+            styles.previewImage,
+            { aspectRatio: previewRatio, maxHeight: twoColumn ? 360 : 260 },
+          ]}
+          resizeMode="contain"
+          accessibilityLabel="Imported image being reviewed"
+        />
+      </View>
+
+      <Text style={[styles.assurance, { color: theme.foreground }]}>
+        Text is read on this device. Nothing is uploaded.
+      </Text>
+    </View>
+  );
+
+  const textAndActionsSection = (
+    <View style={[styles.textColumn, twoColumn && styles.textColumnTwoPane]}>
+      {state.status === 'loading' && (
+        <View style={styles.statusRow} accessibilityRole="progressbar" accessibilityLabel="Reading text on this device">
+          <ActivityIndicator color={theme.primary} />
+          <Text style={[styles.statusText, { color: theme.foreground }]}>
+            Reading text on this device…
+          </Text>
+        </View>
+      )}
+
+      {state.status === 'empty' && (
+        <View style={[styles.notice, { borderColor: theme.border, backgroundColor: theme.surface }]}>
+          <Text style={[styles.noticeTitle, { color: theme.foreground }]}>No text found</Text>
+          <Text style={[styles.noticeText, { color: theme.foreground }]}>
+            This image may be blank or contain only handwriting or artwork. You can still add
+            the image, or try recognition again.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Try text recognition again"
+            onPress={onRetry}
+            style={styles.retry}
+          >
+            <Text style={[styles.retryLabel, { color: theme.primary }]}>Try again</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {state.status === 'error' && (
+        <View style={styles.errorBanner} accessibilityRole="alert">
+          <Text style={styles.errorTitle}>Text recognition did not finish</Text>
+          <Text style={styles.errorText}>{state.errorMessage}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Try text recognition again"
+            onPress={onRetry}
+            style={styles.retry}
+          >
+            <Text style={styles.retryLabel}>Try again</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {state.status === 'success' && (
+        <>
+          <Text style={[styles.summary, { color: theme.foreground }]}>
+            {ocrRegionLabel(state.regionCount)} · {ocrEngineLabel(state.engine)}
+          </Text>
+          <TextInput
+            style={[
+              styles.textField,
+              {
+                color: theme.foreground,
+                borderColor: theme.border,
+                backgroundColor: theme.surface,
+                minHeight: twoColumn ? 220 : 180,
+              },
+            ]}
+            value={state.text}
+            onChangeText={onChangeText}
+            multiline
+            textAlignVertical="top"
+            accessibilityLabel="Extracted text"
+            accessibilityHint="Correct the recognized text before adding it to the board."
+            placeholder="Correct the text before adding it"
+            placeholderTextColor={theme.foreground}
+            autoCapitalize="sentences"
+            autoCorrect={false}
+            spellCheck
+          />
+          {!canAddText && (
+            <Text style={[styles.hint, { color: theme.foreground }]}>
+              Add some text to place a text block, or add the image only.
+            </Text>
+          )}
+        </>
+      )}
+
+      <View style={styles.actions}>
+        <AppButton
+          label="Add text to board"
+          onPress={onAddText}
+          disabled={!canAddText}
+          accessibilityHint="Place the reviewed text as a text block below the image."
+        />
+        <AppButton
+          label="Add image only"
+          variant="secondary"
+          onPress={onAddImageOnly}
+          accessibilityHint="Place the image and keep the recognized text attached to it without adding a text block."
+        />
+      </View>
+    </View>
+  );
+
   return (
     <KeyboardAvoidingView
-      style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}
+      style={[
+        styles.root,
+        {
+          backgroundColor: theme.background,
+          paddingTop: insets.top,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
+      ]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={[styles.header, { borderBottomColor: theme.border }]}>
+      <View
+        style={[
+          styles.header,
+          profile.isCompactHeight && styles.headerCompact,
+          { borderBottomColor: theme.border },
+        ]}
+      >
         <Text style={[styles.title, { color: theme.foreground }]}>Review text</Text>
         <Pressable
           accessibilityRole="button"
@@ -75,114 +216,16 @@ export function OcrReviewScreen({
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.lg }]}
+        contentContainerStyle={[
+          styles.content,
+          twoColumn && styles.contentTwoColumn,
+          { paddingBottom: insets.bottom + spacing.lg },
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View
-          style={[
-            styles.preview,
-            { borderColor: theme.border, backgroundColor: theme.muted },
-          ]}
-        >
-          <Image
-            source={{ uri }}
-            style={[styles.previewImage, { aspectRatio: previewRatio }]}
-            resizeMode="contain"
-            accessibilityLabel="Imported image being reviewed"
-          />
-        </View>
-
-        <Text style={[styles.assurance, { color: theme.foreground }]}>
-          Text is read on this device. Nothing is uploaded.
-        </Text>
-
-        {state.status === 'loading' && (
-          <View style={styles.statusRow} accessibilityRole="progressbar" accessibilityLabel="Reading text on this device">
-            <ActivityIndicator color={theme.primary} />
-            <Text style={[styles.statusText, { color: theme.foreground }]}>
-              Reading text on this device…
-            </Text>
-          </View>
-        )}
-
-        {state.status === 'empty' && (
-          <View style={[styles.notice, { borderColor: theme.border, backgroundColor: theme.surface }]}>
-            <Text style={[styles.noticeTitle, { color: theme.foreground }]}>No text found</Text>
-            <Text style={[styles.noticeText, { color: theme.foreground }]}>
-              This image may be blank or contain only handwriting or artwork. You can still add
-              the image, or try recognition again.
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Try text recognition again"
-              onPress={onRetry}
-              style={styles.retry}
-            >
-              <Text style={[styles.retryLabel, { color: theme.primary }]}>Try again</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {state.status === 'error' && (
-          <View style={styles.errorBanner} accessibilityRole="alert">
-            <Text style={styles.errorTitle}>Text recognition did not finish</Text>
-            <Text style={styles.errorText}>{state.errorMessage}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Try text recognition again"
-              onPress={onRetry}
-              style={styles.retry}
-            >
-              <Text style={styles.retryLabel}>Try again</Text>
-            </Pressable>
-          </View>
-        )}
-
-        {state.status === 'success' && (
-          <>
-            <Text style={[styles.summary, { color: theme.foreground }]}>
-              {ocrRegionLabel(state.regionCount)} · {ocrEngineLabel(state.engine)}
-            </Text>
-            <TextInput
-              style={[
-                styles.textField,
-                { color: theme.foreground, borderColor: theme.border, backgroundColor: theme.surface },
-              ]}
-              value={state.text}
-              onChangeText={onChangeText}
-              multiline
-              textAlignVertical="top"
-              accessibilityLabel="Extracted text"
-              accessibilityHint="Correct the recognized text before adding it to the board."
-              placeholder="Correct the text before adding it"
-              placeholderTextColor={theme.foreground}
-              autoCapitalize="sentences"
-              autoCorrect={false}
-              spellCheck
-            />
-            {!canAddText && (
-              <Text style={[styles.hint, { color: theme.foreground }]}>
-                Add some text to place a text block, or add the image only.
-              </Text>
-            )}
-          </>
-        )}
-
-        <View style={styles.actions}>
-          <AppButton
-            label="Add text to board"
-            onPress={onAddText}
-            disabled={!canAddText}
-            accessibilityHint="Place the reviewed text as a text block below the image."
-          />
-          <AppButton
-            label="Add image only"
-            variant="secondary"
-            onPress={onAddImageOnly}
-            accessibilityHint="Place the image and keep the recognized text attached to it without adding a text block."
-          />
-        </View>
+        {previewSection}
+        {textAndActionsSection}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -198,18 +241,33 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
   },
+  headerCompact: {
+    paddingVertical: spacing.xs + 2,
+  },
   title: { ...typography.title },
   close: {
     padding: spacing.sm,
     minHeight: touchTarget,
+    minWidth: touchTarget,
+    alignItems: 'flex-end',
     justifyContent: 'center',
   },
   closeLabel: { ...typography.bodyStrong },
-  content: { padding: spacing.lg, gap: spacing.md },
+  content: { padding: spacing.lg, gap: spacing.md, maxWidth: 1080, width: '100%', alignSelf: 'center' },
+  contentTwoColumn: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xl,
+  },
+  previewColumn: { gap: spacing.sm },
+  previewColumnTwoPane: { flex: 1 },
+  textColumn: { gap: spacing.md },
+  textColumnTwoPane: { flex: 1 },
   preview: {
     borderWidth: 1,
     borderRadius: radii.md,
     padding: spacing.sm,
+    alignItems: 'center',
   },
   previewImage: { width: '100%' },
   assurance: { ...typography.caption },

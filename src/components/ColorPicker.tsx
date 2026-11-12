@@ -145,6 +145,7 @@ export function ColorPicker({
         accessibilityRole="adjustable"
         accessibilityLabel="Colour hue"
         accessibilityValue={{ text: hex }}
+        hitSlop={{ top: 8, bottom: 8 }}
         onLayout={(event) => setHueWidth(event.nativeEvent.layout.width)}
         onStartShouldSetResponder={() => true}
         onMoveShouldSetResponder={() => true}
@@ -187,7 +188,7 @@ const styles = StyleSheet.create({
   title: { ...typography.caption },
   preview: { width: 20, height: 20, borderRadius: 10, borderWidth: 1 },
   hex: { ...typography.caption, opacity: 0.75 },
-  close: { minHeight: touchTarget, justifyContent: 'center', paddingLeft: spacing.sm },
+  close: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xs },
   closeText: { ...typography.caption },
   field: { height: FIELD_HEIGHT, borderRadius: radii.sm, borderWidth: 1, overflow: 'hidden' },
   thumb: { position: 'absolute', width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: THUMB_SIZE / 2, borderWidth: 2, borderColor: '#FFFFFF' },

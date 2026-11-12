@@ -97,7 +97,15 @@ export function QuickCreationSheet({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={styles.layer}>
+      <View
+        style={[
+          styles.layer,
+          {
+            paddingLeft: insets.left,
+            paddingRight: insets.right,
+          },
+        ]}
+      >
         <Pressable
           style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(19, 78, 74, 0.24)' }]}
           onPress={onClose}
@@ -525,6 +533,9 @@ function Swatch({
 const styles = StyleSheet.create({
   layer: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
     borderTopLeftRadius: radii.lg,
     borderTopRightRadius: radii.lg,
     borderTopWidth: 1,

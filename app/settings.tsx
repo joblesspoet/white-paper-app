@@ -33,14 +33,17 @@ import type {
   DefaultExportFormat,
 } from '../src/persistence/schema';
 import { usePreferences } from '../src/settings/preferences-context';
+import { PHONE_GUTTER, resolveViewportProfile, TABLET_GUTTER } from '../src/responsive/layout';
 import { colors, radii, spacing, touchTarget, typography } from '../src/theme';
 import { triggerHapticFeedback } from '../src/utils/haptics';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const isTablet = width >= 768;
+  const { width, height } = useWindowDimensions();
+  const profile = resolveViewportProfile(width, height);
+  const isTablet = profile.isTablet;
+  const baseGutter = isTablet ? TABLET_GUTTER : PHONE_GUTTER;
 
   const {
     preferences,
@@ -119,7 +122,8 @@ export default function SettingsScreen() {
       contentContainerStyle={[
         styles.content,
         {
-          paddingHorizontal: isTablet ? spacing.xl : spacing.md,
+          paddingLeft: baseGutter + insets.left,
+          paddingRight: baseGutter + insets.right,
           paddingBottom: spacing.xxl + insets.bottom,
         },
       ]}

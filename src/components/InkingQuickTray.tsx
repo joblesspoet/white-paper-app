@@ -52,7 +52,7 @@ export function InkingQuickTray({
         accessibilityLabel="Pen tool"
         accessibilityState={{ selected: activeTool === 'pen' }}
         onPress={() => onToolChange('pen')}
-        hitSlop={{ top: 4, bottom: 4 }}
+        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
         style={[
           styles.toolButton,
           activeTool === 'pen' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary },
@@ -66,7 +66,7 @@ export function InkingQuickTray({
         accessibilityLabel="Highlighter tool"
         accessibilityState={{ selected: activeTool === 'highlighter' }}
         onPress={() => onToolChange('highlighter')}
-        hitSlop={{ top: 4, bottom: 4 }}
+        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
         style={[
           styles.toolButton,
           activeTool === 'highlighter' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary },
@@ -80,7 +80,7 @@ export function InkingQuickTray({
         accessibilityLabel="Eraser tool"
         accessibilityState={{ selected: activeTool === 'eraser' }}
         onPress={() => onToolChange('eraser')}
-        hitSlop={{ top: 4, bottom: 4 }}
+        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
         style={[
           styles.toolButton,
           activeTool === 'eraser' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary },
@@ -106,7 +106,7 @@ export function InkingQuickTray({
               accessibilityLabel={`Eraser size ${radius}`}
               accessibilityState={{ selected }}
               onPress={() => onEraserRadiusChange(radius)}
-              hitSlop={{ top: 6, bottom: 6 }}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               style={[
                 styles.sizeButton,
                 selected && { borderColor: theme.primary, backgroundColor: theme.primary + '18' },
@@ -132,7 +132,7 @@ export function InkingQuickTray({
               accessibilityLabel={`Stroke width ${width}`}
               accessibilityState={{ selected }}
               onPress={() => onWidthChange(width)}
-              hitSlop={{ top: 6, bottom: 6 }}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               style={[
                 styles.sizeButton,
                 selected && { borderColor: theme.primary, backgroundColor: theme.primary + '18' },
@@ -202,7 +202,7 @@ export function InkingQuickTray({
                         accessibilityLabel={`Color ${entry.name}`}
                         accessibilityState={{ selected }}
                         onPress={() => onColorChange(swatchColor)}
-                        hitSlop={{ top: 10, bottom: 10 }}
+                        hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
                         style={[
                           styles.colorSwatch,
                           { backgroundColor: swatchColor },
@@ -216,7 +216,7 @@ export function InkingQuickTray({
                     accessibilityRole="button"
                     accessibilityLabel={customColor ? `Custom color ${color}` : 'Choose custom color'}
                     onPress={() => setCustomColorOpen(true)}
-                    hitSlop={{ top: 10, bottom: 10 }}
+                    hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
                     style={[
                       styles.colorSwatch,
                       styles.customColorSwatch,
