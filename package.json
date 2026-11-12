@@ -37,7 +37,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:viewport && npm run test:ink && npm run test:history && npm run test:objects && npm run test:selection && npm run test:persistence && npm run test:image && npm run test:ocr && npm run test:export && npm run test:settings && npm run test:responsive",
+    "test": "npm run test:viewport && npm run test:ink && npm run test:history && npm run test:objects && npm run test:selection && npm run test:persistence && npm run test:image && npm run test:ocr && npm run test:export && npm run test:settings && npm run test:responsive && npm run test:teaching-utilities",
     "test:viewport": "node --no-warnings --experimental-strip-types scripts/verify-viewport.mts",
     "test:ink": "node --no-warnings --experimental-strip-types scripts/verify-ink.mts",
     "test:history": "node --no-warnings --experimental-strip-types scripts/verify-history.mts",
@@ -48,7 +48,8 @@
     "test:ocr": "node --no-warnings --experimental-strip-types scripts/verify-ocr.mts",
     "test:export": "node --no-warnings --experimental-strip-types scripts/verify-export.mts",
     "test:settings": "node --no-warnings --experimental-strip-types scripts/verify-settings.mts",
-    "test:responsive": "node --no-warnings --experimental-strip-types scripts/verify-responsive.mts"
+    "test:responsive": "node --no-warnings --experimental-strip-types scripts/verify-responsive.mts",
+    "test:teaching-utilities": "node --no-warnings --experimental-strip-types scripts/verify-teaching-utilities.mts"
   },
   "private": true
 }

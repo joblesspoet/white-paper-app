@@ -81,6 +81,22 @@ import {
 } from '../canvas/viewport';
 import { colors, darkColors, radii, spacing, touchTarget, typography } from '../theme';
 import { resolveMediaUri } from '../media/asset-store';
+import { buildBackgroundLayers } from '../canvas/background';
+import {
+  LASER_CORE_OPACITY,
+  LASER_CORE_WIDTH,
+  LASER_HALO_OPACITY,
+  LASER_HALO_WIDTH,
+  appendLaserPoint,
+  createLaserStroke,
+  laserStrokeOpacity,
+  pruneExpiredLaserStrokes,
+  releaseLaserStroke,
+  resolveLaserPalette,
+  type EphemeralLaserStroke,
+  type LaserColorKey,
+} from '../canvas/laser';
+import type { BoardStyle } from '../persistence/schema';
 
 export { canvasToScreen, screenToCanvas } from '../canvas/viewport';
 export type { InkStroke } from '../canvas/ink';
@@ -90,6 +106,7 @@ export type InkTool =
   | 'pen'
   | 'highlighter'
   | 'eraser'
+  | 'laser'
   | 'text'
   | 'sticky'
   | 'shape'
@@ -114,12 +131,14 @@ type TransformGesture = {
 
 type CanvasViewportProps = {
   dark?: boolean;
+  boardStyle?: BoardStyle;
   initialViewport?: Viewport;
   activeTool?: InkTool;
   color?: string;
   width?: number;
   opacity?: number;
   eraserRadius?: number;
+  laserColorKey?: LaserColorKey;
   /** Shape tool defaults, applied to the next shape that is drawn. */
   shapeKind?: ShapeKind;
   shapeColorKey?: string;
@@ -149,12 +168,14 @@ type CanvasViewportProps = {
 
 export function CanvasViewport({
   dark = false,
+  boardStyle = 'blank',
   initialViewport,
   activeTool = 'select',
   color = colors.foreground,
   width = 4,
   opacity = 1,
   eraserRadius = DEFAULT_ERASER_RADIUS,
+  laserColorKey = 'red',
   shapeKind = 'rectangle',
   shapeColorKey = 'ink',
   shapeFillKey = null,
@@ -176,6 +197,7 @@ export function CanvasViewport({
   onCanvasTouch,
 }: CanvasViewportProps) {
   const theme = dark ? darkColors : colors;
+  const [viewportSize, setViewportSize] = useState({ width: 800, height: 1000 });
   const startViewport = initialViewport ?? IDENTITY_VIEWPORT;
   const offsetX = useSharedValue(startViewport.x);
   const offsetY = useSharedValue(startViewport.y);
@@ -283,6 +305,56 @@ export function CanvasViewport({
     setActiveStroke(null);
     if (stroke) onCommand({ type: 'ink.add', stroke });
   }, [onCommand]);
+
+  const [laserStrokes, setLaserStrokes] = useState<readonly EphemeralLaserStroke[]>([]);
+  const [activeLaserStroke, setActiveLaserStroke] = useState<EphemeralLaserStroke | null>(null);
+  const activeLaserRef = useRef<EphemeralLaserStroke | null>(null);
+  const [laserNowMs, setLaserNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (laserStrokes.length === 0) return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setLaserNowMs(now);
+      setLaserStrokes((prev) => {
+        const next = pruneExpiredLaserStrokes(prev, now);
+        return next.length === prev.length ? prev : next;
+      });
+    }, 33);
+    return () => clearInterval(interval);
+  }, [laserStrokes.length]);
+
+  const beginLaser = useCallback((point: Point) => {
+    const now = Date.now();
+    const stroke = createLaserStroke(
+      `laser-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      laserColorKey,
+      point,
+      now,
+    );
+    activeLaserRef.current = stroke;
+    setActiveLaserStroke(stroke);
+    setLaserNowMs(now);
+  }, [laserColorKey]);
+
+  const addLaserPoint = useCallback((point: Point, minDistance: number) => {
+    const current = activeLaserRef.current;
+    if (!current) return;
+    const next = appendLaserPoint(current, point, Date.now(), minDistance);
+    activeLaserRef.current = next;
+    setActiveLaserStroke(next);
+  }, []);
+
+  const finishLaser = useCallback(() => {
+    const stroke = activeLaserRef.current;
+    activeLaserRef.current = null;
+    setActiveLaserStroke(null);
+    if (stroke) {
+      const now = Date.now();
+      setLaserNowMs(now);
+      setLaserStrokes((prev) => [...pruneExpiredLaserStrokes(prev, now), releaseLaserStroke(stroke, now)]);
+    }
+  }, []);
   const eraseAt = useCallback((point: Point, currentScale: number) => {
     onCommand(
       { type: 'ink.erase', point, radius: eraserRadiusForScale(eraserRadius, currentScale) },
@@ -674,17 +746,41 @@ export function CanvasViewport({
     })
     .onFinalize(() => { runOnJS(commitViewport)(offsetX.value, offsetY.value, scale.value); });
 
+  const laserGesture = Gesture.Pan()
+    .enabled(activeTool === 'laser')
+    .maxPointers(1)
+    .minDistance(0)
+    .onStart((event) => {
+      const point = screenToCanvas(
+        { x: event.x, y: event.y },
+        { x: offsetX.value, y: offsetY.value, scale: scale.value },
+      );
+      runOnJS(beginLaser)(point);
+    })
+    .onUpdate((event) => {
+      const point = screenToCanvas(
+        { x: event.x, y: event.y },
+        { x: offsetX.value, y: offsetY.value, scale: scale.value },
+      );
+      runOnJS(addLaserPoint)(point, MIN_POINT_DISTANCE_SCREEN / scale.value);
+    })
+    .onFinalize(() => {
+      runOnJS(finishLaser)();
+    });
+
   const primaryGesture = editing
     ? dismissTap
     : activeTool === 'eraser'
       ? eraseGesture
-      : activeTool === 'pen' || activeTool === 'highlighter'
-        ? drawGesture
-        : activeTool === 'text' || activeTool === 'sticky'
-          ? objectTap
-          : activeTool === 'shape' || activeTool === 'connector'
-            ? shapeGesture
-            : selectGesture;
+      : activeTool === 'laser'
+        ? laserGesture
+        : activeTool === 'pen' || activeTool === 'highlighter'
+          ? drawGesture
+          : activeTool === 'text' || activeTool === 'sticky'
+            ? objectTap
+            : activeTool === 'shape' || activeTool === 'connector'
+              ? shapeGesture
+              : selectGesture;
   const gesture = Gesture.Simultaneous(primaryGesture, marqueeGesture, pinchGesture);
 
   const transform = useDerivedValue(() => [
@@ -701,14 +797,46 @@ export function CanvasViewport({
     () => (activeStroke ? [...document.strokes, activeStroke] : document.strokes),
     [document.strokes, activeStroke],
   );
+  const renderedLaserStrokes = useMemo(
+    () => (activeLaserStroke ? [...laserStrokes, activeLaserStroke] : laserStrokes),
+    [laserStrokes, activeLaserStroke],
+  );
+  const backgroundLayers = useMemo(() => {
+    if (boardStyle === 'blank') return [];
+    const safeScale = Math.max(viewport.scale, MIN_ZOOM);
+    const pad = 160 / safeScale;
+    const topLeft = screenToCanvas({ x: 0, y: 0 }, viewport);
+    return buildBackgroundLayers(boardStyle, {
+      x: topLeft.x - pad,
+      y: topLeft.y - pad,
+      width: viewportSize.width / safeScale + pad * 2,
+      height: viewportSize.height / safeScale + pad * 2,
+    });
+  }, [boardStyle, viewport, viewportSize]);
   const zoomLabel = `${Math.round(viewport.scale * 100)}%`;
 
   return (
-    <View style={styles.root} accessibilityLabel="Interactive canvas viewport">
+    <View
+      style={styles.root}
+      accessibilityLabel="Interactive canvas viewport"
+      onLayout={(event) => {
+        const { width: w, height: h } = event.nativeEvent.layout;
+        if (w > 0 && h > 0) setViewportSize({ width: w, height: h });
+      }}
+    >
       <GestureDetector gesture={gesture}>
         <Canvas style={StyleSheet.absoluteFill} accessibilityLabel="Drawing canvas">
           <Group transform={transform}>
             <Rect x={-4000} y={-4000} width={8000} height={8000} color={theme.background} />
+            {backgroundLayers.map((layer, index) => (
+              <BackgroundPatternView
+                key={`${boardStyle}-${index}`}
+                svgPath={layer.svgPath}
+                strokeWidth={layer.strokeWidth / Math.max(viewport.scale, 0.5)}
+                opacity={layer.opacity}
+                color={layer.isMargin ? theme.accent : theme.foreground}
+              />
+            ))}
             {renderedStrokes.map((stroke) => (
               <InkStrokeView key={stroke.id} stroke={stroke} dark={dark} />
             ))}
@@ -730,6 +858,18 @@ export function CanvasViewport({
             {document.objects.filter(isGeometricObject).map((object) => (
               <GeometricObjectView key={object.id} object={object} dark={dark} />
             ))}
+            {renderedLaserStrokes.map((stroke) => {
+              const alpha = laserStrokeOpacity(stroke, laserNowMs);
+              if (alpha <= 0) return null;
+              return (
+                <LaserStrokeView
+                  key={stroke.id}
+                  stroke={stroke}
+                  alpha={alpha}
+                  scale={viewport.scale}
+                />
+              );
+            })}
           </Group>
         </Canvas>
       </GestureDetector>
@@ -817,6 +957,69 @@ function InkStrokeView({ stroke, dark }: { stroke: InkStroke; dark: boolean }) {
       strokeJoin="round"
       blendMode={stroke.tool === 'highlighter' ? (dark ? 'screen' : 'multiply') : 'srcOver'}
     />
+  );
+}
+
+function BackgroundPatternView({
+  svgPath,
+  strokeWidth,
+  opacity,
+  color,
+}: {
+  svgPath: string;
+  strokeWidth: number;
+  opacity: number;
+  color: string;
+}) {
+  const path = useMemo(() => Skia.Path.MakeFromSVGString(svgPath) ?? Skia.Path.Make(), [svgPath]);
+  return (
+    <Path
+      path={path}
+      color={color}
+      opacity={opacity}
+      style="stroke"
+      strokeWidth={strokeWidth}
+      strokeCap="round"
+    />
+  );
+}
+
+function LaserStrokeView({
+  stroke,
+  alpha,
+  scale,
+}: {
+  stroke: EphemeralLaserStroke;
+  alpha: number;
+  scale: number;
+}) {
+  const path = useMemo(() => {
+    const pts = stroke.points.map((p) => ({ x: p.x, y: p.y }));
+    return Skia.Path.MakeFromSVGString(inkPathData(pts)) ?? Skia.Path.Make();
+  }, [stroke.points]);
+  const palette = resolveLaserPalette(stroke.colorKey);
+  const invScale = 1 / Math.max(scale, MIN_ZOOM);
+  return (
+    <>
+      <Path
+        path={path}
+        color={palette.halo}
+        opacity={LASER_HALO_OPACITY * alpha}
+        style="stroke"
+        strokeWidth={LASER_HALO_WIDTH * invScale}
+        strokeCap="round"
+        strokeJoin="round"
+      />
+      <Path
+        path={path}
+        color={palette.core}
+        opacity={LASER_CORE_OPACITY * alpha}
+        style="stroke"
+        strokeWidth={LASER_CORE_WIDTH * invScale}
+        strokeCap="round"
+        strokeJoin="round"
+      />
+    </>
   );
 }
 

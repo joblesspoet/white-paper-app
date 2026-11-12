@@ -23,6 +23,7 @@ import {
 } from '../src/components/SettingsPickers';
 import { ChevronRightIcon, InfoIcon, TrashIcon } from '../src/components/icons';
 import { CANVAS_COLORS } from '../src/canvas/document';
+import { BOARD_STYLE_OPTIONS } from '../src/persistence/schema';
 import { INK_WIDTHS } from '../src/canvas/ink';
 import { getLocalDatabase } from '../src/persistence/expo-store';
 import { getLocalDataStats, type LocalDataStats } from '../src/persistence/repository';
@@ -114,7 +115,8 @@ export default function SettingsScreen() {
     backup: 'FlowCanvas Backup',
   };
 
-  const canvasLabel = `${preferences.canvasBackground === 'dark' ? 'Dark' : 'Light'} · ${preferences.canvasStyle === 'dots' ? 'Dot Grid' : 'Blank'}`;
+  const styleLabel = BOARD_STYLE_OPTIONS.find((opt) => opt.key === preferences.canvasStyle)?.label ?? 'Blank';
+  const canvasLabel = `${preferences.canvasBackground === 'dark' ? 'Dark' : 'Light'} · ${styleLabel}`;
 
   return (
     <ScrollView

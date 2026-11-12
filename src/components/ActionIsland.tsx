@@ -5,7 +5,7 @@ import { stickyColorValue } from '../canvas/document';
 import { spacing, typography, type ThemeColors } from '../theme';
 import type { InkTool } from './CanvasViewport';
 import type { InkingTool } from './InkingQuickTray';
-import { EraserIcon, HighlighterIcon, PenIcon, PlusIcon, SelectIcon, StickyIcon } from './icons';
+import { EraserIcon, HighlighterIcon, LaserIcon, PenIcon, PlusIcon, SelectIcon, StickyIcon } from './icons';
 
 /**
  * Height of the bottom capsule pill. Sheets that belong to the island (ink
@@ -19,6 +19,7 @@ const INK_ICON = {
   pen: PenIcon,
   highlighter: HighlighterIcon,
   eraser: EraserIcon,
+  laser: LaserIcon,
 } as const;
 
 /** Tools that are only reachable through the insert sheet. */

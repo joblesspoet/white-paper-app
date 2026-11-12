@@ -16,6 +16,7 @@ import { getLocalDatabase } from './persistence/expo-store';
 import {
   insertBoard,
   listBoards,
+  updateBoardSettings,
   updateBoardTitle,
   type BoardRecord,
 } from './persistence/repository';
@@ -34,6 +35,7 @@ type BoardContextValue = {
   storageError: string | null;
   createBoard: (settings?: BoardSettings) => Board;
   updateTitle: (id: string, title: string) => void;
+  updateSettings: (id: string, settings: BoardSettings) => void;
   /** Refresh the home card after an editor autosave without a database read. */
   touchBoard: (id: string, objectCount: number) => void;
   getBoard: (id: string) => Board | undefined;
@@ -168,6 +170,15 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     runWrite((database) => updateBoardTitle(database, id, next));
   }, [runWrite]);
 
+  const updateSettings = useCallback((id: string, settings: BoardSettings) => {
+    setBoards((current) =>
+      current.map((board) =>
+        board.id === id ? { ...board, settings: { ...settings }, updatedAt: 'Just now' } : board,
+      ),
+    );
+    runWrite((database) => updateBoardSettings(database, id, settings));
+  }, [runWrite]);
+
   const touchBoard = useCallback((id: string, objectCount: number) => {
     setBoards((current) =>
       current.map((board) =>
@@ -190,6 +201,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
       storageError,
       createBoard,
       updateTitle,
+      updateSettings,
       touchBoard,
       getBoard,
       refreshBoards,
@@ -202,6 +214,7 @@ export function BoardProvider({ children }: { children: ReactNode }) {
       storageError,
       createBoard,
       updateTitle,
+      updateSettings,
       touchBoard,
       getBoard,
       refreshBoards,

@@ -14,8 +14,29 @@
 import { clampScale, type Viewport } from '../canvas/viewport.ts';
 
 export type BoardBackground = 'light' | 'dark';
-export type BoardStyle = 'blank' | 'dots';
+export type BoardStyle = 'blank' | 'dots' | 'grid' | 'ruled' | 'isometric';
 export type BoardOrientation = 'landscape' | 'portrait';
+
+export const BOARD_STYLE_OPTIONS: ReadonlyArray<{
+  key: BoardStyle;
+  label: string;
+  shortLabel: string;
+  description: string;
+}> = [
+  { key: 'blank', label: 'Blank surface', shortLabel: 'Blank', description: 'Clean unruled surface' },
+  { key: 'dots', label: 'Dot Grid', shortLabel: 'Dot grid', description: '24pt alignment grid points' },
+  { key: 'grid', label: 'Math Grid', shortLabel: 'Grid', description: '24pt minor & 120pt major squares' },
+  { key: 'ruled', label: 'Ruled Paper', shortLabel: 'Ruled', description: '32pt lined notebook paper' },
+  { key: 'isometric', label: 'Isometric', shortLabel: 'Isometric', description: '60° triangular geometry lattice' },
+];
+
+export const VALID_BOARD_STYLES: readonly BoardStyle[] = [
+  'blank',
+  'dots',
+  'grid',
+  'ruled',
+  'isometric',
+];
 
 export type BoardSettings = {
   background: BoardBackground;
@@ -135,7 +156,10 @@ export function parseBoardSettings(raw: string | null | undefined): BoardSetting
     const value: unknown = JSON.parse(raw);
     if (!isRecord(value)) return { ...DEFAULT_BOARD_SETTINGS };
     const background: BoardBackground = value.background === 'dark' ? 'dark' : 'light';
-    const style: BoardStyle = value.style === 'dots' ? 'dots' : 'blank';
+    const style: BoardStyle =
+      typeof value.style === 'string' && VALID_BOARD_STYLES.includes(value.style as BoardStyle)
+        ? (value.style as BoardStyle)
+        : 'blank';
     const orientation: BoardOrientation =
       value.orientation === 'landscape' ? 'landscape' : 'portrait';
     return { background, style, orientation };
@@ -180,7 +204,7 @@ export function serializeBoardSettings(settings: BoardSettings): string {
 
 export type AppTheme = 'system' | 'light' | 'dark';
 export type DefaultCanvasBackground = 'light' | 'dark';
-export type DefaultCanvasStyle = 'blank' | 'dots';
+export type DefaultCanvasStyle = BoardStyle;
 export type DefaultExportFormat = 'png' | 'jpeg' | 'pdf' | 'backup';
 
 export type AppPreferences = {
@@ -205,7 +229,7 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
 
 const VALID_THEMES: readonly AppTheme[] = ['system', 'light', 'dark'];
 const VALID_BACKGROUNDS: readonly DefaultCanvasBackground[] = ['light', 'dark'];
-const VALID_STYLES: readonly DefaultCanvasStyle[] = ['blank', 'dots'];
+const VALID_STYLES: readonly DefaultCanvasStyle[] = VALID_BOARD_STYLES;
 const VALID_EXPORT_FORMATS: readonly DefaultExportFormat[] = ['png', 'jpeg', 'pdf', 'backup'];
 const VALID_PEN_WIDTHS = [2, 4, 8, 12] as const;
 

@@ -10,10 +10,11 @@ import {
 
 import { CANVAS_COLORS, type TextColorToken } from '../canvas/document';
 import { INK_WIDTHS } from '../canvas/ink';
-import type {
-  DefaultCanvasBackground,
-  DefaultCanvasStyle,
-  DefaultExportFormat,
+import {
+  BOARD_STYLE_OPTIONS,
+  type DefaultCanvasBackground,
+  type DefaultCanvasStyle,
+  type DefaultExportFormat,
 } from '../persistence/schema';
 import { colors, radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { CheckIcon } from './icons';
@@ -50,10 +51,11 @@ export function CanvasPickerModal({
     { key: 'dark', label: 'Dark canvas', desc: 'Deep teal contrast background (#0B2B28)' },
   ];
 
-  const styleOptions: { key: DefaultCanvasStyle; label: string; desc: string }[] = [
-    { key: 'blank', label: 'Blank surface', desc: 'Clean unruled surface' },
-    { key: 'dots', label: 'Dot Grid', desc: 'Subtle alignment grid points' },
-  ];
+  const styleOptions = BOARD_STYLE_OPTIONS.map((opt) => ({
+    key: opt.key,
+    label: opt.label,
+    desc: opt.description,
+  }));
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>

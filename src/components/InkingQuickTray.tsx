@@ -3,11 +3,17 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { isCustomColor, PEN_COLORS } from '../canvas/document';
 import type { FreehandTool } from '../canvas/ink';
+import {
+  LASER_COLOR_LIST,
+  isLaserPresetKey,
+  resolveLaserPalette,
+  type LaserColorKey,
+} from '../canvas/laser';
 import { radii, spacing, typography, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
-import { EraserIcon, HighlighterIcon, PenIcon, PlusIcon, StyleIcon } from './icons';
+import { EraserIcon, HighlighterIcon, LaserIcon, PenIcon, PlusIcon, StyleIcon } from './icons';
 
-export type InkingTool = FreehandTool | 'eraser';
+export type InkingTool = FreehandTool | 'eraser' | 'laser';
 
 type InkingQuickTrayProps = {
   theme: ThemeColors;
@@ -16,11 +22,13 @@ type InkingQuickTrayProps = {
   color: string;
   strokeWidth: number;
   eraserRadius: number;
+  laserColorKey?: LaserColorKey;
   bottomOffset: number;
   onToolChange: (tool: InkingTool) => void;
   onColorChange: (color: string) => void;
   onWidthChange: (width: number) => void;
   onEraserRadiusChange: (radius: number) => void;
+  onLaserColorChange?: (colorKey: LaserColorKey) => void;
   onOpenFullOptions: () => void;
 };
 
@@ -34,15 +42,18 @@ export function InkingQuickTray({
   color,
   strokeWidth,
   eraserRadius,
+  laserColorKey = 'red',
   bottomOffset,
   onToolChange,
   onColorChange,
   onWidthChange,
   onEraserRadiusChange,
+  onLaserColorChange,
   onOpenFullOptions,
 }: InkingQuickTrayProps) {
   const [customColorOpen, setCustomColorOpen] = useState(false);
   const isEraser = activeTool === 'eraser';
+  const isLaser = activeTool === 'laser';
   const customColor = isCustomColor(color);
 
   const toolSegment = (
@@ -87,6 +98,20 @@ export function InkingQuickTray({
         ]}
       >
         <EraserIcon size={20} color={activeTool === 'eraser' ? theme.primary : theme.foreground} />
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Laser pointer tool"
+        accessibilityState={{ selected: activeTool === 'laser' }}
+        onPress={() => onToolChange('laser')}
+        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+        style={[
+          styles.toolButton,
+          activeTool === 'laser' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary },
+        ]}
+      >
+        <LaserIcon size={20} color={activeTool === 'laser' ? theme.primary : theme.foreground} />
       </Pressable>
     </View>
   );
@@ -172,10 +197,19 @@ export function InkingQuickTray({
           <View style={styles.colorPickerWrapper}>
             <ColorPicker
               theme={theme}
-              value={customColor ? color : theme.primary}
+              value={
+                isLaser
+                  ? resolveLaserPalette(laserColorKey).halo
+                  : customColor
+                    ? color
+                    : theme.primary
+              }
               background={theme.background}
               checkContrast={false}
-              onChange={onColorChange}
+              onChange={(picked) => {
+                if (isLaser) onLaserColorChange?.(picked);
+                else onColorChange(picked);
+              }}
               onClose={() => setCustomColorOpen(false)}
             />
           </View>
@@ -185,11 +219,94 @@ export function InkingQuickTray({
           <View style={styles.rows}>
             <View style={styles.row}>
               {toolSegment}
-              {sizeSegment}
+              {!isLaser && sizeSegment}
               {isEraser && optionsButton}
             </View>
 
-            {!isEraser && (
+            {isLaser && (
+              <View style={styles.row}>
+                {LASER_COLOR_LIST.map((entry) => {
+                  const selected = laserColorKey === entry.key;
+                  const shortName = entry.key === 'red' ? 'Red' : entry.key === 'teal' ? 'Teal' : 'Amber';
+                  return (
+                    <Pressable
+                      key={entry.key}
+                      accessibilityRole="button"
+                      accessibilityLabel={entry.label}
+                      accessibilityState={{ selected }}
+                      onPress={() => onLaserColorChange?.(entry.key)}
+                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                      style={[
+                        styles.laserChip,
+                        {
+                          borderColor: selected ? theme.primary : theme.border,
+                          backgroundColor: selected ? theme.primary + '1F' : theme.background,
+                        },
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.laserDot,
+                          { backgroundColor: entry.halo, borderColor: entry.core },
+                        ]}
+                      />
+                      <Text
+                        style={[
+                          styles.laserChipText,
+                          { color: selected ? theme.primary : theme.foreground },
+                        ]}
+                      >
+                        {shortName}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+                {(() => {
+                  const customLaser = !isLaserPresetKey(laserColorKey);
+                  const customPalette = resolveLaserPalette(laserColorKey);
+                  return (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        customLaser ? `Custom laser color ${customPalette.halo}` : 'Choose custom laser color'
+                      }
+                      accessibilityState={{ selected: customLaser }}
+                      onPress={() => setCustomColorOpen(true)}
+                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                      style={[
+                        styles.laserChip,
+                        {
+                          borderColor: customLaser ? theme.primary : theme.border,
+                          backgroundColor: customLaser ? theme.primary + '1F' : theme.background,
+                        },
+                      ]}
+                    >
+                      {customLaser ? (
+                        <View
+                          style={[
+                            styles.laserDot,
+                            { backgroundColor: customPalette.halo, borderColor: customPalette.core },
+                          ]}
+                        />
+                      ) : (
+                        <PlusIcon size={14} color={theme.foreground} />
+                      )}
+                      <Text
+                        style={[
+                          styles.laserChipText,
+                          { color: customLaser ? theme.primary : theme.foreground },
+                        ]}
+                      >
+                        Custom
+                      </Text>
+                    </Pressable>
+                  );
+                })()}
+                {optionsButton}
+              </View>
+            )}
+
+            {!isEraser && !isLaser && (
               <View style={styles.row}>
                 <View style={[styles.colorSegment, { borderColor: theme.border }]}>
                   {PEN_COLORS.slice(0, 4).map((entry) => {
@@ -308,6 +425,25 @@ const styles = StyleSheet.create({
   customColorSwatch: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  laserChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  laserDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1.5,
+  },
+  laserChipText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   optionsButton: {
     width: 36,

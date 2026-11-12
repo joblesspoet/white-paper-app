@@ -15,12 +15,18 @@ import {
   type FreehandTool,
 } from '../canvas/ink';
 import { isCustomColor, PEN_COLORS, textColorValue } from '../canvas/document';
+import {
+  LASER_COLOR_LIST,
+  isLaserPresetKey,
+  resolveLaserPalette,
+  type LaserColorKey,
+} from '../canvas/laser';
 import type { ToolOptionsVariant } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
 import { EraserIcon, HighlighterIcon, PenIcon } from './icons';
 
-export type InkSheetTool = FreehandTool | 'eraser';
+export type InkSheetTool = FreehandTool | 'eraser' | 'laser';
 
 type InkOptionsSheetProps = {
   theme: ThemeColors;
@@ -30,6 +36,7 @@ type InkOptionsSheetProps = {
   width: number;
   opacity: number;
   eraserRadius: number;
+  laserColorKey?: LaserColorKey;
   bottomOffset: number;
   variant?: ToolOptionsVariant;
   leftOffset?: number;
@@ -40,6 +47,7 @@ type InkOptionsSheetProps = {
   onWidthChange: (width: number) => void;
   onOpacityChange: (opacity: number) => void;
   onEraserRadiusChange: (radius: number) => void;
+  onLaserColorChange?: (colorKey: LaserColorKey) => void;
   onClose: () => void;
 };
 
@@ -55,6 +63,7 @@ export function InkOptionsSheet({
   width,
   opacity,
   eraserRadius,
+  laserColorKey = 'red',
   bottomOffset,
   variant = 'bottom-sheet',
   leftOffset = spacing.md,
@@ -65,6 +74,7 @@ export function InkOptionsSheet({
   onWidthChange,
   onOpacityChange,
   onEraserRadiusChange,
+  onLaserColorChange,
   onClose,
 }: InkOptionsSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
@@ -74,7 +84,14 @@ export function InkOptionsSheet({
   const maxSheetHeight = isPopover
     ? Math.max(220, windowHeight - topOffset - bottomOffset - 80)
     : Math.max(180, windowHeight - bottomOffset - 72);
-  const title = tool === 'eraser' ? 'Eraser' : tool === 'highlighter' ? 'Highlighter' : 'Pen';
+  const title =
+    tool === 'eraser'
+      ? 'Eraser'
+      : tool === 'highlighter'
+        ? 'Highlighter'
+        : tool === 'laser'
+          ? 'Laser'
+          : 'Pen';
   const selectedChip = { backgroundColor: theme.primary, borderColor: theme.primary };
   const selectedText = { color: theme.surface };
 
@@ -124,7 +141,102 @@ export function InkOptionsSheet({
               </Pressable>
             </View>
 
-            {tool === 'eraser' ? (
+            {tool === 'laser' ? (
+              <>
+                <Text style={[styles.label, { color: theme.foreground }]}>Laser color</Text>
+                <View style={styles.row}>
+                  {LASER_COLOR_LIST.map((entry) => {
+                    const selected = laserColorKey === entry.key;
+                    return (
+                      <Pressable
+                        key={entry.key}
+                        accessibilityRole="radio"
+                        accessibilityLabel={entry.label}
+                        accessibilityState={{ selected }}
+                        onPress={() => onLaserColorChange?.(entry.key)}
+                        style={({ pressed }) => [
+                          styles.chip,
+                          {
+                            flexDirection: 'row',
+                            borderColor: selected ? theme.primary : theme.border,
+                            paddingHorizontal: spacing.md,
+                            gap: 8,
+                          },
+                          selected && selectedChip,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <View
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: 7,
+                            backgroundColor: entry.halo,
+                            borderWidth: 1.5,
+                            borderColor: entry.core,
+                          }}
+                        />
+                        <Text style={[styles.chipText, { color: selected ? theme.surface : theme.foreground }]}>
+                          {entry.key === 'red' ? 'Red' : entry.key === 'teal' ? 'Teal' : 'Amber'}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                  {(() => {
+                    const customLaser = !isLaserPresetKey(laserColorKey);
+                    const customPalette = resolveLaserPalette(laserColorKey);
+                    return (
+                      <Pressable
+                        accessibilityRole="radio"
+                        accessibilityLabel="Custom laser color"
+                        accessibilityState={{ selected: customLaser }}
+                        onPress={() => setCustomOpen((open) => !open)}
+                        style={({ pressed }) => [
+                          styles.chip,
+                          {
+                            flexDirection: 'row',
+                            borderColor: customLaser ? theme.primary : theme.border,
+                            paddingHorizontal: spacing.md,
+                            gap: 8,
+                          },
+                          customLaser && selectedChip,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <View
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: 7,
+                            backgroundColor: customLaser ? customPalette.halo : theme.muted,
+                            borderWidth: 1.5,
+                            borderColor: customLaser ? customPalette.core : theme.border,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        />
+                        <Text style={[styles.chipText, { color: customLaser ? theme.surface : theme.foreground }]}>
+                          Custom
+                        </Text>
+                      </Pressable>
+                    );
+                  })()}
+                </View>
+                {customOpen && (
+                  <ColorPicker
+                    theme={theme}
+                    value={resolveLaserPalette(laserColorKey).halo}
+                    background={theme.surface}
+                    checkContrast={false}
+                    onChange={(picked) => onLaserColorChange?.(picked)}
+                    onClose={() => setCustomOpen(false)}
+                  />
+                )}
+                <Text style={[styles.note, { color: theme.foreground }]}>
+                  Ephemeral trail fades over 1.2s without saving to board history.
+                </Text>
+              </>
+            ) : tool === 'eraser' ? (
               <>
                 <Text style={[styles.label, { color: theme.foreground }]}>Eraser size</Text>
                 <View style={styles.row}>

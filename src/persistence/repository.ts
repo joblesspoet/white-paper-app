@@ -195,6 +195,18 @@ export async function updateBoardTitle(
   );
 }
 
+export async function updateBoardSettings(
+  database: PersistenceDatabase,
+  boardId: string,
+  settings: BoardSettings,
+  now = new Date().toISOString(),
+): Promise<void> {
+  await database.runAsync(
+    `UPDATE boards SET settings_json = ?, updated_at = ? WHERE id = ?`,
+    [serializeBoardSettings(settings), now, boardId],
+  );
+}
+
 // ----------------------------------------------------------------- documents
 
 async function firstPage(

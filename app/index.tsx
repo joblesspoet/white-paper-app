@@ -22,6 +22,7 @@ import { resolveHomeLayout } from '../src/responsive/layout';
 import { colors, radii, spacing, touchTarget, typography } from '../src/theme';
 import { homeStyles as styles } from '../src/screens/home.styles';
 import { useBoards } from '../src/board-context';
+import { BOARD_STYLE_OPTIONS, type BoardStyle } from '../src/persistence/schema';
 import { usePreferences } from '../src/settings/preferences-context';
 
 export default function HomeScreen() {
@@ -33,7 +34,7 @@ export default function HomeScreen() {
   const [sheetVisible, setSheetVisible] = useState(false);
   const [importState, setImportState] = useState<ImportModalState>({ status: 'closed' });
   const [canvasBackground, setCanvasBackground] = useState<'light' | 'dark'>(preferences.canvasBackground);
-  const [canvasStyle, setCanvasStyle] = useState<'blank' | 'dots'>(preferences.canvasStyle);
+  const [canvasStyle, setCanvasStyle] = useState<BoardStyle>(preferences.canvasStyle);
   const [orientation] = useState<'portrait' | 'landscape'>('portrait');
 
   const layout = useMemo(
@@ -53,7 +54,7 @@ export default function HomeScreen() {
     [layout.paddingBottom, layout.paddingLeft, layout.paddingRight, twoPane],
   );
 
-  const createBoardNow = useCallback((settings?: { background: 'light' | 'dark'; style: 'blank' | 'dots'; orientation: 'portrait' | 'landscape' }) => {
+  const createBoardNow = useCallback((settings?: { background: 'light' | 'dark'; style: BoardStyle; orientation: 'portrait' | 'landscape' }) => {
     const defaultSettings = {
       background: preferences.canvasBackground,
       style: preferences.canvasStyle,
@@ -334,9 +335,16 @@ export default function HomeScreen() {
               <Choice label="Dark" active={canvasBackground === 'dark'} onPress={() => setCanvasBackground('dark')} theme={theme} />
             </View>
             <Text style={[sheetStyles.label, { color: theme.foreground }]}>Canvas surface</Text>
-            <View style={sheetStyles.choiceRow}>
-              <Choice label="Blank" active={canvasStyle === 'blank'} onPress={() => setCanvasStyle('blank')} theme={theme} />
-              <Choice label="Dot grid" active={canvasStyle === 'dots'} onPress={() => setCanvasStyle('dots')} theme={theme} />
+            <View style={[sheetStyles.choiceRow, { flexWrap: 'wrap' }]}>
+              {BOARD_STYLE_OPTIONS.map((opt) => (
+                <Choice
+                  key={opt.key}
+                  label={opt.shortLabel}
+                  active={canvasStyle === opt.key}
+                  onPress={() => setCanvasStyle(opt.key)}
+                  theme={theme}
+                />
+              ))}
             </View>
             <AppButton label="Create board" onPress={createCustomizedBoard} />
             <Pressable

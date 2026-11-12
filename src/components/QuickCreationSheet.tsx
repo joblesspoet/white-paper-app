@@ -15,6 +15,7 @@ import { type ConnectorStyle } from '../canvas/shapes';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
 import {
+  CalculatorIcon,
   ConnectorIcon,
   ElbowIcon,
   EllipseIcon,
@@ -23,6 +24,7 @@ import {
   PlusIcon,
   RectangleIcon,
   StickyIcon,
+  TimerIcon,
 } from './icons';
 
 export type InsertToolRequest =
@@ -30,7 +32,9 @@ export type InsertToolRequest =
   | { type: 'text'; colorKey?: string }
   | { type: 'shape'; shape: ShapeKind }
   | { type: 'connector'; style: ConnectorStyle }
-  | { type: 'image' };
+  | { type: 'image' }
+  | { type: 'timer' }
+  | { type: 'calculator' };
 
 type QuickCreationSheetProps = {
   theme: ThemeColors;
@@ -353,6 +357,26 @@ export function QuickCreationSheet({
                       </Text>
                     </View>
                   </Pressable>
+                </Section>
+
+                {/* ------------------------------------------- Utilities */}
+                <Section theme={theme} label="Utilities">
+                  <View style={styles.row}>
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open floating classroom timer"
+                      label="Timer"
+                      icon={<TimerIcon size={22} color={theme.primary} />}
+                      onPress={() => insert({ type: 'timer' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open floating scientific calculator"
+                      label="Calculator"
+                      icon={<CalculatorIcon size={22} color={theme.primary} />}
+                      onPress={() => insert({ type: 'calculator' })}
+                    />
+                  </View>
                 </Section>
               </>
             )}

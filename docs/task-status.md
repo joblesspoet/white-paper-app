@@ -1,9 +1,18 @@
 # Task status
 
 ## Current phase
-Smart Teaching & Presentation Differentiation Architecture (Phases A–F planning, prompt creation, feature specifications, and design handoff updates on branch `feat/teaching-board-architecture`).
+Session 20 — Phase A: Smart Teaching & Presentation Utilities (branch `feat/phase-a-teaching-utilities`).
 
 ## Status
+`implemented-unverified` — Phase A (`prompts/20-phase-a-teaching-utilities.md`) is implemented with `npm run typecheck`, `npm test` (12 suites including `npm run test:teaching-utilities`), and the iOS Metro bundle check (`npx expo export --platform ios`) passing; simulator/device touch testing remains unverified in this environment:
+- **Laser pointer (`src/canvas/laser.ts`, `src/components/InkingQuickTray.tsx`, `src/components/ActionIsland.tsx`, `src/components/CanvasViewport.tsx`, `app/editor.tsx`):** `laser` tool integrated into the phone `InkingQuickTray`, `ActionIsland` Draw indicator, and tablet `ToolRail` with 3 color presets (`red`, `teal`, `amber`) and a dual-layer Skia halo/core trail that decays linearly over `1200 ms` after release without writing to `CanvasDocument.strokes`, undo history, or SQLite.
+- **Teaching canvas backgrounds (`src/persistence/schema.ts`, `src/persistence/repository.ts`, `src/canvas/background.ts`, `src/components/CanvasViewport.tsx`, `src/export/export-service.ts`):** `BoardStyle` extended to `'blank' | 'dots' | 'grid' | 'ruled' | 'isometric'` with backward-compatible `'blank'` fallback, shared world-space Skia path generation (`24pt` dots, `24pt`/`120pt` math grid, `32pt` ruled paper with margin, `28pt` `60°` isometric lattice) across live canvas and offscreen PNG/JPEG/PDF exports, and exposed in Home `Customize your board`, Editor `Board background` modal, and Settings (`Default Canvas`).
+- **Floating classroom timer & stopwatch (`src/timer/timer-model.ts`, `src/components/FloatingTimer.tsx`):** draggable/minimizable (`104×40pt` pill / `220pt` card) countdown and stopwatch utility with presets (`1m`, `3m`, `5m`, `10m`, `15m`), `+1m`/`-30s` steppers, haptic + `#EA580C` completion state (`Time's up!`), and `Pin to board` inserting a sticky summary in one undoable command.
+- **Floating scientific calculator (`src/calculator/calculator-engine.ts`, `src/components/FloatingCalculator.tsx`):** deterministic expression evaluator (no `eval()`) with standard + scientific operations (`sin`, `cos`, `tan` with `DEG`/`RAD`, `√`, `x²`, `xʸ`, `log`, `ln`, `π`, `e`, `1/x`, `!`, `%`, `ANS`), explicit error states, and `Paste to board` inserting `<expression> = <result>` as a `TextObject` in one undoable command.
+- Verification suite added at `scripts/verify-teaching-utilities.mts` and wired into `npm test` via `npm run test:teaching-utilities`.
+- The next task is Session 21 — Phase B: Interactive Geometry Box, 2D/3D Shapes & Table Creator (`prompts/21-phase-b-geometry-shapes-tables.md`).
+
+Previous planning baseline:
 `complete` — architecture, per-phase feature specifications (`docs/phase-a-*.md` through `docs/phase-h-*.md`), implementation session prompts (`prompts/20-phase-a-*.md` through `prompts/27-phase-h-*.md`), and design system handoff updates (`design/tokens.md`, `design/flows.md`, `design/screen-inventory.md`, `design/component-handoff.md`) are defined:
 - `prompts/18-quality-hardening.md` and `prompts/19-design-to-react-native.md` are paused until Phases A–H (`prompts/20-*` through `prompts/27-*`) are implemented and verified.
 - **Phase A (`prompts/20-phase-a-teaching-utilities.md`, `docs/phase-a-teaching-utilities.md`):** Laser pointer (`laser`) with `1200 ms` decaying Skia trail, teaching canvas backgrounds (`grid`, `ruled`, `isometric`), draggable `FloatingTimer` (countdown + stopwatch + `Pin to board`), and draggable `FloatingCalculator` (standard + scientific evaluator + `Paste to board`).

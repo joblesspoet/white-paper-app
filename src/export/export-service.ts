@@ -44,6 +44,7 @@ import {
   type TextualObject,
 } from '../canvas/document';
 import { inkPathData, type InkStroke } from '../canvas/ink';
+import { buildBackgroundLayers } from '../canvas/background';
 import type { Viewport } from '../canvas/viewport';
 import { resolveMediaUri } from '../media/asset-store';
 import type { BoardSettings } from '../persistence/schema';
@@ -337,6 +338,21 @@ async function renderRegionBase64(
   canvas.save();
   canvas.scale(pixelSize.scale, pixelSize.scale);
   canvas.translate(-region.x, -region.y);
+
+  // 0. Teaching canvas background pattern (dots, grid, ruled, isometric)
+  const backgroundLayers = buildBackgroundLayers(input.settings.style, region);
+  for (const layer of backgroundLayers) {
+    const path = Skia.Path.MakeFromSVGString(layer.svgPath);
+    if (!path) continue;
+    const paint = Skia.Paint();
+    paint.setAntiAlias(true);
+    paint.setStyle(PaintStyle.Stroke);
+    paint.setStrokeCap(StrokeCap.Round);
+    paint.setStrokeWidth(layer.strokeWidth);
+    paint.setColor(Skia.Color(layer.isMargin ? theme.accent : theme.foreground));
+    paint.setAlphaf(layer.opacity);
+    canvas.drawPath(path, paint);
+  }
 
   const strokes = input.scope === 'visible' ? input.document.strokes : [];
   const objects = objectsForScope(input.document, input.scope, input.selectedIds);

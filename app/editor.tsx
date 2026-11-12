@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   AppState,
   Keyboard,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -71,12 +72,16 @@ import {
 import { enqueuePersistenceWrite } from '../src/persistence/write-queue';
 import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
 import {
+  CalculatorIcon,
+  CheckIcon,
   ChevronRightIcon,
   DuplicateIcon,
   EditIcon,
   EraserIcon,
+  GridIcon,
   HighlighterIcon,
   ImageIcon,
+  LaserIcon,
   MoreIcon,
   ConnectorIcon,
   PenIcon,
@@ -86,9 +91,16 @@ import {
   StickyIcon,
   StyleIcon,
   TextIcon,
+  TimerIcon,
   TrashIcon,
   UndoIcon,
 } from '../src/components/icons';
+import { BOARD_STYLE_OPTIONS, type BoardStyle } from '../src/persistence/schema';
+import type { LaserColorKey } from '../src/canvas/laser';
+import { createTimerPinCommand, type TimerState } from '../src/timer/timer-model';
+import { createCalculatorPasteCommand } from '../src/calculator/calculator-engine';
+import { FloatingTimer } from '../src/components/FloatingTimer';
+import { FloatingCalculator } from '../src/components/FloatingCalculator';
 import { ImageImportFlow } from '../src/components/ImageImportFlow';
 import { insertMediaAsset, type MediaAssetRecord } from '../src/persistence/repository';
 import { cropMetadata } from '../src/media/asset-store';
@@ -117,6 +129,7 @@ const TOOLS = [
   { tool: 'pen', label: 'Pen', Icon: PenIcon },
   { tool: 'highlighter', label: 'Highlighter', Icon: HighlighterIcon },
   { tool: 'eraser', label: 'Eraser', Icon: EraserIcon },
+  { tool: 'laser', label: 'Laser', Icon: LaserIcon },
   { tool: 'image', label: 'Image', Icon: ImageIcon },
 ] as const satisfies ReadonlyArray<{ tool: InkTool; label: string; Icon: typeof PenIcon }>;
 
@@ -143,7 +156,7 @@ type Editing = { object: CanvasObject; isNew: boolean };
 export default function BoardEditorScreen() {
   const router = useRouter();
   const { boardId } = useLocalSearchParams<{ boardId?: string }>();
-  const { boards, updateTitle, touchBoard } = useBoards();
+  const { boards, updateTitle, updateSettings, touchBoard } = useBoards();
   const board = boards.find((item) => item.id === boardId);
   const [title, setTitle] = useState(board?.title ?? 'Untitled board');
   // Adopt the stored title when the board first becomes available. Autosave
@@ -233,7 +246,11 @@ export default function BoardEditorScreen() {
   const [imageFlowId, setImageFlowId] = useState<string | null>(null);
   const [quickCreationOpen, setQuickCreationOpen] = useState(false);
   const [inkTrayOpen, setInkTrayOpen] = useState(false);
-  const [lastInkingTool, setLastInkingTool] = useState<FreehandTool | 'eraser'>('pen');
+  const [lastInkingTool, setLastInkingTool] = useState<FreehandTool | 'eraser' | 'laser'>('pen');
+  const [laserColorKey, setLaserColorKey] = useState<LaserColorKey>('red');
+  const [timerVisible, setTimerVisible] = useState(false);
+  const [calculatorVisible, setCalculatorVisible] = useState(false);
+  const [boardStyleModalVisible, setBoardStyleModalVisible] = useState(false);
 
   const insertMediaAssetRow = useCallback(async (asset: MediaAssetRecord) => {
     if (!boardId) return;
@@ -688,19 +705,23 @@ export default function BoardEditorScreen() {
     });
   }, [document]);
 
-  const isInkingTool = activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser';
+  const isInkingTool =
+    activeTool === 'pen' ||
+    activeTool === 'highlighter' ||
+    activeTool === 'eraser' ||
+    activeTool === 'laser';
 
   const pressTool = useCallback((tool: InkTool) => {
     void triggerHapticFeedback('selection', preferences.haptics);
     if (editingRef.current) commitEditing();
     setStylingObjectId(null);
     if (tool !== 'select') setSelectedObjectIds([]);
-    if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser') {
+    if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser' || tool === 'laser') {
       setObjectOptionsVisible(false);
       setShapeOptionsVisible(false);
       setLastInkingTool(tool);
       // The phone gets the compact tray under the Draw anchor; the tablet has
-      // no island, so its rail opens the full ink sheet instead.
+      // no island, so its rail opens the full ink sheet instead (except laser).
       const retap = activeTool === tool;
       setActiveTool(tool);
       if (tablet) {
@@ -736,13 +757,13 @@ export default function BoardEditorScreen() {
     setSelectedObjectIds([]);
     setObjectOptionsVisible(false);
     setShapeOptionsVisible(false);
-    if (activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser') {
+    if (activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser' || activeTool === 'laser') {
       setInkTrayOpen((open) => !open);
     } else {
       setActiveTool(lastInkingTool);
       setInkTrayOpen(true);
     }
-  }, [activeTool, commitEditing, lastInkingTool]);
+  }, [activeTool, commitEditing, lastInkingTool, preferences.haptics]);
 
   const handleSelectInsert = useCallback((request: InsertToolRequest) => {
     if (request.type === 'sticky') {
@@ -761,6 +782,10 @@ export default function BoardEditorScreen() {
       if (!boardId) return;
       setImageFlowId(`${boardId}-${Date.now()}`);
       setImageFlowOpen(true);
+    } else if (request.type === 'timer') {
+      setTimerVisible(true);
+    } else if (request.type === 'calculator') {
+      setCalculatorVisible(true);
     }
   }, [boardId, pressTool]);
 
@@ -787,7 +812,14 @@ export default function BoardEditorScreen() {
     dispatch({ type: 'redo' });
   }, [commitEditing, preferences.haptics]);
 
-  const sheetTool: InkSheetTool = activeTool === 'eraser' ? 'eraser' : activeTool === 'highlighter' ? 'highlighter' : 'pen';
+  const sheetTool: InkSheetTool =
+    activeTool === 'eraser'
+      ? 'eraser'
+      : activeTool === 'highlighter'
+        ? 'highlighter'
+        : activeTool === 'laser'
+          ? 'laser'
+          : 'pen';
   const islandBottom = layout.islandBottom;
   const optionsBottom = layout.optionsBottom;
   const showGuidance = !documentHasContent(document) && !editing;
@@ -859,6 +891,14 @@ export default function BoardEditorScreen() {
           <Pressable accessibilityRole="button" accessibilityLabel="Redo" accessibilityHint={canRedo ? (redoLabel ? `Redo ${redoLabel}` : 'Reapplies the last undone change') : 'Nothing to redo'} accessibilityState={{ disabled: !canRedo }} disabled={!canRedo} onPress={redo} style={[styles.action, !canRedo && styles.actionDisabled]}><RedoIcon size={22} color={theme.foreground} /></Pressable>
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel="Board background style"
+            onPress={() => { commitEditing(); setBoardStyleModalVisible(true); }}
+            style={styles.iconButton}
+          >
+            <GridIcon size={20} color={theme.foreground} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
             accessibilityLabel="Export and board options"
             onPress={() => { commitEditing(); setExportSheetVisible(true); }}
             style={styles.iconButton}
@@ -901,7 +941,11 @@ export default function BoardEditorScreen() {
             theme={theme}
             activeTool={activeTool}
             bottomInset={insets.bottom}
+            timerVisible={timerVisible}
+            calculatorVisible={calculatorVisible}
             onToolPress={pressTool}
+            onToggleTimer={() => setTimerVisible((v) => !v)}
+            onToggleCalculator={() => setCalculatorVisible((v) => !v)}
           />
         )}
         {!hydrated ? (
@@ -925,12 +969,14 @@ export default function BoardEditorScreen() {
             <View style={styles.canvasClip}>
               <CanvasViewport
                 dark={dark}
+                boardStyle={board?.settings.style ?? DEFAULT_BOARD_SETTINGS.style}
                 initialViewport={initialViewport}
                 activeTool={activeTool}
                 color={color}
                 width={strokeWidth}
                 opacity={opacity}
                 eraserRadius={eraserRadius}
+                laserColorKey={laserColorKey}
                 shapeKind={shapeKind}
                 shapeColorKey={shapeColorKey}
                 shapeFillKey={shapeFillKey}
@@ -959,6 +1005,53 @@ export default function BoardEditorScreen() {
                   </Text>
                 </View>
               )}
+              <FloatingTimer
+                visible={timerVisible}
+                theme={theme}
+                haptics={preferences.haptics}
+                bounds={{
+                  width: canvasRect.width > 0 ? canvasRect.width : width,
+                  height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
+                }}
+                onPinToBoard={(timerState: TimerState) => {
+                  const center = screenToCanvas(
+                    {
+                      x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
+                      y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
+                    },
+                    viewport,
+                  );
+                  const id = `timer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                  const cmd = createTimerPinCommand(timerState, center, id, stickyColorKey);
+                  runCommand(cmd, false);
+                  if (cmd.type === 'object.insert') setSelectedObjectIds([cmd.object.id]);
+                }}
+                onClose={() => setTimerVisible(false)}
+              />
+              <FloatingCalculator
+                visible={calculatorVisible}
+                theme={theme}
+                haptics={preferences.haptics}
+                isTablet={tablet}
+                bounds={{
+                  width: canvasRect.width > 0 ? canvasRect.width : width,
+                  height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
+                }}
+                onPasteToBoard={(expr, res) => {
+                  const center = screenToCanvas(
+                    {
+                      x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
+                      y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
+                    },
+                    viewport,
+                  );
+                  const id = `calc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                  const cmd = createCalculatorPasteCommand(expr, res, center, id, textColorKey);
+                  runCommand(cmd, false);
+                  if (cmd.type === 'object.insert') setSelectedObjectIds([cmd.object.id]);
+                }}
+                onClose={() => setCalculatorVisible(false)}
+              />
               {editingTextObject && overlayRect && (
                 <TextInput
                   multiline
@@ -1274,6 +1367,7 @@ export default function BoardEditorScreen() {
           width={strokeWidth}
           opacity={opacity}
           eraserRadius={eraserRadius}
+          laserColorKey={laserColorKey}
           bottomOffset={optionsBottom}
           variant={layout.toolOptionsVariant}
           leftOffset={layout.toolPopoverLeft}
@@ -1284,6 +1378,7 @@ export default function BoardEditorScreen() {
           onWidthChange={setStrokeWidth}
           onOpacityChange={setOpacity}
           onEraserRadiusChange={setEraserRadius}
+          onLaserColorChange={setLaserColorKey}
           onClose={() => setInkOptionsVisible(false)}
         />
       )}
@@ -1295,6 +1390,7 @@ export default function BoardEditorScreen() {
           color={color}
           strokeWidth={strokeWidth}
           eraserRadius={eraserRadius}
+          laserColorKey={laserColorKey}
           bottomOffset={ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom}
           onToolChange={(tool) => {
             setLastInkingTool(tool);
@@ -1306,6 +1402,7 @@ export default function BoardEditorScreen() {
           onColorChange={setColor}
           onWidthChange={setStrokeWidth}
           onEraserRadiusChange={setEraserRadius}
+          onLaserColorChange={setLaserColorKey}
           onOpenFullOptions={() => {
             setInkTrayOpen(false);
             setInkOptionsVisible(true);
@@ -1382,6 +1479,66 @@ export default function BoardEditorScreen() {
         defaultFormat={preferences.exportFormat}
         onClose={() => setExportSheetVisible(false)}
       />
+      <Modal
+        visible={boardStyleModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setBoardStyleModalVisible(false)}
+      >
+        <Pressable style={styles.styleModalScrim} onPress={() => setBoardStyleModalVisible(false)}>
+          <Pressable
+            style={[styles.styleModalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            onPress={() => undefined}
+          >
+            <View style={styles.styleModalHeader}>
+              <Text style={[styles.styleModalTitle, { color: theme.foreground }]}>Board background</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close board background options"
+                onPress={() => setBoardStyleModalVisible(false)}
+                hitSlop={8}
+              >
+                <Text style={[styles.styleModalDone, { color: theme.primary }]}>Done</Text>
+              </Pressable>
+            </View>
+            <View style={[styles.styleOptionList, { borderColor: theme.border, backgroundColor: theme.background }]}>
+              {BOARD_STYLE_OPTIONS.map((opt, idx) => {
+                const currentStyle = board?.settings.style ?? DEFAULT_BOARD_SETTINGS.style;
+                const active = currentStyle === opt.key;
+                return (
+                  <Pressable
+                    key={opt.key}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`${opt.label}, ${opt.description}`}
+                    onPress={() => {
+                      if (boardId) {
+                        const base = board?.settings ?? DEFAULT_BOARD_SETTINGS;
+                        updateSettings(boardId, { ...base, style: opt.key as BoardStyle });
+                      }
+                      setBoardStyleModalVisible(false);
+                    }}
+                    style={[
+                      styles.styleOptionRow,
+                      idx > 0 && { borderTopWidth: 1, borderTopColor: theme.border },
+                      active && { backgroundColor: theme.primary + '16' },
+                    ]}
+                  >
+                    <View style={styles.styleOptionText}>
+                      <Text style={[styles.styleOptionLabel, { color: active ? theme.primary : theme.foreground }]}>
+                        {opt.label}
+                      </Text>
+                      <Text style={[styles.styleOptionDesc, { color: theme.foreground }]}>{opt.description}</Text>
+                    </View>
+                    {active && <CheckIcon size={20} color={theme.primary} />}
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1390,12 +1547,20 @@ function ToolRail({
   theme,
   activeTool,
   bottomInset,
+  timerVisible,
+  calculatorVisible,
   onToolPress,
+  onToggleTimer,
+  onToggleCalculator,
 }: {
   theme: ThemeColors;
   activeTool: InkTool;
   bottomInset: number;
+  timerVisible: boolean;
+  calculatorVisible: boolean;
   onToolPress: (tool: InkTool) => void;
+  onToggleTimer: () => void;
+  onToggleCalculator: () => void;
 }) {
   return (
     <View style={[styles.rail, { borderRightColor: theme.border, backgroundColor: theme.surface }]}>
@@ -1427,6 +1592,31 @@ function ToolRail({
             </Pressable>
           );
         })}
+        <View style={[styles.railDivider, { backgroundColor: theme.border }]} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Toggle floating timer"
+          accessibilityState={{ selected: timerVisible }}
+          onPress={onToggleTimer}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, timerVisible && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+            <TimerIcon size={22} color={timerVisible ? theme.primary : theme.foreground} />
+          </View>
+          <Text style={[styles.toolLabel, { color: timerVisible ? theme.primary : theme.foreground }]} numberOfLines={1}>Timer</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Toggle floating calculator"
+          accessibilityState={{ selected: calculatorVisible }}
+          onPress={onToggleCalculator}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, calculatorVisible && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+            <CalculatorIcon size={22} color={calculatorVisible ? theme.primary : theme.foreground} />
+          </View>
+          <Text style={[styles.toolLabel, { color: calculatorVisible ? theme.primary : theme.foreground }]} numberOfLines={1}>Calc</Text>
+        </Pressable>
       </ScrollView>
     </View>
   );
@@ -1486,4 +1676,55 @@ const styles = StyleSheet.create({
   storageBannerText: { ...typography.caption, lineHeight: 18 },
   editorLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   editorLoadingText: { ...typography.body },
+  railDivider: { width: 32, height: 1, marginVertical: spacing.xs },
+  styleModalScrim: {
+    flex: 1,
+    backgroundColor: 'rgba(19, 78, 74, 0.24)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  styleModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    gap: spacing.sm,
+  },
+  styleModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  styleModalTitle: {
+    ...typography.subtitle,
+  },
+  styleModalDone: {
+    ...typography.bodyStrong,
+  },
+  styleOptionList: {
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  styleOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  styleOptionText: {
+    flex: 1,
+    gap: 2,
+  },
+  styleOptionLabel: {
+    ...typography.bodyStrong,
+  },
+  styleOptionDesc: {
+    fontSize: 12,
+    opacity: 0.72,
+  },
 });
