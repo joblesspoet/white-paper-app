@@ -1,11 +1,20 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { isCustomColor, SHAPE_COLORS, SHAPE_FILLS } from '../canvas/document';
+import {
+  SHAPE_CATALOG,
+  SHAPE_CATEGORIES,
+  SHAPE_COLORS,
+  SHAPE_FILLS,
+  isCustomColor,
+  shapesByCategory,
+  type ShapeCategory,
+} from '../canvas/document';
 import { CONNECTOR_STROKE_WIDTHS, SHAPE_STROKE_WIDTHS, STROKE_WIDTH_LABELS, type ConnectorStyle, type ShapeKind } from '../canvas/shapes';
 import type { ToolOptionsVariant } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
-import { EllipseIcon, LineIcon, PlusIcon, RectangleIcon } from './icons';
+import { ShapePreviewIcon } from './ShapePreviewIcon';
+import { PlusIcon } from './icons';
 
 type Props = {
   theme: ThemeColors;
@@ -14,6 +23,7 @@ type Props = {
   shapeColorKey: string;
   shapeFillKey: string | null;
   shapeStrokeWidth: number;
+  showMeasurements?: boolean;
   connectorStyle: ConnectorStyle;
   connectorColorKey: string;
   connectorStrokeWidth: number;
@@ -27,33 +37,28 @@ type Props = {
   onShapeColor: (value: string) => void;
   onShapeFill: (value: string | null) => void;
   onShapeStrokeWidth: (value: number) => void;
+  onShowMeasurements?: (value: boolean) => void;
   onConnectorStyle: (value: ConnectorStyle) => void;
   onConnectorColor: (value: string) => void;
   onConnectorStrokeWidth: (value: number) => void;
   onDone: () => void;
 };
 
-const SHAPE_CHOICES = [
-  { kind: 'rectangle', label: 'Rectangle', Icon: RectangleIcon },
-  { kind: 'ellipse', label: 'Ellipse', Icon: EllipseIcon },
-  { kind: 'line', label: 'Line', Icon: LineIcon },
-] as const satisfies ReadonlyArray<{ kind: ShapeKind; label: string; Icon: typeof RectangleIcon }>;
-
-/** Compact shape/connector sheet: docked above the island on phone or beside the rail on tablet. */
 export function ShapeOptionsSheet({
-  theme, mode, shapeKind, shapeColorKey, shapeFillKey, shapeStrokeWidth,
+  theme, mode, shapeKind, shapeColorKey, shapeFillKey, shapeStrokeWidth, showMeasurements = false,
   connectorStyle, connectorColorKey, connectorStrokeWidth, bottomOffset,
   variant = 'bottom-sheet',
   leftOffset = spacing.md,
   topOffset = spacing.md,
   maxWidth = 460,
-  onShapeKind, onShapeColor, onShapeFill, onShapeStrokeWidth,
+  onShapeKind, onShapeColor, onShapeFill, onShapeStrokeWidth, onShowMeasurements,
   onConnectorStyle, onConnectorColor, onConnectorStrokeWidth, onDone,
 }: Props) {
   const shape = mode === 'shape';
   const widths = shape ? SHAPE_STROKE_WIDTHS : CONNECTOR_STROKE_WIDTHS;
   const { height: windowHeight } = useWindowDimensions();
   const [customTarget, setCustomTarget] = useState<'fill' | 'stroke' | null>(null);
+  const [category, setCategory] = useState<ShapeCategory>(SHAPE_CATALOG[shapeKind]?.category ?? 'basic');
 
   const customFill = shapeFillKey ? isCustomColor(shapeFillKey) : false;
   const strokeColorKey = shape ? shapeColorKey : connectorColorKey;
@@ -123,11 +128,47 @@ export function ShapeOptionsSheet({
               {shape ? (
                 <>
                   <Text style={[styles.label, { color: theme.foreground }]}>Shape</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
+                    {SHAPE_CATEGORIES.map((cat) => (
+                      <Choice
+                        key={cat.id}
+                        label={cat.label}
+                        selected={category === cat.id}
+                        theme={theme}
+                        onPress={() => setCategory(cat.id)}
+                      />
+                    ))}
+                  </ScrollView>
                   <View style={styles.row}>
-                    {SHAPE_CHOICES.map(({ kind, label, Icon }) => (
-                      <ShapeChoice key={kind} label={label} Icon={Icon} selected={shapeKind === kind} theme={theme} onPress={() => onShapeKind(kind)} />
+                    {shapesByCategory(category).map((entry) => (
+                      <Pressable
+                        key={entry.kind}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: shapeKind === entry.kind }}
+                        accessibilityLabel={entry.label}
+                        onPress={() => onShapeKind(entry.kind)}
+                        style={[
+                          styles.choice,
+                          {
+                            borderColor: shapeKind === entry.kind ? theme.primary : theme.border,
+                            backgroundColor: shapeKind === entry.kind ? theme.muted : theme.background,
+                          },
+                        ]}
+                      >
+                        <ShapePreviewIcon kind={entry.kind} size={18} color={theme.foreground} />
+                      </Pressable>
                     ))}
                   </View>
+                  {onShowMeasurements ? (
+                    <View style={styles.row}>
+                      <Choice
+                        label={showMeasurements ? 'Measurements: On' : 'Measurements: Off'}
+                        selected={showMeasurements}
+                        theme={theme}
+                        onPress={() => onShowMeasurements(!showMeasurements)}
+                      />
+                    </View>
+                  ) : null}
                   <Text style={[styles.label, { color: theme.foreground }]}>Fill</Text>
                   <View style={styles.row}>
                     <Choice label="None" selected={shapeFillKey === null} theme={theme} onPress={() => onShapeFill(null)} />
@@ -256,14 +297,6 @@ export function ShapeOptionsSheet({
         </ScrollView>
       </View>
     </View>
-  );
-}
-
-function ShapeChoice({ label, Icon, selected, theme, onPress }: { label: string; Icon: typeof RectangleIcon; selected: boolean; theme: ThemeColors; onPress: () => void }) {
-  return (
-    <Pressable accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ selected }} onPress={onPress} style={[styles.choice, { borderColor: selected ? theme.primary : theme.border }, selected && { backgroundColor: theme.primary }]}>
-      <Icon size={22} color={selected ? theme.surface : theme.foreground} />
-    </Pressable>
   );
 }
 

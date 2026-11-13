@@ -1,4 +1,19 @@
-import { Canvas, Circle, Group, Image as SkiaImage, Oval, Path, Rect, Skia, useImage } from '@shopify/react-native-skia';
+import {
+  Canvas,
+  Circle,
+  DashPathEffect,
+  FontWeight,
+  Group,
+  Image as SkiaImage,
+  Line as SkiaLine,
+  Path,
+  Rect,
+  RoundedRect,
+  Skia,
+  TextAlign,
+  useImage,
+  vec,
+} from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type TextLayoutEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -7,6 +22,7 @@ import Animated, {
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
+  type SharedValue,
 } from 'react-native-reanimated';
 
 import {
@@ -14,16 +30,21 @@ import {
   DEFAULT_SHAPE_STROKE_WIDTH,
   MIN_SHAPE_SIZE_SCREEN,
   OBJECT_PADDING,
+  buildShapeRenderPrimitives,
   createConnectorObject,
   createShapeObject,
   geometryFromPoints,
   isGeometricObject,
   isImageObject,
+  isTableObject,
   isTextualObject,
   objectAtPoint,
   objectFill,
   objectTextColor,
   stickyColorValue,
+  tableCellRect,
+  tableColumnWidths,
+  tableRowHeight,
   textColorValue,
   textLineHeight,
   type CanvasDocument,
@@ -34,8 +55,16 @@ import {
   type ImageObject,
   type ShapeKind,
   type ShapeObject,
+  type TableObject,
   type TextualObject,
 } from '../canvas/document';
+import {
+  GEOMETRY_SNAP_SCREEN_DISTANCE,
+  projectPointToLockedRulerEdge,
+  projectPointToRulerEdge,
+  projectPointToSetSquareEdge,
+  type GeometryInstrumentState,
+} from '../canvas/geometry-box';
 import {
   MIN_RESIZE_SCREEN,
   RESIZE_HANDLES,
@@ -153,14 +182,18 @@ type CanvasViewportProps = {
   selectedObjectIds?: readonly string[];
   /** Object currently open in the in-place text editor; it is hidden here. */
   editingObjectId?: string | null;
+  /** Table cell currently open in the in-place cell editor; hidden in the table overlay. */
+  editingTableCell?: { objectId: string; row: number; col: number } | null;
   /** Absolute viewport the editor asks for, for example to clear the keyboard. */
   viewportRequest?: ViewportRequest | null;
+  /** Active Geometry Box instrument for magnetic pen edge snapping. */
+  activeInstrument?: GeometryInstrumentState | null;
   onViewportChange?: (viewport: ViewportState) => void;
   onCommand: (command: DocumentCommand, transient?: boolean) => void;
   onCommitPending: () => void;
   onObjectCreate?: (type: 'text' | 'sticky', point: Point) => void;
   onSelectionChange?: (ids: string[]) => void;
-  onObjectEdit?: (id: string) => void;
+  onObjectEdit?: (id: string, point?: Point) => void;
   /** Real rendered text height, used to correct the object's estimated height. */
   onObjectMeasure?: (id: string, height: number) => void;
   /** A touch on the canvas while an object is being edited: commit the edit. */
@@ -188,7 +221,9 @@ export function CanvasViewport({
   document,
   selectedObjectIds = [],
   editingObjectId = null,
+  editingTableCell = null,
   viewportRequest = null,
+  activeInstrument = null,
   onViewportChange,
   onCommand,
   onCommitPending,
@@ -275,26 +310,92 @@ export function CanvasViewport({
     }
   }, [activeTool, eraserX, eraserY]);
 
+  const lockedGeometryEdgeRef = useRef<
+    | { kind: 'ruler'; edge: 'top' | 'bottom'; startAlong: number }
+    | { kind: 'set-square'; edgeIndex: 0 | 1 | 2; startAlong: number }
+    | null
+  >(null);
+  const [snapReadout, setSnapReadout] = useState<string | null>(null);
+
   const beginStroke = useCallback((point: Point) => {
     const tool: FreehandTool = activeTool === 'highlighter' ? 'highlighter' : 'pen';
+    let startPoint = point;
+    lockedGeometryEdgeRef.current = null;
+    setSnapReadout(null);
+
+    if (activeInstrument && (activeTool === 'pen' || activeTool === 'highlighter')) {
+      const snapCanvas = GEOMETRY_SNAP_SCREEN_DISTANCE / Math.max(viewport.scale, 0.25);
+      if (activeInstrument.kind === 'ruler') {
+        const proj = projectPointToRulerEdge(point, activeInstrument, snapCanvas);
+        if (proj) {
+          startPoint = proj.snappedPoint;
+          lockedGeometryEdgeRef.current = {
+            kind: 'ruler',
+            edge: proj.edge,
+            startAlong: proj.distanceAlongEdge,
+          };
+          setSnapReadout(`0 px · ${Math.round(activeInstrument.angleDeg)}°`);
+        }
+      } else if (
+        activeInstrument.kind === 'set-square-45' ||
+        activeInstrument.kind === 'set-square-30-60'
+      ) {
+        const proj = projectPointToSetSquareEdge(point, activeInstrument, snapCanvas);
+        if (proj) {
+          startPoint = proj.snappedPoint;
+          lockedGeometryEdgeRef.current = {
+            kind: 'set-square',
+            edgeIndex: proj.edgeIndex,
+            startAlong: proj.distanceAlongEdge,
+          };
+          setSnapReadout(`0 px · ${Math.round(activeInstrument.angleDeg)}°`);
+        }
+      }
+    }
+
     const stroke = createInkStroke({
       id: `ink-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       tool,
-      point,
+      point: startPoint,
       color,
       width,
       opacity,
     });
     activeStrokeRef.current = stroke;
     setActiveStroke(stroke);
-  }, [activeTool, color, opacity, width]);
+  }, [activeInstrument, activeTool, color, opacity, viewport.scale, width]);
   const addPoint = useCallback((point: Point, minDistance: number) => {
     const current = activeStrokeRef.current;
     if (!current) return;
-    const next = appendInkPoint(current, point, minDistance);
+    let nextPoint = point;
+    const locked = lockedGeometryEdgeRef.current;
+    if (locked && activeInstrument) {
+      if (locked.kind === 'ruler' && activeInstrument.kind === 'ruler') {
+        const proj = projectPointToLockedRulerEdge(point, activeInstrument, locked.edge);
+        nextPoint = proj.snappedPoint;
+        const dist = Math.round(Math.abs(proj.distanceAlongEdge - locked.startAlong));
+        setSnapReadout(`${dist} px · ${Math.round(activeInstrument.angleDeg)}°`);
+      } else if (
+        locked.kind === 'set-square' &&
+        (activeInstrument.kind === 'set-square-45' || activeInstrument.kind === 'set-square-30-60')
+      ) {
+        const proj = projectPointToSetSquareEdge(
+          point,
+          activeInstrument,
+          Number.POSITIVE_INFINITY,
+          locked.edgeIndex,
+        );
+        if (proj) {
+          nextPoint = proj.snappedPoint;
+          const dist = Math.round(Math.abs(proj.distanceAlongEdge - locked.startAlong));
+          setSnapReadout(`${dist} px · ${Math.round(activeInstrument.angleDeg)}°`);
+        }
+      }
+    }
+    const next = appendInkPoint(current, nextPoint, minDistance);
     activeStrokeRef.current = next;
     setActiveStroke(next);
-  }, []);
+  }, [activeInstrument]);
   /**
    * The in-progress stroke lives in React state for rendering and in a ref for
    * the gesture, because a running gesture keeps the callbacks from the render it
@@ -304,6 +405,8 @@ export function CanvasViewport({
   const finishStroke = useCallback(() => {
     const stroke = activeStrokeRef.current;
     activeStrokeRef.current = null;
+    lockedGeometryEdgeRef.current = null;
+    setSnapReadout(null);
     setActiveStroke(null);
     if (stroke) onCommand({ type: 'ink.add', stroke });
   }, [onCommand]);
@@ -424,7 +527,7 @@ export function CanvasViewport({
 
   const touchCanvas = useCallback(() => { onCanvasTouch?.(); }, [onCanvasTouch]);
   const selectObjects = useCallback((ids: string[]) => { onSelectionChange?.(ids); }, [onSelectionChange]);
-  const editObject = useCallback((id: string) => { onObjectEdit?.(id); }, [onObjectEdit]);
+  const editObject = useCallback((id: string, point?: Point) => { onObjectEdit?.(id, point); }, [onObjectEdit]);
   const createObject = useCallback((type: 'text' | 'sticky', point: Point) => {
     onObjectCreate?.(type, point);
   }, [onObjectCreate]);
@@ -619,7 +722,11 @@ export function CanvasViewport({
         // A tap on one member of a multi-selection collapses to that object;
         // a tap on the only selected text object opens its editor.
         if (alreadySelected && selectedObjectIds.length > 1) collapseSelectionId.value = hit.id;
-        else if (alreadySelected && selectedObjectIds.length === 1 && isTextualObject(hit)) {
+        else if (
+          alreadySelected &&
+          selectedObjectIds.length === 1 &&
+          (isTextualObject(hit) || isTableObject(hit))
+        ) {
           tapOpensEditor.value = hit.id;
         }
         return;
@@ -686,7 +793,12 @@ export function CanvasViewport({
       if (mode === 'move' || mode === 'resize' || mode === 'rotate') {
         if (mode === 'move' && !moved) {
           if (collapseId !== '') runOnJS(selectObjects)([collapseId]);
-          else if (opensEditor !== '' && hitId !== '') runOnJS(editObject)(hitId);
+          else if (opensEditor !== '' && hitId !== '') {
+            runOnJS(editObject)(hitId, {
+              x: touchStartCanvasX.value,
+              y: touchStartCanvasY.value,
+            });
+          }
         }
         runOnJS(commitPending)();
         return;
@@ -862,6 +974,9 @@ export function CanvasViewport({
             {document.objects.filter(isGeometricObject).map((object) => (
               <GeometricObjectView key={object.id} object={object} dark={dark} />
             ))}
+            {document.objects.filter(isTableObject).map((object) => (
+              <TableObjectView key={object.id} object={object} dark={dark} />
+            ))}
             {renderedLaserStrokes.map((stroke) => {
               const alpha = laserStrokeOpacity(stroke, laserNowMs);
               if (alpha <= 0) return null;
@@ -890,6 +1005,31 @@ export function CanvasViewport({
           onMeasure={onObjectMeasure}
         />
       ))}
+
+      {document.objects.filter(isTableObject).map((object) => (
+        <TableCellsOverlay
+          key={`cells-${object.id}`}
+          object={object}
+          dark={dark}
+          editingCell={editingTableCell?.objectId === object.id ? editingTableCell : null}
+          offsetX={offsetX}
+          offsetY={offsetY}
+          scale={scale}
+        />
+      ))}
+
+      {document.objects
+        .filter((o): o is ShapeObject => o.type === 'shape' && Boolean(o.showMeasurements))
+        .map((object) => (
+          <ShapeMeasurementsOverlay
+            key={`meas-${object.id}`}
+            object={object}
+            dark={dark}
+            offsetX={offsetX}
+            offsetY={offsetY}
+            scale={scale}
+          />
+        ))}
 
       {/*
         Text and sticky notes are native views above the drawing canvas, so the
@@ -929,6 +1069,11 @@ export function CanvasViewport({
       )}
 
       <View style={styles.hud} pointerEvents="box-none">
+        {snapReadout ? (
+          <View style={[styles.viewBadge, { backgroundColor: theme.surface, borderColor: '#0D9488' }]} pointerEvents="none">
+            <Text style={[styles.zoomText, { color: '#0D9488' }]}>{snapReadout}</Text>
+          </View>
+        ) : null}
         <View style={[styles.viewBadge, { backgroundColor: theme.surface, borderColor: theme.border }]} pointerEvents="none" accessibilityLabel={`Zoom ${zoomLabel}`}>
           <Text style={[styles.zoomText, { color: theme.foreground }]}>{zoomLabel}</Text>
         </View>
@@ -1124,12 +1269,6 @@ function GeometricObjectView({
   dark: boolean;
 }) {
   const color = textColorValue(object.colorKey, dark);
-  const connectorPoints = object.type === 'connector'
-    ? connectorPolyline(object.style, object.x, object.y, object.width, object.height, object.direction)
-    : null;
-  const linePointPair = object.type === 'shape' && object.shape === 'line'
-    ? linePoints(object.x, object.y, object.width, object.height, object.direction)
-    : null;
   const origin = {
     x: object.x + object.width / 2,
     y: object.y + object.height / 2,
@@ -1138,52 +1277,269 @@ function GeometricObjectView({
     ? undefined
     : [{ rotate: (object.rotation * Math.PI) / 180 }];
 
-  let content: ReactNode;
-  if (object.type === 'connector' || object.shape === 'line') {
-    const linePointsList = object.type === 'connector' ? connectorPoints! : [linePointPair!.start, linePointPair!.end];
-    const path = Skia.Path.MakeFromSVGString(polylinePathData(linePointsList)) ?? Skia.Path.Make();
-    const arrowPath = object.type === 'connector' && object.style === 'arrow'
-      ? Skia.Path.MakeFromSVGString(arrowHeadPathData(linePointsList, arrowHeadSize(object.strokeWidth)))
+  if (object.type === 'connector') {
+    const pts = connectorPolyline(object.style, object.x, object.y, object.width, object.height, object.direction);
+    const path = Skia.Path.MakeFromSVGString(polylinePathData(pts)) ?? Skia.Path.Make();
+    const arrowPath = object.style === 'arrow'
+      ? Skia.Path.MakeFromSVGString(arrowHeadPathData(pts, arrowHeadSize(object.strokeWidth)))
       : null;
-    content = (
-      <>
+    return (
+      <Group origin={origin} transform={transform}>
         <Path path={path} color={color} style="stroke" strokeWidth={object.strokeWidth} strokeCap="round" strokeJoin="round" />
         {arrowPath && <Path path={arrowPath} color={color} style="fill" />}
-      </>
+      </Group>
     );
-  } else if (object.shape === 'ellipse') {
-    content = (
-      <>
-        {object.fillKey && <Oval x={object.x} y={object.y} width={object.width} height={object.height} color={stickyColorValue(object.fillKey)} style="fill" />}
-        <Oval
-          x={object.x}
-          y={object.y}
-          width={object.width}
-          height={object.height}
-          color={color}
-          style="stroke"
-          strokeWidth={object.strokeWidth}
-        />
-      </>
-    );
-  } else {
-    content = (
-      <>
-        {object.fillKey && <Rect x={object.x} y={object.y} width={object.width} height={object.height} color={stickyColorValue(object.fillKey)} style="fill" />}
+  }
+
+  const primitives = buildShapeRenderPrimitives(
+    object.shape,
+    object.x,
+    object.y,
+    object.width,
+    object.height,
+    object.direction,
+    Boolean(object.showMeasurements),
+  );
+  const fillPath = object.fillKey && primitives.fillPathSvg
+    ? Skia.Path.MakeFromSVGString(primitives.fillPathSvg)
+    : null;
+  const solidPath = primitives.solidStrokeSvg
+    ? Skia.Path.MakeFromSVGString(primitives.solidStrokeSvg)
+    : null;
+  const dashedPath = primitives.dashedStrokeSvg
+    ? Skia.Path.MakeFromSVGString(primitives.dashedStrokeSvg)
+    : null;
+  const arrowPath = primitives.arrowHeadsSvg
+    ? Skia.Path.MakeFromSVGString(primitives.arrowHeadsSvg)
+    : null;
+
+  return (
+    <Group origin={origin} transform={transform}>
+      {fillPath && object.fillKey ? (
+        <Path path={fillPath} color={stickyColorValue(object.fillKey)} style="fill" />
+      ) : null}
+      {solidPath ? (
+        <Path path={solidPath} color={color} style="stroke" strokeWidth={object.strokeWidth} strokeCap="round" strokeJoin="round" />
+      ) : null}
+      {dashedPath ? (
+        <Path path={dashedPath} color={color} style="stroke" strokeWidth={Math.max(1.5, object.strokeWidth * 0.75)} strokeCap="round" strokeJoin="round">
+          <DashPathEffect intervals={[6, 4]} />
+        </Path>
+      ) : null}
+      {arrowPath ? (
+        <Path path={arrowPath} color={color} style="fill" />
+      ) : null}
+    </Group>
+  );
+}
+
+function TableCellsOverlay({
+  object,
+  dark,
+  editingCell,
+  offsetX,
+  offsetY,
+  scale,
+}: {
+  object: TableObject;
+  dark: boolean;
+  editingCell: { row: number; col: number } | null;
+  offsetX: SharedValue<number>;
+  offsetY: SharedValue<number>;
+  scale: SharedValue<number>;
+}) {
+  const color = textColorValue(object.colorKey, dark);
+  const frame = useAnimatedStyle(() => ({
+    left: object.x * scale.value + offsetX.value,
+    top: object.y * scale.value + offsetY.value,
+    width: object.width * scale.value,
+    height: object.height * scale.value,
+    transform: [{ rotate: `${object.rotation}deg` }],
+  }), [object]);
+
+  const rowH = tableRowHeight(object);
+  const widths = tableColumnWidths(object);
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.object, frame]}>
+      {Array.from({ length: object.rows }, (_, r) =>
+        Array.from({ length: object.columns }, (__, c) => {
+          const cell = object.cells[r * object.columns + c];
+          const isEditing = editingCell?.row === r && editingCell?.col === c;
+          if (!cell?.text || isEditing) return null;
+          const rect = tableCellRect(object, r, c);
+          const relLeftPct = ((rect.x - object.x) / Math.max(1, object.width)) * 100;
+          const relTopPct = ((rect.y - object.y) / Math.max(1, object.height)) * 100;
+          const relWPct = (widths[c] / Math.max(1, object.width)) * 100;
+          const relHPct = (rowH / Math.max(1, object.height)) * 100;
+          const isHeader = object.hasHeaderRow && r === 0;
+          return (
+            <View
+              key={`${r}-${c}`}
+              style={{
+                position: 'absolute',
+                left: `${relLeftPct}%`,
+                top: `${relTopPct}%`,
+                width: `${relWPct}%`,
+                height: `${relHPct}%`,
+                padding: 4,
+                justifyContent: 'center',
+              }}
+            >
+              <Text
+                numberOfLines={3}
+                style={{
+                  color,
+                  fontSize: Math.max(9, object.fontSize * Math.min(1.4, Math.max(0.65, viewportScaleFallback(object)))),
+                  fontWeight: isHeader ? '700' : '400',
+                  textAlign: cell.align ?? 'left',
+                }}
+              >
+                {cell.text}
+              </Text>
+            </View>
+          );
+        }),
+      )}
+    </Animated.View>
+  );
+}
+
+function viewportScaleFallback(_object: TableObject): number {
+  return 1;
+}
+
+function ShapeMeasurementsOverlay({
+  object,
+  dark,
+  offsetX,
+  offsetY,
+  scale,
+}: {
+  object: ShapeObject;
+  dark: boolean;
+  offsetX: SharedValue<number>;
+  offsetY: SharedValue<number>;
+  scale: SharedValue<number>;
+}) {
+  const color = textColorValue(object.colorKey, dark);
+  const primitives = useMemo(
+    () =>
+      buildShapeRenderPrimitives(
+        object.shape,
+        0,
+        0,
+        object.width,
+        object.height,
+        object.direction,
+        true,
+      ),
+    [object.direction, object.height, object.shape, object.width],
+  );
+  const frame = useAnimatedStyle(() => ({
+    left: object.x * scale.value + offsetX.value,
+    top: object.y * scale.value + offsetY.value,
+    width: object.width * scale.value,
+    height: object.height * scale.value,
+    transform: [{ rotate: `${object.rotation}deg` }],
+  }), [object]);
+
+  if (!primitives.measurementLabels || primitives.measurementLabels.length === 0) return null;
+
+  return (
+    <Animated.View pointerEvents="none" style={[styles.object, frame]}>
+      {primitives.measurementLabels.map((lbl, idx) => (
+        <View
+          key={idx}
+          style={{
+            position: 'absolute',
+            left: `${(lbl.x / Math.max(1, object.width)) * 100}%`,
+            top: `${(lbl.y / Math.max(1, object.height)) * 100}%`,
+            transform: [{ translateX: -20 }, { translateY: -8 }],
+          }}
+        >
+          <Text style={{ color, fontSize: 11, fontWeight: '600', textAlign: 'center', minWidth: 40 }}>
+            {lbl.text}
+          </Text>
+        </View>
+      ))}
+    </Animated.View>
+  );
+}
+
+function TableObjectView({
+  object,
+  dark,
+}: {
+  object: TableObject;
+  dark: boolean;
+}) {
+  const borderColor = textColorValue(object.colorKey, dark);
+  const origin = {
+    x: object.x + object.width / 2,
+    y: object.y + object.height / 2,
+  };
+  const transform = object.rotation === 0
+    ? undefined
+    : [{ rotate: (object.rotation * Math.PI) / 180 }];
+  const rowH = tableRowHeight(object);
+  const widths = tableColumnWidths(object);
+
+  const colLines: number[] = [];
+  let accX = object.x;
+  for (let c = 0; c < object.columns - 1; c += 1) {
+    accX += widths[c];
+    colLines.push(accX);
+  }
+
+  return (
+    <Group origin={origin} transform={transform}>
+      {object.hasHeaderRow && object.fillHeader && object.rows >= 1 ? (
         <Rect
           x={object.x}
           y={object.y}
           width={object.width}
-          height={object.height}
-          color={color}
-          style="stroke"
-          strokeWidth={object.strokeWidth}
+          height={rowH}
+          color={borderColor}
+          opacity={0.12}
+          style="fill"
         />
-      </>
-    );
-  }
-
-  return <Group origin={origin} transform={transform}>{content}</Group>;
+      ) : null}
+      {Array.from({ length: Math.max(0, object.rows - 1) }, (_, idx) => {
+        const ly = object.y + (idx + 1) * rowH;
+        return (
+          <SkiaLine
+            key={`r-${idx}`}
+            p1={vec(object.x, ly)}
+            p2={vec(object.x + object.width, ly)}
+            color={borderColor}
+            strokeWidth={1}
+            opacity={0.45}
+          />
+        );
+      })}
+      {colLines.map((lx, idx) => (
+        <SkiaLine
+          key={`c-${idx}`}
+          p1={vec(lx, object.y)}
+          p2={vec(lx, object.y + object.height)}
+          color={borderColor}
+          strokeWidth={1}
+          opacity={0.45}
+        />
+      ))}
+      <RoundedRect
+        x={object.x}
+        y={object.y}
+        width={object.width}
+        height={object.height}
+        r={6}
+        color={borderColor}
+        style="stroke"
+        strokeWidth={1.5}
+      />
+    </Group>
+  );
 }
 
 /**

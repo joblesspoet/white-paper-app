@@ -10,19 +10,30 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { STICKY_COLORS, STICKY_TEXT_COLOR, TEXT_COLORS, type ShapeKind } from '../canvas/document';
+import {
+  MAX_TABLE_COLUMNS,
+  MAX_TABLE_ROWS,
+  SHAPE_CATEGORIES,
+  STICKY_COLORS,
+  STICKY_TEXT_COLOR,
+  TABLE_PRESETS,
+  TEXT_COLORS,
+  shapesByCategory,
+  type ShapeCategory,
+  type ShapeKind,
+} from '../canvas/document';
+import type { InstrumentKind } from '../canvas/geometry-box';
 import { type ConnectorStyle } from '../canvas/shapes';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
+import { ShapePreviewIcon } from './ShapePreviewIcon';
 import {
   CalculatorIcon,
   ConnectorIcon,
   ElbowIcon,
-  EllipseIcon,
   ImageIcon,
   LineIcon,
   PlusIcon,
-  RectangleIcon,
   StickyIcon,
   TimerIcon,
 } from './icons';
@@ -32,6 +43,8 @@ export type InsertToolRequest =
   | { type: 'text'; colorKey?: string }
   | { type: 'shape'; shape: ShapeKind }
   | { type: 'connector'; style: ConnectorStyle }
+  | { type: 'table'; rows: number; columns: number }
+  | { type: 'geometry'; instrument: InstrumentKind }
   | { type: 'image' }
   | { type: 'timer' }
   | { type: 'calculator' };
@@ -72,6 +85,9 @@ export function QuickCreationSheet({
   const [customPickerTarget, setCustomPickerTarget] = useState<'sticky' | 'text' | null>(null);
   /** Draft colour while the custom picker is open; applied when it is confirmed. */
   const [customColor, setCustomColor] = useState<string>(theme.primary);
+  const [shapeCategory, setShapeCategory] = useState<ShapeCategory>('basic');
+  const [customRows, setCustomRows] = useState(3);
+  const [customCols, setCustomCols] = useState(3);
 
   // The sheet stays mounted between openings, so a half-finished colour pick
   // must not be waiting for the user next time they insert something.
@@ -261,7 +277,7 @@ export function QuickCreationSheet({
                 {/* ---------------------------------------------- Shapes */}
                 <Section
                   theme={theme}
-                  label="Shapes"
+                  label="Shapes & Diagrams (53)"
                   action={{
                     label: 'Styles',
                     accessibilityLabel: 'Shape style options',
@@ -271,28 +287,137 @@ export function QuickCreationSheet({
                     },
                   }}
                 >
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.categoryRow}
+                  >
+                    {SHAPE_CATEGORIES.map((cat) => {
+                      const active = shapeCategory === cat.id;
+                      return (
+                        <Pressable
+                          key={cat.id}
+                          accessibilityRole="tab"
+                          accessibilityState={{ selected: active }}
+                          onPress={() => setShapeCategory(cat.id)}
+                          style={[
+                            styles.categoryChip,
+                            {
+                              backgroundColor: active ? theme.primary : theme.background,
+                              borderColor: active ? theme.primary : theme.border,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.categoryChipText,
+                              { color: active ? '#FFFFFF' : theme.foreground },
+                            ]}
+                          >
+                            {cat.label}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                  <View style={styles.shapeGrid}>
+                    {shapesByCategory(shapeCategory).map((entry) => (
+                      <Pressable
+                        key={entry.kind}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Draw ${entry.label}`}
+                        onPress={() => insert({ type: 'shape', shape: entry.kind })}
+                        style={({ pressed }) => [
+                          styles.shapeGridTile,
+                          { backgroundColor: theme.background, borderColor: theme.border },
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <ShapePreviewIcon kind={entry.kind} size={22} color={theme.primary} />
+                        <Text
+                          style={[styles.shapeGridLabel, { color: theme.foreground }]}
+                          numberOfLines={1}
+                        >
+                          {entry.label}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </Section>
+
+                {/* ---------------------------------------------- Tables */}
+                <Section theme={theme} label="Table">
                   <View style={styles.row}>
-                    <Tile
-                      theme={theme}
-                      accessibilityLabel="Draw a rectangle"
-                      label="Rectangle"
-                      icon={<RectangleIcon size={22} color={theme.primary} />}
-                      onPress={() => insert({ type: 'shape', shape: 'rectangle' })}
-                    />
-                    <Tile
-                      theme={theme}
-                      accessibilityLabel="Draw an ellipse"
-                      label="Ellipse"
-                      icon={<EllipseIcon size={22} color={theme.primary} />}
-                      onPress={() => insert({ type: 'shape', shape: 'ellipse' })}
-                    />
-                    <Tile
-                      theme={theme}
-                      accessibilityLabel="Draw a straight line"
-                      label="Line"
-                      icon={<LineIcon size={22} color={theme.primary} />}
-                      onPress={() => insert({ type: 'shape', shape: 'line' })}
-                    />
+                    {TABLE_PRESETS.map((preset) => (
+                      <Tile
+                        key={preset.label}
+                        theme={theme}
+                        accessibilityLabel={`Insert ${preset.label} table`}
+                        label={preset.label}
+                        icon={
+                          <Text style={[styles.tablePresetIcon, { color: theme.primary }]}>
+                            ⊞
+                          </Text>
+                        }
+                        onPress={() =>
+                          insert({ type: 'table', rows: preset.rows, columns: preset.columns })
+                        }
+                      />
+                    ))}
+                  </View>
+                  <View style={styles.customTableRow}>
+                    <View style={styles.stepperGroup}>
+                      <Text style={[styles.stepperLabel, { color: theme.foreground }]}>
+                        Rows: {customRows}
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Decrease table rows"
+                        onPress={() => setCustomRows((r) => Math.max(1, r - 1))}
+                        style={[styles.stepperBtn, { borderColor: theme.border }]}
+                      >
+                        <Text style={[styles.stepperBtnText, { color: theme.foreground }]}>−</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Increase table rows"
+                        onPress={() => setCustomRows((r) => Math.min(MAX_TABLE_ROWS, r + 1))}
+                        style={[styles.stepperBtn, { borderColor: theme.border }]}
+                      >
+                        <Text style={[styles.stepperBtnText, { color: theme.foreground }]}>+</Text>
+                      </Pressable>
+                    </View>
+                    <View style={styles.stepperGroup}>
+                      <Text style={[styles.stepperLabel, { color: theme.foreground }]}>
+                        Cols: {customCols}
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Decrease table columns"
+                        onPress={() => setCustomCols((c) => Math.max(1, c - 1))}
+                        style={[styles.stepperBtn, { borderColor: theme.border }]}
+                      >
+                        <Text style={[styles.stepperBtnText, { color: theme.foreground }]}>−</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Increase table columns"
+                        onPress={() => setCustomCols((c) => Math.min(MAX_TABLE_COLUMNS, c + 1))}
+                        style={[styles.stepperBtn, { borderColor: theme.border }]}
+                      >
+                        <Text style={[styles.stepperBtnText, { color: theme.foreground }]}>+</Text>
+                      </Pressable>
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Insert ${customRows} by ${customCols} table`}
+                      onPress={() =>
+                        insert({ type: 'table', rows: customRows, columns: customCols })
+                      }
+                      style={[styles.insertTableBtn, { backgroundColor: theme.primary }]}
+                    >
+                      <Text style={styles.insertTableBtnText}>Insert</Text>
+                    </Pressable>
                   </View>
                 </Section>
 
@@ -360,7 +485,37 @@ export function QuickCreationSheet({
                 </Section>
 
                 {/* ------------------------------------------- Utilities */}
-                <Section theme={theme} label="Utilities">
+                <Section theme={theme} label="Geometry Box & Utilities">
+                  <View style={styles.row}>
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open ruler"
+                      label="Ruler"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>📏</Text>}
+                      onPress={() => insert({ type: 'geometry', instrument: 'ruler' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open protractor"
+                      label="Protractor"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>◠</Text>}
+                      onPress={() => insert({ type: 'geometry', instrument: 'protractor' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open compass"
+                      label="Compass"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>⌖</Text>}
+                      onPress={() => insert({ type: 'geometry', instrument: 'compass' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open set square"
+                      label="Set Square"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>⊿</Text>}
+                      onPress={() => insert({ type: 'geometry', instrument: 'set-square-45' })}
+                    />
+                  </View>
                   <View style={styles.row}>
                     <Tile
                       theme={theme}
@@ -647,5 +802,56 @@ const styles = StyleSheet.create({
   swatch: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
   swatchChip: { width: 26, height: 26, borderRadius: 999, borderWidth: 1 },
   swatchAdd: { alignItems: 'center', justifyContent: 'center' },
+  categoryRow: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
+  categoryChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  categoryChipText: { ...typography.caption, fontSize: 12, fontWeight: '600' },
+  shapeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  shapeGridTile: {
+    width: '23.2%',
+    minWidth: 68,
+    minHeight: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  shapeGridLabel: { ...typography.caption, fontSize: 10, fontWeight: '600', textAlign: 'center' },
+  tablePresetIcon: { fontSize: 20, fontWeight: '700' },
+  customTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+    flexWrap: 'wrap',
+  },
+  stepperGroup: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  stepperLabel: { ...typography.caption, fontWeight: '600' },
+  stepperBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperBtnText: { fontSize: 16, fontWeight: '700' },
+  insertTableBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.sm,
+  },
+  insertTableBtnText: { ...typography.caption, color: '#FFFFFF', fontWeight: '700' },
   pressed: { opacity: 0.7 },
 });

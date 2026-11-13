@@ -31,6 +31,7 @@ import { eraseStrokesAt, type InkStroke } from './ink.ts';
 import {
   DEFAULT_CONNECTOR_STROKE_WIDTH,
   DEFAULT_SHAPE_STROKE_WIDTH,
+  SHAPE_CATALOG,
   connectorPolyline,
   distanceToPolyline,
   geometryFromPoints,
@@ -41,28 +42,67 @@ import {
   type ShapeGeometry,
   type ShapeKind,
 } from './shapes.ts';
+import {
+  tableEquals,
+  type TableCell,
+  type TableObjectBase,
+} from './table.ts';
 import { canvasToScreen, type Point, type Viewport } from './viewport.ts';
 
 export type { Point };
 
 export {
+  ALL_SHAPE_KINDS,
   CONNECTOR_STROKE_WIDTHS,
   DEFAULT_CONNECTOR_STROKE_WIDTH,
   DEFAULT_SHAPE_STROKE_WIDTH,
   MIN_SHAPE_SIZE_SCREEN,
+  SHAPE_CATALOG,
+  SHAPE_CATEGORIES,
   SHAPE_STROKE_WIDTHS,
   STROKE_WIDTH_LABELS,
   arrowHeadSize,
+  buildShapeRenderPrimitives,
   connectorPolyline,
   geometryFromPoints,
   linePoints,
   polylinePathData,
   arrowHeadPathData,
   distanceToPolyline,
+  shapesByCategory,
   type ConnectorStyle,
   type LineDirection,
+  type ShapeCatalogEntry,
+  type ShapeCategory,
   type ShapeKind,
+  type ShapeRenderPrimitives,
 } from './shapes.ts';
+
+export {
+  DEFAULT_TABLE_CELL_WIDTH,
+  DEFAULT_TABLE_COLOR,
+  DEFAULT_TABLE_FONT_SIZE,
+  DEFAULT_TABLE_ROW_HEIGHT,
+  MAX_TABLE_COLUMNS,
+  MAX_TABLE_ROWS,
+  TABLE_FONT_SIZES,
+  TABLE_PRESETS,
+  createTableObject,
+  equalColumnRatios,
+  normalizeColumnRatios,
+  tableCellAtPoint,
+  tableCellRect,
+  tableColumnWidths,
+  tableEquals,
+  tableRowHeight,
+  withTableCellText,
+  withTableColumnAdded,
+  withTableColumnRemoved,
+  withTableRowAdded,
+  withTableRowRemoved,
+  type CreateTableInput,
+  type TableCell,
+} from './table.ts';
 
 // ---------------------------------------------------------------- palettes
 
@@ -193,10 +233,15 @@ export type ObjectStylePatch = {
   fontStyle?: TextSlant;
   fillKey?: string | null;
   strokeWidth?: number;
-  /** Change a shape's geometry kind (rectangle, ellipse, line). */
+  /** Change a shape's geometry kind. */
   shape?: ShapeKind;
+  /** Toggle live geometric measurement labels on a shape. */
+  showMeasurements?: boolean;
   /** Change a connector's routing style (line, arrow, elbow). */
   style?: ConnectorStyle;
+  /** Table style options. */
+  hasHeaderRow?: boolean;
+  fillHeader?: boolean;
 };
 
 type CanvasObjectBase = {
@@ -242,6 +287,8 @@ export type ShapeObject = CanvasObjectBase &
     /** Fill colour, or `null` for an outline-only shape. */
     fillKey: string | null;
     strokeWidth: number;
+    /** Display live side lengths, radius, or interior angles on the canvas. */
+    showMeasurements?: boolean;
   };
 export type ConnectorObject = CanvasObjectBase &
   ShapeGeometry & {
@@ -301,7 +348,15 @@ export type ImageOcr = {
   recognizedAt: string;
 };
 
-export type CanvasObject = TextObject | StickyObject | ShapeObject | ConnectorObject | ImageObject;
+export type TableObject = CanvasObjectBase & TableObjectBase;
+
+export type CanvasObject =
+  | TextObject
+  | StickyObject
+  | ShapeObject
+  | ConnectorObject
+  | ImageObject
+  | TableObject;
 export type CanvasObjectType = CanvasObject['type'];
 export type TextualObject = TextObject | StickyObject;
 export type GeometricObject = ShapeObject | ConnectorObject;
@@ -567,6 +622,12 @@ export function isGeometricObject(object: CanvasObject): object is GeometricObje
   return object.type === 'shape' || object.type === 'connector';
 }
 
+/** Tables are rendered by Skia with in-place cell editing on tap. */
+export function isTableObject(object: CanvasObject): object is TableObject {
+  'worklet';
+  return object.type === 'table';
+}
+
 /**
  * Apply new text. Text objects grow and shrink with their content; a sticky
  * note keeps its standard paper size and clips nothing but its own box.
@@ -624,15 +685,40 @@ export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): 
     const shape = patch.shape ?? object.shape;
     const fillKey = patch.fillKey !== undefined ? patch.fillKey : object.fillKey;
     const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
+    const showMeasurements =
+      patch.showMeasurements !== undefined ? patch.showMeasurements : object.showMeasurements;
+    const nextFillKey = SHAPE_CATALOG[shape]?.fillable === false ? null : fillKey;
     if (
       colorKey === object.colorKey &&
       shape === object.shape &&
-      fillKey === object.fillKey &&
-      strokeWidth === object.strokeWidth
+      nextFillKey === object.fillKey &&
+      strokeWidth === object.strokeWidth &&
+      showMeasurements === object.showMeasurements
     ) {
       return object;
     }
-    return { ...object, shape, colorKey, fillKey: shape === 'line' ? null : fillKey, strokeWidth };
+    return {
+      ...object,
+      shape,
+      colorKey,
+      fillKey: nextFillKey,
+      strokeWidth,
+      ...(showMeasurements !== undefined ? { showMeasurements } : {}),
+    };
+  }
+  if (object.type === 'table') {
+    const hasHeaderRow = patch.hasHeaderRow ?? object.hasHeaderRow;
+    const fillHeader = patch.fillHeader ?? object.fillHeader;
+    const fontSize = patch.fontSize ?? object.fontSize;
+    if (
+      colorKey === object.colorKey &&
+      hasHeaderRow === object.hasHeaderRow &&
+      fillHeader === object.fillHeader &&
+      fontSize === object.fontSize
+    ) {
+      return object;
+    }
+    return { ...object, colorKey, hasHeaderRow, fillHeader, fontSize };
   }
   const style = patch.style ?? object.style;
   const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
@@ -700,6 +786,16 @@ export function duplicateObject(
   id: string,
   offset = DUPLICATE_OFFSET,
 ): CanvasObject {
+  if (object.type === 'table') {
+    return {
+      ...object,
+      id,
+      x: object.x + offset,
+      y: object.y + offset,
+      columnRatios: [...object.columnRatios],
+      cells: object.cells.map((cell) => ({ ...cell })),
+    };
+  }
   return { ...object, id, x: object.x + offset, y: object.y + offset };
 }
 
@@ -938,7 +1034,16 @@ export type DocumentCommand =
       fillKey?: string | null;
       strokeWidth?: number;
       shape?: ShapeKind;
+      showMeasurements?: boolean;
       style?: ConnectorStyle;
+      hasHeaderRow?: boolean;
+      fillHeader?: boolean;
+      table?: Partial<
+        Pick<
+          TableObject,
+          'rows' | 'columns' | 'columnRatios' | 'cells' | 'width' | 'height' | 'hasHeaderRow' | 'fillHeader'
+        >
+      >;
     }
   | { type: 'object.move'; id: string; x: number; y: number }
   | {
@@ -978,6 +1083,12 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
       return mapObject(document, command.id, (object) => {
         let next = object;
         if (command.text !== undefined) next = withObjectText(next, command.text);
+        if (command.table && next.type === 'table') {
+          next = {
+            ...next,
+            ...command.table,
+          };
+        }
         return withObjectStyle(next, {
           colorKey: command.colorKey,
           fontSize: command.fontSize,
@@ -986,7 +1097,10 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
           fillKey: command.fillKey,
           strokeWidth: command.strokeWidth,
           shape: command.shape,
+          showMeasurements: command.showMeasurements,
           style: command.style,
+          hasHeaderRow: command.hasHeaderRow,
+          fillHeader: command.fillHeader,
         });
       });
     case 'object.move':
@@ -1019,6 +1133,9 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
 function objectEquals(left: CanvasObject, right: CanvasObject): boolean {
   if (left === right) return true;
   if (left.type !== right.type) return false;
+  if (left.type === 'table' && right.type === 'table') {
+    return tableEquals(left, right);
+  }
   if (left.type === 'image' && right.type === 'image') {
     return (
       left.id === right.id &&

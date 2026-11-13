@@ -27,31 +27,49 @@ import {
   OBJECT_PADDING,
   createDocumentHistory,
   createStickyObject,
+  createTableObject,
   createTextObject,
   documentHasContent,
   documentReducer,
   duplicateObject,
   editingCommit,
   findObject,
+  isTableObject,
   isTextualObject,
   keyboardOverlap,
   keepObjectAboveKeyboard,
   objectFill,
   objectScreenRect,
   objectTextColor,
+  tableCellAtPoint,
+  tableCellRect,
   textColorKeyForValue,
   textColorValue,
   textLineHeight,
   withObjectStyle,
   withObjectText,
+  withTableCellText,
+  withTableColumnAdded,
+  withTableColumnRemoved,
+  withTableRowAdded,
+  withTableRowRemoved,
   type CanvasDocument,
   type CanvasObject,
   type DocumentCommand,
   type ObjectStylePatch,
+  type ShapeKind,
+  type TableObject,
   type TextObject,
   type TextSlant,
   type TextWeight,
 } from '../src/canvas/document';
+import {
+  createDefaultInstrument,
+  type GeometryInstrumentState,
+  type InstrumentKind,
+} from '../src/canvas/geometry-box';
+import { createInkStroke } from '../src/canvas/ink';
+import { GeometryBoxOverlay } from '../src/components/GeometryBoxOverlay';
 import {
   canRedo as historyCanRedo,
   canUndo as historyCanUndo,
@@ -214,7 +232,15 @@ export default function BoardEditorScreen() {
   const [stickySize, setStickySize] = useState(DEFAULT_STICKY_FONT_SIZE);
   const [stickyBold, setStickyBold] = useState(false);
   const [stickyItalic, setStickyItalic] = useState(false);
-  const [shapeKind, setShapeKind] = useState<'rectangle' | 'ellipse' | 'line'>('rectangle');
+  const [shapeKind, setShapeKind] = useState<ShapeKind>('rectangle');
+  const [shapeShowMeasurements, setShapeShowMeasurements] = useState(false);
+  const [activeInstrument, setActiveInstrument] = useState<GeometryInstrumentState | null>(null);
+  const [editingTableCell, setEditingTableCell] = useState<{
+    objectId: string;
+    row: number;
+    col: number;
+    text: string;
+  } | null>(null);
   const [shapeColorKey, setShapeColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
   const [shapeFillKey, setShapeFillKey] = useState<string | null>(null);
   const [shapeStrokeWidth, setShapeStrokeWidth] = useState(4);
@@ -597,11 +623,124 @@ export default function BoardEditorScreen() {
     setEditingState({ object, isNew: true });
   }, [commitEditing, setEditingState, stickyBold, stickyColorKey, stickyItalic, stickySize, textBold, textColorKey, textItalic, textSize]);
 
-  const startEditingExisting = useCallback((id: string) => {
+  const commitTableCell = useCallback(() => {
+    if (!editingTableCell) return;
+    const obj = findObject(document, editingTableCell.objectId);
+    if (obj && isTableObject(obj)) {
+      const updated = withTableCellText(
+        obj,
+        editingTableCell.row,
+        editingTableCell.col,
+        editingTableCell.text,
+      );
+      if (updated !== obj) {
+        dispatch({
+          type: 'command',
+          command: {
+            type: 'object.update',
+            id: obj.id,
+            table: { cells: updated.cells },
+          },
+        });
+      }
+    }
+    setEditingTableCell(null);
+  }, [document, editingTableCell]);
+
+  const advanceTableCell = useCallback(() => {
+    if (!editingTableCell) return;
+    const obj = findObject(document, editingTableCell.objectId);
+    if (!obj || !isTableObject(obj)) {
+      commitTableCell();
+      return;
+    }
+    const updated = withTableCellText(
+      obj,
+      editingTableCell.row,
+      editingTableCell.col,
+      editingTableCell.text,
+    );
+    if (updated !== obj) {
+      dispatch({
+        type: 'command',
+        command: {
+          type: 'object.update',
+          id: obj.id,
+          table: { cells: updated.cells },
+        },
+      });
+    }
+    let nextCol = editingTableCell.col + 1;
+    let nextRow = editingTableCell.row;
+    if (nextCol >= obj.columns) {
+      nextCol = 0;
+      nextRow += 1;
+    }
+    if (nextRow >= obj.rows) {
+      setEditingTableCell(null);
+      return;
+    }
+    const nextCellText = updated.cells[nextRow * obj.columns + nextCol]?.text ?? '';
+    setEditingTableCell({
+      objectId: obj.id,
+      row: nextRow,
+      col: nextCol,
+      text: nextCellText,
+    });
+  }, [commitTableCell, document, editingTableCell]);
+
+  const handleTableAction = useCallback(
+    (id: string, action: 'add-row' | 'remove-row' | 'add-col' | 'remove-col') => {
+      const obj = findObject(document, id);
+      if (!obj || !isTableObject(obj)) return;
+      const next =
+        action === 'add-row'
+          ? withTableRowAdded(obj)
+          : action === 'remove-row'
+            ? withTableRowRemoved(obj)
+            : action === 'add-col'
+              ? withTableColumnAdded(obj)
+              : withTableColumnRemoved(obj);
+      if (next === obj) return;
+      dispatch({
+        type: 'command',
+        command: {
+          type: 'object.update',
+          id: obj.id,
+          table: {
+            rows: next.rows,
+            columns: next.columns,
+            columnRatios: next.columnRatios,
+            cells: next.cells,
+            width: next.width,
+            height: next.height,
+          },
+        },
+      });
+    },
+    [document],
+  );
+
+  const startEditingExisting = useCallback((id: string, point?: { x: number; y: number }) => {
     const object = findObject(document, id);
-    // Capability check: only text and sticky notes own editable text. Tapping a
-    // selected shape or connector must not enter a phantom editing state.
-    if (!object || !isTextualObject(object)) return;
+    if (!object) return;
+    if (isTableObject(object)) {
+      const cellPos = (point ? tableCellAtPoint(object, point) : null) ?? { row: 0, col: 0 };
+      const existingText = object.cells[cellPos.row * object.columns + cellPos.col]?.text ?? '';
+      setSelectedObjectIds([id]);
+      setObjectOptionsVisible(false);
+      setStylingObjectId(null);
+      setSheetHeight(0);
+      setEditingTableCell({
+        objectId: id,
+        row: cellPos.row,
+        col: cellPos.col,
+        text: existingText,
+      });
+      return;
+    }
+    // Capability check: only text, sticky notes, and tables own editable text.
+    if (!isTextualObject(object)) return;
     setSelectedObjectIds([id]);
     setObjectOptionsVisible(false);
     setStylingObjectId(null);
@@ -778,6 +917,35 @@ export default function BoardEditorScreen() {
     } else if (request.type === 'connector') {
       setConnectorStyle(request.style);
       pressTool('connector');
+    } else if (request.type === 'table') {
+      const center = screenToCanvas(
+        {
+          x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
+          y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
+        },
+        viewport,
+      );
+      const table = createTableObject({
+        id: `table-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        point: center,
+        rows: request.rows,
+        columns: request.columns,
+      });
+      dispatch({ type: 'command', command: { type: 'object.insert', object: table } });
+      setSelectedObjectIds([table.id]);
+      setActiveTool('select');
+    } else if (request.type === 'geometry') {
+      const center = screenToCanvas(
+        {
+          x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
+          y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
+        },
+        viewport,
+      );
+      setActiveInstrument(createDefaultInstrument(request.instrument, center));
+      if (activeTool === 'select') {
+        setActiveTool('pen');
+      }
     } else if (request.type === 'image') {
       if (!boardId) return;
       setImageFlowId(`${boardId}-${Date.now()}`);
@@ -787,7 +955,7 @@ export default function BoardEditorScreen() {
     } else if (request.type === 'calculator') {
       setCalculatorVisible(true);
     }
-  }, [boardId, pressTool]);
+  }, [activeTool, boardId, canvasRect.height, canvasRect.width, pressTool, viewport, width, windowHeight]);
 
   const selectInkTool = useCallback((tool: FreehandTool) => {
     setActiveTool(tool);
@@ -834,12 +1002,13 @@ export default function BoardEditorScreen() {
   // expose duplicate, style, and delete, so the Edit action is capability-driven.
   const selectedIsTextual = selectedObject ? isTextualObject(selectedObject) : false;
   const selectedIsImage = selectedObject?.type === 'image';
+  const selectedIsTable = selectedObject?.type === 'table';
   // The rail is vertical and sits beside the selection, so it never covers the
   // rotate handle above the selection. Its action count decides its height.
   const selectionActionCount = selectedObjects.length === 0
     ? 0
     : selectedObject
-      ? (selectedIsTextual ? 4 : selectedIsImage ? 2 : 3)
+      ? (selectedIsTextual ? 4 : selectedIsTable ? 4 : selectedIsImage ? 2 : 3)
       : 2;
   const canvasBorder = 1;
   const actionRail = selectedRect && !editing && canvasRect.width > 0
@@ -988,7 +1157,9 @@ export default function BoardEditorScreen() {
                 document={document}
                 selectedObjectIds={selectedObjectIds}
                 editingObjectId={editingId}
+                editingTableCell={editingTableCell}
                 viewportRequest={viewportRequest}
+                activeInstrument={activeInstrument}
                 onViewportChange={reportViewport}
                 onCommand={runCommand}
                 onCommitPending={commitPending}
@@ -996,8 +1167,80 @@ export default function BoardEditorScreen() {
                 onSelectionChange={setSelectedObjectIds}
                 onObjectEdit={startEditingExisting}
                 onObjectMeasure={measureObject}
-                onCanvasTouch={commitEditing}
+                onCanvasTouch={() => {
+                  commitEditing();
+                  commitTableCell();
+                }}
               />
+              {activeInstrument ? (
+                <GeometryBoxOverlay
+                  instrument={activeInstrument}
+                  viewport={viewport}
+                  dark={dark}
+                  theme={theme}
+                  penColor={color}
+                  onChangeInstrument={setActiveInstrument}
+                  onSwitchInstrument={(kind: InstrumentKind) => {
+                    setActiveInstrument(
+                      createDefaultInstrument(kind, {
+                        x: activeInstrument.x,
+                        y: activeInstrument.y,
+                      }),
+                    );
+                  }}
+                  onCommitStroke={(points) => {
+                    if (points.length === 0) return;
+                    let stroke = createInkStroke({
+                      id: `geo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                      tool: 'pen',
+                      point: points[0],
+                      color,
+                      width: strokeWidth,
+                      opacity: 1,
+                    });
+                    for (let i = 1; i < points.length; i += 1) {
+                      stroke = { ...stroke, points: [...stroke.points, points[i]] };
+                    }
+                    dispatch({ type: 'command', command: { type: 'ink.add', stroke } });
+                  }}
+                  onClose={() => setActiveInstrument(null)}
+                />
+              ) : null}
+              {editingTableCell ? (() => {
+                const tbl = findObject(document, editingTableCell.objectId);
+                if (!tbl || !isTableObject(tbl)) return null;
+                const cellRect = tableCellRect(tbl, editingTableCell.row, editingTableCell.col);
+                const left = cellRect.x * viewport.scale + viewport.x;
+                const top = cellRect.y * viewport.scale + viewport.y;
+                const w = cellRect.width * viewport.scale;
+                const h = cellRect.height * viewport.scale;
+                return (
+                  <TextInput
+                    autoFocus
+                    value={editingTableCell.text}
+                    onChangeText={(text) =>
+                      setEditingTableCell((prev) => (prev ? { ...prev, text } : null))
+                    }
+                    onSubmitEditing={advanceTableCell}
+                    onBlur={commitTableCell}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    style={[
+                      styles.tableCellInput,
+                      {
+                        left,
+                        top,
+                        width: Math.max(44, w),
+                        height: Math.max(32, h),
+                        color: textColorValue(tbl.colorKey, dark),
+                        backgroundColor: theme.surface,
+                        borderColor: theme.primary,
+                        fontSize: Math.max(11, tbl.fontSize * viewport.scale),
+                      },
+                    ]}
+                  />
+                );
+              })() : null}
               {showGuidance && (
                 <View pointerEvents="none" style={styles.canvasGuidance}>
                   <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
@@ -1112,7 +1355,7 @@ export default function BoardEditorScreen() {
                     <EditIcon size={18} color={theme.foreground} />
                   </Pressable>
                 )}
-                {selectedObject && !selectedIsImage && (
+                {selectedObject && !selectedIsImage && !selectedIsTable && (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Style selected object"
@@ -1127,6 +1370,31 @@ export default function BoardEditorScreen() {
                   >
                     <StyleIcon size={18} color={theme.foreground} />
                   </Pressable>
+                )}
+                {selectedIsTable && selectedObject && (
+                  <>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Add table row"
+                      onPress={() => handleTableAction(selectedObject.id, 'add-row')}
+                      style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
+                    >
+                      <Text style={{ color: theme.foreground, fontSize: 12, fontWeight: '700' }}>+R</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Add table column"
+                      onPress={() => handleTableAction(selectedObject.id, 'add-col')}
+                      style={({ pressed }) => [
+                        styles.selectionAction,
+                        styles.selectionActionSeparator,
+                        { borderTopColor: theme.border },
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={{ color: theme.foreground, fontSize: 12, fontWeight: '700' }}>+C</Text>
+                    </Pressable>
+                  </>
                 )}
                 <Pressable
                   accessibilityRole="button"
@@ -1222,6 +1490,7 @@ export default function BoardEditorScreen() {
               onDuplicateSelected={duplicateSelected}
               onDeleteSelected={deleteSelected}
               onUpdateObjectStyle={updateObjectStyleById}
+              onTableAction={handleTableAction}
             />
           )}
       </View>
@@ -1297,6 +1566,7 @@ export default function BoardEditorScreen() {
           shapeColorKey={shapeColorKey}
           shapeFillKey={shapeFillKey}
           shapeStrokeWidth={shapeStrokeWidth}
+          showMeasurements={shapeShowMeasurements}
           connectorStyle={connectorStyle}
           connectorColorKey={connectorColorKey}
           connectorStrokeWidth={connectorStrokeWidth}
@@ -1309,6 +1579,7 @@ export default function BoardEditorScreen() {
           onShapeColor={setShapeColorKey}
           onShapeFill={setShapeFillKey}
           onShapeStrokeWidth={setShapeStrokeWidth}
+          onShowMeasurements={setShapeShowMeasurements}
           onConnectorStyle={setConnectorStyle}
           onConnectorColor={setConnectorColorKey}
           onConnectorStrokeWidth={setConnectorStrokeWidth}
@@ -1344,6 +1615,11 @@ export default function BoardEditorScreen() {
           shapeColorKey={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.colorKey : shapeColorKey}
           shapeFillKey={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.fillKey : shapeFillKey}
           shapeStrokeWidth={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.strokeWidth : shapeStrokeWidth}
+          showMeasurements={
+            stylingGeometricObject.type === 'shape'
+              ? Boolean(stylingGeometricObject.showMeasurements)
+              : false
+          }
           connectorStyle={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.style : connectorStyle}
           connectorColorKey={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.colorKey : connectorColorKey}
           connectorStrokeWidth={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.strokeWidth : connectorStrokeWidth}
@@ -1352,6 +1628,7 @@ export default function BoardEditorScreen() {
           onShapeColor={(value) => updateStyledObject({ colorKey: value })}
           onShapeFill={(value) => updateStyledObject({ fillKey: value })}
           onShapeStrokeWidth={(value) => updateStyledObject({ strokeWidth: value })}
+          onShowMeasurements={(value) => updateStyledObject({ showMeasurements: value })}
           onConnectorStyle={(value) => updateStyledObject({ style: value })}
           onConnectorColor={(value) => updateStyledObject({ colorKey: value })}
           onConnectorStrokeWidth={(value) => updateStyledObject({ strokeWidth: value })}
@@ -1774,5 +2051,13 @@ const styles = StyleSheet.create({
   styleOptionDesc: {
     fontSize: 12,
     opacity: 0.72,
+  },
+  tableCellInput: {
+    position: 'absolute',
+    borderWidth: 2,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    zIndex: 30,
   },
 });

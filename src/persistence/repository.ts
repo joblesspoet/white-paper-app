@@ -18,8 +18,13 @@ import type {
   ImageOcr,
   LineDirection,
   ShapeKind,
+  TableCell,
 } from '../canvas/document.ts';
-import { documentsEqual } from '../canvas/document.ts';
+import {
+  ALL_SHAPE_KINDS,
+  documentsEqual,
+  normalizeColumnRatios,
+} from '../canvas/document.ts';
 import type { InkStroke } from '../canvas/ink.ts';
 import type { Viewport } from '../canvas/viewport.ts';
 import type { PersistenceDatabase, SqlParams } from './database.ts';
@@ -383,6 +388,14 @@ function objectStyle(object: CanvasObject): Record<string, unknown> {
     style.shape = object.shape;
     style.fillKey = object.fillKey;
     style.strokeWidth = object.strokeWidth;
+    if (object.showMeasurements !== undefined) style.showMeasurements = object.showMeasurements;
+  }
+  if (object.type === 'table') {
+    style.rows = object.rows;
+    style.columns = object.columns;
+    style.hasHeaderRow = object.hasHeaderRow;
+    style.fillHeader = object.fillHeader;
+    style.fontSize = object.fontSize;
   }
   if (object.type === 'connector') {
     style.style = object.style;
@@ -415,7 +428,7 @@ export async function saveBoardViewport(
 
 // ------------------------------------------------------------------- parsing
 
-const SHAPE_KINDS = new Set(['rectangle', 'ellipse', 'line']);
+const SHAPE_KINDS = new Set<string>(ALL_SHAPE_KINDS);
 const CONNECTOR_STYLES = new Set(['line', 'arrow', 'elbow']);
 const DIRECTIONS = new Set(['tlbr', 'trbl', 'bltr', 'brtl']);
 
@@ -516,6 +529,52 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
       fillKey: value.fillKey as string | null,
       strokeWidth: value.strokeWidth,
       direction: value.direction as LineDirection,
+      ...(typeof value.showMeasurements === 'boolean' ? { showMeasurements: value.showMeasurements } : {}),
+    };
+  }
+
+  if (value.type === 'table') {
+    if (
+      !isFiniteNumber(value.rows) ||
+      !isFiniteNumber(value.columns) ||
+      value.rows < 1 ||
+      value.columns < 1 ||
+      !Array.isArray(value.cells) ||
+      typeof colorKey !== 'string' ||
+      !isFiniteNumber(fontSize)
+    ) {
+      return null;
+    }
+    const rows = Math.round(value.rows);
+    const columns = Math.round(value.columns);
+    const expectedCount = rows * columns;
+    const cells: TableCell[] = [];
+    for (let i = 0; i < expectedCount; i += 1) {
+      const rawCell = value.cells[i];
+      if (isRecord(rawCell) && typeof rawCell.text === 'string') {
+        const align =
+          rawCell.align === 'center' || rawCell.align === 'right' || rawCell.align === 'left'
+            ? rawCell.align
+            : undefined;
+        cells.push(align ? { text: rawCell.text, align } : { text: rawCell.text });
+      } else {
+        cells.push({ text: '' });
+      }
+    }
+    const rawRatios = Array.isArray(value.columnRatios)
+      ? value.columnRatios.filter((v): v is number => isFiniteNumber(v))
+      : [];
+    return {
+      ...base,
+      type: 'table',
+      rows,
+      columns,
+      columnRatios: normalizeColumnRatios(rawRatios, columns),
+      cells,
+      hasHeaderRow: typeof value.hasHeaderRow === 'boolean' ? value.hasHeaderRow : true,
+      colorKey,
+      fillHeader: typeof value.fillHeader === 'boolean' ? value.fillHeader : true,
+      fontSize,
     };
   }
 

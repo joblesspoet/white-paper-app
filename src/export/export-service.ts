@@ -27,20 +27,25 @@ import {
   OBJECT_PADDING,
   arrowHeadPathData,
   arrowHeadSize,
+  buildShapeRenderPrimitives,
   connectorPolyline,
   isGeometricObject,
   isImageObject,
+  isTableObject,
   isTextualObject,
-  linePoints,
   objectFill,
   objectTextColor,
   polylinePathData,
   stickyColorValue,
+  tableCellRect,
+  tableColumnWidths,
+  tableRowHeight,
   textColorValue,
   type CanvasDocument,
   type CanvasObject,
   type ConnectorObject,
   type ShapeObject,
+  type TableObject,
   type TextualObject,
 } from '../canvas/document';
 import { inkPathData, type InkStroke } from '../canvas/ink';
@@ -170,16 +175,18 @@ function drawGeometric(
   strokePaint.setStrokeJoin(StrokeJoin.Round);
   strokePaint.setColor(Skia.Color(strokeColor));
 
-  if (object.type === 'connector' || object.shape === 'line') {
-    const pts = object.type === 'connector'
-      ? connectorPolyline(object.style, object.x, object.y, object.width, object.height, object.direction)
-      : (() => {
-          const pair = linePoints(object.x, object.y, object.width, object.height, object.direction);
-          return [pair.start, pair.end];
-        })();
+  if (object.type === 'connector') {
+    const pts = connectorPolyline(
+      object.style,
+      object.x,
+      object.y,
+      object.width,
+      object.height,
+      object.direction,
+    );
     const path = Skia.Path.MakeFromSVGString(polylinePathData(pts));
     if (path) canvas.drawPath(path, strokePaint);
-    if (object.type === 'connector' && object.style === 'arrow') {
+    if (object.style === 'arrow') {
       const arrowSvg = arrowHeadPathData(pts, arrowHeadSize(object.strokeWidth));
       const arrowPath = arrowSvg ? Skia.Path.MakeFromSVGString(arrowSvg) : null;
       if (arrowPath) {
@@ -194,23 +201,151 @@ function drawGeometric(
     return;
   }
 
-  if (object.fillKey) {
-    const fillPaint = Skia.Paint();
-    fillPaint.setAntiAlias(true);
-    fillPaint.setStyle(PaintStyle.Fill);
-    fillPaint.setColor(Skia.Color(stickyColorValue(object.fillKey)));
-    if (object.shape === 'ellipse') {
-      canvas.drawOval(Skia.XYWHRect(object.x, object.y, object.width, object.height), fillPaint);
-    } else {
-      canvas.drawRect(Skia.XYWHRect(object.x, object.y, object.width, object.height), fillPaint);
+  const primitives = buildShapeRenderPrimitives(
+    object.shape,
+    object.x,
+    object.y,
+    object.width,
+    object.height,
+    object.direction,
+    Boolean(object.showMeasurements),
+  );
+
+  if (object.fillKey && primitives.fillPathSvg) {
+    const fillPath = Skia.Path.MakeFromSVGString(primitives.fillPathSvg);
+    if (fillPath) {
+      const fillPaint = Skia.Paint();
+      fillPaint.setAntiAlias(true);
+      fillPaint.setStyle(PaintStyle.Fill);
+      fillPaint.setColor(Skia.Color(stickyColorValue(object.fillKey)));
+      canvas.drawPath(fillPath, fillPaint);
     }
   }
 
-  if (object.shape === 'ellipse') {
-    canvas.drawOval(Skia.XYWHRect(object.x, object.y, object.width, object.height), strokePaint);
-  } else {
-    canvas.drawRect(Skia.XYWHRect(object.x, object.y, object.width, object.height), strokePaint);
+  if (primitives.solidStrokeSvg) {
+    const solidPath = Skia.Path.MakeFromSVGString(primitives.solidStrokeSvg);
+    if (solidPath) canvas.drawPath(solidPath, strokePaint);
   }
+
+  if (primitives.dashedStrokeSvg) {
+    const dashedPath = Skia.Path.MakeFromSVGString(primitives.dashedStrokeSvg);
+    if (dashedPath) {
+      const dashedPaint = strokePaint.copy();
+      dashedPaint.setPathEffect(Skia.PathEffect.MakeDash([6, 4], 0));
+      canvas.drawPath(dashedPath, dashedPaint);
+    }
+  }
+
+  if (primitives.arrowHeadsSvg) {
+    const arrowPath = Skia.Path.MakeFromSVGString(primitives.arrowHeadsSvg);
+    if (arrowPath) {
+      const fillPaint = Skia.Paint();
+      fillPaint.setAntiAlias(true);
+      fillPaint.setStyle(PaintStyle.Fill);
+      fillPaint.setColor(Skia.Color(strokeColor));
+      canvas.drawPath(arrowPath, fillPaint);
+    }
+  }
+
+  if (primitives.measurementLabels && primitives.measurementLabels.length > 0) {
+    for (const label of primitives.measurementLabels) {
+      const para = Skia.ParagraphBuilder.Make({ textAlign: TextAlign.Center })
+        .pushStyle({
+          color: Skia.Color(strokeColor),
+          fontSize: 11,
+          fontStyle: { weight: FontWeight.SemiBold },
+        })
+        .addText(label.text)
+        .build();
+      para.layout(80);
+      para.paint(canvas, label.x - 40, label.y - 7);
+    }
+  }
+  canvas.restore();
+}
+
+function drawTable(
+  canvas: SkCanvas,
+  table: TableObject,
+  dark: boolean,
+): void {
+  const borderColor = textColorValue(table.colorKey, dark);
+  const cx = table.x + table.width / 2;
+  const cy = table.y + table.height / 2;
+  canvas.save();
+  if (table.rotation !== 0) {
+    canvas.rotate(table.rotation, cx, cy);
+  }
+
+  const frameRect = Skia.RRectXY(Skia.XYWHRect(table.x, table.y, table.width, table.height), 6, 6);
+
+  if (table.hasHeaderRow && table.fillHeader && table.rows >= 1) {
+    const rowH = tableRowHeight(table);
+    const headerPaint = Skia.Paint();
+    headerPaint.setAntiAlias(true);
+    headerPaint.setStyle(PaintStyle.Fill);
+    headerPaint.setColor(Skia.Color(borderColor));
+    headerPaint.setAlphaf(0.12);
+    canvas.save();
+    canvas.clipRRect(frameRect, 1, true);
+    canvas.drawRect(Skia.XYWHRect(table.x, table.y, table.width, rowH), headerPaint);
+    canvas.restore();
+  }
+
+  const gridPaint = Skia.Paint();
+  gridPaint.setAntiAlias(true);
+  gridPaint.setStyle(PaintStyle.Stroke);
+  gridPaint.setStrokeWidth(1);
+  gridPaint.setColor(Skia.Color(borderColor));
+  gridPaint.setAlphaf(0.45);
+
+  const rowH = tableRowHeight(table);
+  for (let r = 1; r < table.rows; r += 1) {
+    const ly = table.y + r * rowH;
+    canvas.drawLine(table.x, ly, table.x + table.width, ly, gridPaint);
+  }
+
+  const widths = tableColumnWidths(table);
+  let lx = table.x;
+  for (let c = 0; c < table.columns - 1; c += 1) {
+    lx += widths[c];
+    canvas.drawLine(lx, table.y, lx, table.y + table.height, gridPaint);
+  }
+
+  const framePaint = Skia.Paint();
+  framePaint.setAntiAlias(true);
+  framePaint.setStyle(PaintStyle.Stroke);
+  framePaint.setStrokeWidth(1.5);
+  framePaint.setColor(Skia.Color(borderColor));
+  canvas.drawRRect(frameRect, framePaint);
+
+  for (let r = 0; r < table.rows; r += 1) {
+    for (let c = 0; c < table.columns; c += 1) {
+      const cell = table.cells[r * table.columns + c];
+      if (!cell || !cell.text) continue;
+      const rect = tableCellRect(table, r, c);
+      const isHeader = table.hasHeaderRow && r === 0;
+      const align =
+        cell.align === 'center'
+          ? TextAlign.Center
+          : cell.align === 'right'
+            ? TextAlign.Right
+            : TextAlign.Left;
+      const para = Skia.ParagraphBuilder.Make({ textAlign: align })
+        .pushStyle({
+          color: Skia.Color(borderColor),
+          fontSize: table.fontSize,
+          fontStyle: { weight: isHeader ? FontWeight.Bold : FontWeight.Normal },
+        })
+        .addText(cell.text)
+        .build();
+      const pad = 6;
+      const maxW = Math.max(8, rect.width - pad * 2);
+      para.layout(maxW);
+      para.paint(canvas, rect.x + pad, rect.y + pad);
+    }
+  }
+
   canvas.restore();
 }
 
@@ -359,6 +494,7 @@ async function renderRegionBase64(
   const objects = objectsForScope(input.document, input.scope, input.selectedIds);
   const images = objects.filter(isImageObject);
   const geometrics = objects.filter(isGeometricObject);
+  const tables = objects.filter(isTableObject);
   const textuals = objects.filter(isTextualObject);
 
   const totalSteps = Math.max(1, strokes.length + objects.length);
@@ -395,6 +531,16 @@ async function renderRegionBase64(
     completed += 1;
     if (completed % RENDER_BATCH_SIZE === 0) {
       input.onProgress?.(0.05 + 0.75 * progressFraction(completed, totalSteps), 'Rendering shapes…');
+      await yieldToEventLoop();
+    }
+  }
+
+  // 3.5 Tables
+  for (let index = 0; index < tables.length; index += 1) {
+    drawTable(canvas, tables[index], input.dark);
+    completed += 1;
+    if (completed % RENDER_BATCH_SIZE === 0) {
+      input.onProgress?.(0.05 + 0.75 * progressFraction(completed, totalSteps), 'Rendering tables…');
       await yieldToEventLoop();
     }
   }

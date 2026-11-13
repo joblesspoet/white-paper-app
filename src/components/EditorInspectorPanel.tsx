@@ -3,17 +3,20 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
   isCustomColor,
+  isTableObject,
   isTextualObject,
   SHAPE_STROKE_WIDTHS,
   STICKY_COLORS,
   STICKY_FONT_SIZES,
   stickyColorValue,
+  TABLE_FONT_SIZES,
   TEXT_COLORS,
   TEXT_FONT_SIZES,
   textColorValue,
   type CanvasObject,
   type ObjectStylePatch,
   type ShapeKind,
+  type TableObject,
   type TextSlant,
   type TextWeight,
 } from '../canvas/document';
@@ -46,6 +49,7 @@ type EditorInspectorPanelProps = {
   onDuplicateSelected: () => void;
   onDeleteSelected: () => void;
   onUpdateObjectStyle: (id: string, patch: ObjectStylePatch) => void;
+  onTableAction?: (id: string, action: 'add-row' | 'remove-row' | 'add-col' | 'remove-col') => void;
 };
 
 const SHAPES: ReadonlyArray<{ kind: ShapeKind; label: string; Icon: typeof RectangleIcon }> = [
@@ -72,6 +76,8 @@ function objectTypeLabel(type: CanvasObject['type']): string {
       return 'Connector';
     case 'image':
       return 'Image';
+    case 'table':
+      return 'Table';
   }
 }
 
@@ -86,6 +92,7 @@ export function EditorInspectorPanel({
   onDuplicateSelected,
   onDeleteSelected,
   onUpdateObjectStyle,
+  onTableAction,
 }: EditorInspectorPanelProps) {
   const [customPickerTarget, setCustomPickerTarget] = useState<'color' | 'fill' | null>(null);
 
@@ -555,6 +562,200 @@ export function EditorInspectorPanel({
                     >
                       {strokeWidth}px
                     </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: theme.foreground }]}>Measurements</Text>
+            <View style={styles.chipRow}>
+              <Pressable
+                accessibilityRole="switch"
+                accessibilityState={{ checked: Boolean(object.showMeasurements) }}
+                accessibilityLabel="Show geometric measurements"
+                onPress={() =>
+                  onUpdateObjectStyle(object.id, {
+                    showMeasurements: !object.showMeasurements,
+                  })
+                }
+                style={[
+                  styles.chip,
+                  {
+                    borderColor: object.showMeasurements ? theme.primary : theme.border,
+                    backgroundColor: object.showMeasurements ? theme.muted : theme.surface,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.chipLabel,
+                    { color: object.showMeasurements ? theme.primary : theme.foreground },
+                  ]}
+                >
+                  {object.showMeasurements ? 'On' : 'Off'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </>
+      );
+    }
+
+    if (isTableObject(object)) {
+      const table = object as TableObject;
+      return (
+        <>
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: theme.foreground }]}>
+              Rows & Columns ({table.rows}×{table.columns})
+            </Text>
+            <View style={styles.chipRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add table row"
+                onPress={() => onTableAction?.(table.id, 'add-row')}
+                style={[styles.chip, { borderColor: theme.border, backgroundColor: theme.surface }]}
+              >
+                <Text style={[styles.chipLabel, { color: theme.foreground }]}>+ Row</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Remove table row"
+                onPress={() => onTableAction?.(table.id, 'remove-row')}
+                style={[styles.chip, { borderColor: theme.border, backgroundColor: theme.surface }]}
+              >
+                <Text style={[styles.chipLabel, { color: theme.foreground }]}>− Row</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add table column"
+                onPress={() => onTableAction?.(table.id, 'add-col')}
+                style={[styles.chip, { borderColor: theme.border, backgroundColor: theme.surface }]}
+              >
+                <Text style={[styles.chipLabel, { color: theme.foreground }]}>+ Col</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Remove table column"
+                onPress={() => onTableAction?.(table.id, 'remove-col')}
+                style={[styles.chip, { borderColor: theme.border, backgroundColor: theme.surface }]}
+              >
+                <Text style={[styles.chipLabel, { color: theme.foreground }]}>− Col</Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: theme.foreground }]}>Header</Text>
+            <View style={styles.chipRow}>
+              <Pressable
+                accessibilityRole="switch"
+                accessibilityState={{ checked: table.hasHeaderRow }}
+                onPress={() =>
+                  onUpdateObjectStyle(table.id, { hasHeaderRow: !table.hasHeaderRow })
+                }
+                style={[
+                  styles.chip,
+                  {
+                    borderColor: table.hasHeaderRow ? theme.primary : theme.border,
+                    backgroundColor: table.hasHeaderRow ? theme.muted : theme.surface,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.chipLabel,
+                    { color: table.hasHeaderRow ? theme.primary : theme.foreground },
+                  ]}
+                >
+                  Header Row
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="switch"
+                accessibilityState={{ checked: table.fillHeader }}
+                onPress={() =>
+                  onUpdateObjectStyle(table.id, { fillHeader: !table.fillHeader })
+                }
+                style={[
+                  styles.chip,
+                  {
+                    borderColor: table.fillHeader ? theme.primary : theme.border,
+                    backgroundColor: table.fillHeader ? theme.muted : theme.surface,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.chipLabel,
+                    { color: table.fillHeader ? theme.primary : theme.foreground },
+                  ]}
+                >
+                  Fill Header
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: theme.foreground }]}>Font Size</Text>
+            <View style={styles.chipRow}>
+              {TABLE_FONT_SIZES.map((fs) => {
+                const selected = fs === table.fontSize;
+                return (
+                  <Pressable
+                    key={fs}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => onUpdateObjectStyle(table.id, { fontSize: fs })}
+                    style={[
+                      styles.chip,
+                      {
+                        borderColor: selected ? theme.primary : theme.border,
+                        backgroundColor: selected ? theme.muted : theme.surface,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipLabel,
+                        { color: selected ? theme.primary : theme.foreground },
+                      ]}
+                    >
+                      {fs}pt
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: theme.foreground }]}>Color</Text>
+            <View style={styles.swatchRow}>
+              {TEXT_COLORS.map((entry) => {
+                const selected = entry.key === table.colorKey;
+                const swatchColor = dark ? entry.dark : entry.light;
+                return (
+                  <Pressable
+                    key={entry.key}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Table color ${entry.name}`}
+                    onPress={() => onUpdateObjectStyle(table.id, { colorKey: entry.key })}
+                    style={styles.swatchButton}
+                  >
+                    <View
+                      style={[
+                        styles.swatch,
+                        {
+                          backgroundColor: swatchColor,
+                          borderColor: selected ? theme.primary : theme.border,
+                          borderWidth: selected ? 3 : 1,
+                        },
+                      ]}
+                    />
                   </Pressable>
                 );
               })}
