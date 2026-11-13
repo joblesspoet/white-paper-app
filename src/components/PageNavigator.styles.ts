@@ -17,6 +17,11 @@ export const pageNavigatorStyles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: spacing.xs,
   },
+  pillButtonCompact: {
+    minWidth: 32,
+    minHeight: 34,
+    paddingHorizontal: 3,
+  },
   pillButtonDisabled: {
     opacity: 0.35,
   },
@@ -28,9 +33,17 @@ export const pageNavigatorStyles = StyleSheet.create({
     borderLeftWidth: 1,
     borderRightWidth: 1,
   },
+  pillLabelButtonCompact: {
+    minHeight: 34,
+    paddingHorizontal: 6,
+  },
   pillLabelText: {
     ...typography.caption,
     fontWeight: '600',
+  },
+  pillLabelTextCompact: {
+    fontSize: 12,
+    lineHeight: 16,
   },
   pillAddButton: {
     minWidth: touchTarget,
@@ -40,9 +53,17 @@ export const pageNavigatorStyles = StyleSheet.create({
     borderLeftWidth: 1,
     paddingHorizontal: spacing.xs,
   },
+  pillAddButtonCompact: {
+    minWidth: 32,
+    minHeight: 34,
+    paddingHorizontal: 3,
+  },
   pillGlyph: {
     fontSize: 16,
     fontWeight: '600',
+  },
+  pillGlyphCompact: {
+    fontSize: 14,
   },
 
   scrim: {

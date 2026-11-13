@@ -53,6 +53,8 @@ export const PageNavigatorPill = React.memo(function PageNavigatorPill({
   const hasPrev = safeIndex > 0;
   const hasNext = safeIndex < safeTotal - 1;
 
+  const compactHitSlop = compact ? { top: 6, bottom: 6, left: 2, right: 2 } : undefined;
+
   return (
     <View
       style={[
@@ -65,19 +67,25 @@ export const PageNavigatorPill = React.memo(function PageNavigatorPill({
         accessibilityLabel="Previous page"
         accessibilityState={{ disabled: !hasPrev }}
         disabled={!hasPrev}
+        hitSlop={compactHitSlop}
         onPress={onPrevPage}
-        style={[styles.pillButton, !hasPrev && styles.pillButtonDisabled]}
+        style={[
+          styles.pillButton,
+          compact && styles.pillButtonCompact,
+          !hasPrev && styles.pillButtonDisabled,
+        ]}
       >
-        <Text style={[styles.pillGlyph, { color: theme.foreground }]}>‹</Text>
+        <Text style={[styles.pillGlyph, compact && styles.pillGlyphCompact, { color: theme.foreground }]}>‹</Text>
       </Pressable>
 
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Page ${safeIndex + 1} of ${safeTotal}. Open page sorter`}
+        hitSlop={compactHitSlop}
         onPress={onOpenSorter}
-        style={[styles.pillLabelButton, { borderColor: theme.border }]}
+        style={[styles.pillLabelButton, compact && styles.pillLabelButtonCompact, { borderColor: theme.border }]}
       >
-        <Text style={[styles.pillLabelText, { color: theme.foreground }]}>
+        <Text style={[styles.pillLabelText, compact && styles.pillLabelTextCompact, { color: theme.foreground }]}>
           {compact ? `${safeIndex + 1}/${safeTotal}` : `Page ${safeIndex + 1} / ${safeTotal}`}
         </Text>
       </Pressable>
@@ -87,19 +95,25 @@ export const PageNavigatorPill = React.memo(function PageNavigatorPill({
         accessibilityLabel="Next page"
         accessibilityState={{ disabled: !hasNext }}
         disabled={!hasNext}
+        hitSlop={compactHitSlop}
         onPress={onNextPage}
-        style={[styles.pillButton, !hasNext && styles.pillButtonDisabled]}
+        style={[
+          styles.pillButton,
+          compact && styles.pillButtonCompact,
+          !hasNext && styles.pillButtonDisabled,
+        ]}
       >
-        <Text style={[styles.pillGlyph, { color: theme.foreground }]}>›</Text>
+        <Text style={[styles.pillGlyph, compact && styles.pillGlyphCompact, { color: theme.foreground }]}>›</Text>
       </Pressable>
 
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Add blank page"
+        hitSlop={compactHitSlop}
         onPress={onAddPage}
-        style={[styles.pillAddButton, { borderColor: theme.border }]}
+        style={[styles.pillAddButton, compact && styles.pillAddButtonCompact, { borderColor: theme.border }]}
       >
-        <Text style={[styles.pillGlyph, { color: theme.primary }]}>+</Text>
+        <Text style={[styles.pillGlyph, compact && styles.pillGlyphCompact, { color: theme.primary }]}>+</Text>
       </Pressable>
 
       {onDeleteCurrentPage ? (
@@ -108,14 +122,16 @@ export const PageNavigatorPill = React.memo(function PageNavigatorPill({
           accessibilityLabel="Delete current page"
           accessibilityState={{ disabled: !canDeleteCurrentPage }}
           disabled={!canDeleteCurrentPage}
+          hitSlop={compactHitSlop}
           onPress={onDeleteCurrentPage}
           style={[
             styles.pillAddButton,
+            compact && styles.pillAddButtonCompact,
             { borderColor: theme.border },
             !canDeleteCurrentPage && styles.pillButtonDisabled,
           ]}
         >
-          <Text style={[styles.pillGlyph, { color: theme.destructive }]}>−</Text>
+          <Text style={[styles.pillGlyph, compact && styles.pillGlyphCompact, { color: theme.destructive }]}>−</Text>
         </Pressable>
       ) : null}
 

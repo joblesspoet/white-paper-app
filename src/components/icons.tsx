@@ -406,3 +406,17 @@ export function GridIcon({ size = 24, color = colors.foreground }: IconProps) {
   );
 }
 
+export function HandIcon({ size = 24, color = colors.foreground }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M18 11V6a2 2 0 0 0-4 0v4m0-4V4a2 2 0 0 0-4 0v6m0-4a2 2 0 0 0-4 0v7.5L4.5 12a2 2 0 0 0-2.8 2.8l4.7 5.2A4 4 0 0 0 9.4 21H15a5 5 0 0 0 5-5v-5a2 2 0 0 0-2-2Z"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+

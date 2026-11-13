@@ -150,6 +150,7 @@ export type { InkStroke } from '../canvas/ink';
 
 export type InkTool =
   | 'select'
+  | 'pan'
   | 'pen'
   | 'highlighter'
   | 'eraser'
@@ -214,6 +215,8 @@ type CanvasViewportProps = {
   pressureSensitivity?: boolean;
   holdToSnapShapes?: boolean;
   selectedInkIds?: readonly string[];
+  compactHud?: boolean;
+  hideHud?: boolean;
   onViewportChange?: (viewport: ViewportState) => void;
   onCommand: (command: DocumentCommand, transient?: boolean) => void;
   onCommitPending: () => void;
@@ -253,6 +256,8 @@ export function CanvasViewport({
   editingMath = false,
   editingMathSpan = null,
   viewportRequest = null,
+  compactHud = false,
+  hideHud = false,
   activeInstrument = null,
   stylusOnlyDrawing = false,
   pressureSensitivity = true,
@@ -1047,19 +1052,37 @@ export function CanvasViewport({
       runOnJS(finishLaser)();
     });
 
+  const handPanGesture = Gesture.Pan()
+    .enabled(activeTool === 'pan')
+    .minDistance(0)
+    .onStart(() => {
+      startX.value = offsetX.value;
+      startY.value = offsetY.value;
+    })
+    .onUpdate((event) => {
+      offsetX.value = startX.value + event.translationX;
+      offsetY.value = startY.value + event.translationY;
+      runOnJS(report)(offsetX.value, offsetY.value, scale.value);
+    })
+    .onFinalize(() => {
+      runOnJS(commitViewport)(offsetX.value, offsetY.value, scale.value);
+    });
+
   const primaryGesture = editing
     ? dismissTap
-    : activeTool === 'eraser'
-      ? eraseGesture
-      : activeTool === 'laser'
-        ? laserGesture
-        : activeTool === 'pen' || activeTool === 'highlighter'
-          ? drawGesture
-          : activeTool === 'text' || activeTool === 'sticky'
-            ? objectTap
-            : activeTool === 'shape' || activeTool === 'connector'
-              ? shapeGesture
-              : selectGesture;
+    : activeTool === 'pan'
+      ? handPanGesture
+      : activeTool === 'eraser'
+        ? eraseGesture
+        : activeTool === 'laser'
+          ? laserGesture
+          : activeTool === 'pen' || activeTool === 'highlighter'
+            ? drawGesture
+            : activeTool === 'text' || activeTool === 'sticky'
+              ? objectTap
+              : activeTool === 'shape' || activeTool === 'connector'
+                ? shapeGesture
+                : selectGesture;
   const gesture = Gesture.Simultaneous(primaryGesture, marqueeGesture, pinchGesture);
 
   const transform = useDerivedValue(() => [
@@ -1247,63 +1270,82 @@ export function CanvasViewport({
         </Canvas>
       )}
 
-      <View style={styles.hud} pointerEvents="box-none">
-        {snapReadout ? (
-          <View style={[styles.snapBadge, { backgroundColor: theme.surface, borderColor: '#0D9488' }]} pointerEvents="none">
-            <Text style={[styles.zoomText, { color: '#0D9488' }]}>{snapReadout}</Text>
+      {!hideHud && (
+        <View style={styles.hud} pointerEvents="box-none">
+          {snapReadout ? (
+            <View
+              style={[
+                styles.snapBadge,
+                compactHud && styles.snapBadgeCompact,
+                { backgroundColor: theme.surface, borderColor: '#0D9488' },
+              ]}
+              pointerEvents="none"
+            >
+              <Text style={[styles.zoomText, compactHud && styles.zoomTextCompact, { color: '#0D9488' }]}>{snapReadout}</Text>
+            </View>
+          ) : null}
+          <View style={[styles.zoomPill, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Zoom out"
+              accessibilityState={{ disabled: viewport.scale <= MIN_ZOOM + 0.001 }}
+              disabled={viewport.scale <= MIN_ZOOM + 0.001}
+              hitSlop={compactHud ? { top: 6, bottom: 6, left: 2, right: 2 } : undefined}
+              onPress={() => stepZoom(0.8)}
+              style={({ pressed }) => [
+                styles.zoomStepButton,
+                compactHud && styles.zoomStepButtonCompact,
+                viewport.scale <= MIN_ZOOM + 0.001 && { opacity: 0.35 },
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.zoomStepGlyph, compactHud && styles.zoomStepGlyphCompact, { color: theme.foreground }]}>−</Text>
+            </Pressable>
+            <View
+              style={[
+                styles.zoomPercentWrap,
+                compactHud && styles.zoomPercentWrapCompact,
+                { borderLeftColor: theme.border, borderRightColor: theme.border },
+              ]}
+              pointerEvents="none"
+              accessibilityLabel={`Zoom ${zoomLabel}`}
+            >
+              <Text style={[styles.zoomText, compactHud && styles.zoomTextCompact, { color: theme.foreground }]}>{zoomLabel}</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Zoom in"
+              accessibilityState={{ disabled: viewport.scale >= MAX_ZOOM - 0.001 }}
+              disabled={viewport.scale >= MAX_ZOOM - 0.001}
+              hitSlop={compactHud ? { top: 6, bottom: 6, left: 2, right: 2 } : undefined}
+              onPress={() => stepZoom(1.25)}
+              style={({ pressed }) => [
+                styles.zoomStepButton,
+                compactHud && styles.zoomStepButtonCompact,
+                viewport.scale >= MAX_ZOOM - 0.001 && { opacity: 0.35 },
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.zoomStepGlyph, compactHud && styles.zoomStepGlyphCompact, { color: theme.foreground }]}>+</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Reset viewport"
+              accessibilityHint="Returns the canvas to 100% zoom at the origin"
+              hitSlop={compactHud ? { top: 6, bottom: 6, left: 2, right: 2 } : undefined}
+              onPress={resetView}
+              style={({ pressed }) => [
+                styles.resetButton,
+                compactHud && styles.resetButtonCompact,
+                { borderLeftColor: theme.border },
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.resetText, compactHud && styles.zoomTextCompact, { color: theme.foreground }]}>Reset</Text>
+            </Pressable>
           </View>
-        ) : null}
-        <View style={[styles.zoomPill, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Zoom out"
-            accessibilityState={{ disabled: viewport.scale <= MIN_ZOOM + 0.001 }}
-            disabled={viewport.scale <= MIN_ZOOM + 0.001}
-            onPress={() => stepZoom(0.8)}
-            style={({ pressed }) => [
-              styles.zoomStepButton,
-              viewport.scale <= MIN_ZOOM + 0.001 && { opacity: 0.35 },
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={[styles.zoomStepGlyph, { color: theme.foreground }]}>−</Text>
-          </Pressable>
-          <View
-            style={[styles.zoomPercentWrap, { borderLeftColor: theme.border, borderRightColor: theme.border }]}
-            pointerEvents="none"
-            accessibilityLabel={`Zoom ${zoomLabel}`}
-          >
-            <Text style={[styles.zoomText, { color: theme.foreground }]}>{zoomLabel}</Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Zoom in"
-            accessibilityState={{ disabled: viewport.scale >= MAX_ZOOM - 0.001 }}
-            disabled={viewport.scale >= MAX_ZOOM - 0.001}
-            onPress={() => stepZoom(1.25)}
-            style={({ pressed }) => [
-              styles.zoomStepButton,
-              viewport.scale >= MAX_ZOOM - 0.001 && { opacity: 0.35 },
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={[styles.zoomStepGlyph, { color: theme.foreground }]}>+</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Reset viewport"
-            accessibilityHint="Returns the canvas to 100% zoom at the origin"
-            onPress={resetView}
-            style={({ pressed }) => [
-              styles.resetButton,
-              { borderLeftColor: theme.border },
-              pressed && styles.pressed,
-            ]}
-          >
-            <Text style={[styles.resetText, { color: theme.foreground }]}>Reset</Text>
-          </Pressable>
         </View>
-      </View>
+      )}
     </View>
   );
 }

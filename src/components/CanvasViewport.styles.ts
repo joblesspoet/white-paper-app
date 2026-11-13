@@ -21,6 +21,10 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  snapBadgeCompact: {
+    minHeight: 34,
+    paddingHorizontal: spacing.sm,
+  },
   zoomPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -35,10 +39,19 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: spacing.xs,
   },
+  zoomStepButtonCompact: {
+    minHeight: 34,
+    minWidth: 32,
+    paddingHorizontal: 3,
+  },
   zoomStepGlyph: {
     fontSize: 17,
     fontWeight: '600',
     lineHeight: 20,
+  },
+  zoomStepGlyphCompact: {
+    fontSize: 15,
+    lineHeight: 17,
   },
   zoomPercentWrap: {
     minHeight: touchTarget,
@@ -49,13 +62,23 @@ export const styles = StyleSheet.create({
     borderLeftWidth: 1,
     borderRightWidth: 1,
   },
+  zoomPercentWrapCompact: {
+    minHeight: 34,
+    minWidth: 40,
+    paddingHorizontal: 5,
+  },
   zoomText: { ...typography.caption, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  zoomTextCompact: { fontSize: 12, lineHeight: 16 },
   resetButton: {
     minHeight: touchTarget,
     paddingHorizontal: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
     borderLeftWidth: 1,
+  },
+  resetButtonCompact: {
+    minHeight: 34,
+    paddingHorizontal: spacing.sm,
   },
   resetText: { ...typography.caption, fontWeight: '600' },
   pressed: { opacity: 0.6 },

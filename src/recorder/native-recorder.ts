@@ -1,10 +1,11 @@
 /**
- * Lazy native screen/audio capture adapter for FlowCanvas Lesson Recorder.
+ * Native screen/audio capture adapter for FlowCanvas Lesson Recorder.
  *
- * Uses `requireOptionalNativeModule` (just like `src/ocr/native-ocr.ts`) so
- * the app never crashes in Expo Go when native screen-capture or audio-muxing
- * modules are absent. In Expo Go, the deterministic canvas timeline recorder
- * (`lesson-recorder.ts`) continues to work at full 60 FPS fidelity.
+ * 1. Uses lazy `requireOptionalNativeModule('FlowCanvasRecorder')` (from
+ *    `modules/flowcanvas-recorder`) for full MP4 screen + mic video capture.
+ * 2. Automatically falls back to `expo-audio` (`AudioRecorder`) for voice
+ *    narration (`.m4a`) when screen capture is unavailable (e.g. Expo Go) or
+ *    declined, so voice audio is still captured alongside the 60 FPS timeline.
  */
 
 import { Platform } from 'react-native';
@@ -26,8 +27,17 @@ type NativeScreenRecorderModule = {
   stopRecording: () => Promise<{ videoUri?: string | null; audioUri?: string | null } | string | null>;
 };
 
+type ExpoAudioRecorderInstance = {
+  uri: string | null;
+  prepareToRecordAsync: (options?: Record<string, unknown>) => Promise<void>;
+  record: () => void;
+  pause: () => void;
+  stop: () => Promise<void>;
+};
+
 export type NativeRecordingStartResult = {
   nativeActive: boolean;
+  audioActive: boolean;
   reason?: string;
 };
 
@@ -39,6 +49,8 @@ export type NativeRecordingStopResult = {
 
 let cachedChecked = false;
 let cachedModule: NativeScreenRecorderModule | null = null;
+let activeAudioRecorder: ExpoAudioRecorderInstance | null = null;
+let activeScreenCapture = false;
 
 function loadNativeRecorderModule(): NativeScreenRecorderModule | null {
   if (cachedChecked) return cachedModule;
@@ -70,6 +82,37 @@ function loadNativeRecorderModule(): NativeScreenRecorderModule | null {
   return null;
 }
 
+async function startExpoAudioFallback(): Promise<boolean> {
+  if (Platform.OS === 'web') return false;
+  try {
+    const expoAudio = await import('expo-audio');
+    const perm = await expoAudio.requestRecordingPermissionsAsync();
+    if (!perm.granted) return false;
+
+    await expoAudio.setAudioModeAsync({
+      allowsRecording: true,
+      playsInSilentMode: true,
+    });
+
+    const AudioModule = expoAudio.default ?? (expoAudio as unknown as { AudioRecorder?: unknown });
+    const RecorderCtor =
+      (AudioModule as { AudioRecorder?: new (opts: Record<string, unknown>) => ExpoAudioRecorderInstance })
+        ?.AudioRecorder ??
+      (expoAudio as unknown as { AudioRecorder?: new (opts: Record<string, unknown>) => ExpoAudioRecorderInstance })
+        ?.AudioRecorder;
+    if (!RecorderCtor) return false;
+
+    const recorder = new RecorderCtor(expoAudio.RecordingPresets.HIGH_QUALITY);
+    await recorder.prepareToRecordAsync(expoAudio.RecordingPresets.HIGH_QUALITY);
+    recorder.record();
+    activeAudioRecorder = recorder;
+    return true;
+  } catch {
+    activeAudioRecorder = null;
+    return false;
+  }
+}
+
 export function isNativeVideoRecorderAvailable(): boolean {
   const mod = loadNativeRecorderModule();
   if (!mod) return false;
@@ -88,66 +131,125 @@ export async function startNativeCapture(params: {
   includeMic: boolean;
   aspectRatio?: number;
 }): Promise<NativeRecordingStartResult> {
+  activeScreenCapture = false;
+  activeAudioRecorder = null;
+
   const mod = loadNativeRecorderModule();
-  if (!mod) {
-    return {
-      nativeActive: false,
-      reason: 'Native video capture is unavailable in Expo Go; recording deterministic 60 FPS canvas timeline.',
-    };
+  if (mod) {
+    try {
+      const res = resolutionForQuality(params.quality, params.aspectRatio);
+      await mod.startRecording({
+        width: res.width,
+        height: res.height,
+        bitrate: res.bitrate,
+        includeMic: params.includeMic,
+      });
+      activeScreenCapture = true;
+      return { nativeActive: true, audioActive: params.includeMic };
+    } catch (error) {
+      // Fall through to expo-audio mic recording if screen capture was declined or unavailable.
+      const audioActive = params.includeMic ? await startExpoAudioFallback() : false;
+      return {
+        nativeActive: false,
+        audioActive,
+        reason: error instanceof Error ? error.message : 'Screen capture did not start.',
+      };
+    }
   }
-  try {
-    const res = resolutionForQuality(params.quality, params.aspectRatio);
-    await mod.startRecording({
-      width: res.width,
-      height: res.height,
-      bitrate: res.bitrate,
-      includeMic: params.includeMic,
-    });
-    return { nativeActive: true };
-  } catch (error) {
-    return {
-      nativeActive: false,
-      reason: error instanceof Error ? error.message : 'Native video capture could not start.',
-    };
-  }
+
+  const audioActive = params.includeMic ? await startExpoAudioFallback() : false;
+  return {
+    nativeActive: false,
+    audioActive,
+    reason: audioActive
+      ? 'Recording voice audio + 60 FPS canvas timeline.'
+      : 'Recording deterministic 60 FPS canvas timeline.',
+  };
 }
 
 export async function pauseNativeCapture(): Promise<void> {
-  const mod = loadNativeRecorderModule();
-  if (!mod?.pauseRecording) return;
-  try {
-    await mod.pauseRecording();
-  } catch {
-    // Ignore if pause is unsupported by the native adapter.
+  if (activeScreenCapture) {
+    const mod = loadNativeRecorderModule();
+    if (mod?.pauseRecording) {
+      try {
+        await mod.pauseRecording();
+      } catch {
+        // Ignore if pause is unsupported.
+      }
+    }
+  }
+  if (activeAudioRecorder) {
+    try {
+      activeAudioRecorder.pause();
+    } catch {
+      // Ignore pause errors.
+    }
   }
 }
 
 export async function resumeNativeCapture(): Promise<void> {
-  const mod = loadNativeRecorderModule();
-  if (!mod?.resumeRecording) return;
-  try {
-    await mod.resumeRecording();
-  } catch {
-    // Ignore if resume is unsupported by the native adapter.
+  if (activeScreenCapture) {
+    const mod = loadNativeRecorderModule();
+    if (mod?.resumeRecording) {
+      try {
+        await mod.resumeRecording();
+      } catch {
+        // Ignore if resume is unsupported.
+      }
+    }
+  }
+  if (activeAudioRecorder) {
+    try {
+      activeAudioRecorder.record();
+    } catch {
+      // Ignore resume errors.
+    }
   }
 }
 
 export async function stopNativeCapture(): Promise<NativeRecordingStopResult> {
-  const mod = loadNativeRecorderModule();
-  if (!mod) {
-    return { nativeAvailable: false, videoUri: null, audioUri: null };
-  }
-  try {
-    const result = await mod.stopRecording();
-    if (typeof result === 'string') {
-      return { nativeAvailable: true, videoUri: result, audioUri: null };
+  let videoUri: string | null = null;
+  let audioUri: string | null = null;
+  let nativeAvailable = false;
+
+  if (activeScreenCapture) {
+    activeScreenCapture = false;
+    const mod = loadNativeRecorderModule();
+    if (mod) {
+      nativeAvailable = true;
+      try {
+        const result = await mod.stopRecording();
+        if (typeof result === 'string') {
+          videoUri = result;
+        } else {
+          videoUri = result?.videoUri ?? null;
+          audioUri = result?.audioUri ?? null;
+        }
+      } catch {
+        // Ignore stop error.
+      }
     }
-    return {
-      nativeAvailable: true,
-      videoUri: result?.videoUri ?? null,
-      audioUri: result?.audioUri ?? null,
-    };
-  } catch {
-    return { nativeAvailable: true, videoUri: null, audioUri: null };
   }
+
+  if (activeAudioRecorder) {
+    const recorder = activeAudioRecorder;
+    activeAudioRecorder = null;
+    try {
+      await recorder.stop();
+      audioUri = recorder.uri ?? audioUri;
+    } catch {
+      // Ignore stop error.
+    }
+    try {
+      const expoAudio = await import('expo-audio');
+      await expoAudio.setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      });
+    } catch {
+      // Ignore audio mode reset error.
+    }
+  }
+
+  return { nativeAvailable, videoUri, audioUri };
 }

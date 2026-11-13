@@ -1,18 +1,26 @@
-import type { ReactNode } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, type ReactNode } from 'react';
+import { Pressable, Text, View } from 'react-native';
 
-import { stickyColorValue } from '../canvas/document';
-import { spacing, typography, type ThemeColors } from '../theme';
+import { type ThemeColors } from '../theme';
+import { actionIslandStyles as styles } from './ActionIsland.styles';
 import type { InkTool } from './CanvasViewport';
 import type { InkingTool } from './InkingQuickTray';
-import { EraserIcon, HighlighterIcon, LaserIcon, PenIcon, PlusIcon, SelectIcon, StickyIcon } from './icons';
+import {
+  EraserIcon,
+  HandIcon,
+  HighlighterIcon,
+  LaserIcon,
+  PenIcon,
+  PlusIcon,
+  SelectIcon,
+} from './icons';
 
 /**
  * Height of the bottom capsule pill. Sheets that belong to the island (ink
  * quick tray, style sheets) sit at `bottom + ACTION_ISLAND_HEIGHT` so they
  * stack above it instead of covering it.
  */
-export const ACTION_ISLAND_HEIGHT = 58;
+export const ACTION_ISLAND_HEIGHT = 54;
 
 /** The Draw anchor shows the inking tool it will resume, not a fixed pen. */
 const INK_ICON = {
@@ -22,8 +30,8 @@ const INK_ICON = {
   laser: LaserIcon,
 } as const;
 
-/** Tools that are only reachable through the insert sheet. */
-const INSERT_TOOLS: readonly InkTool[] = ['text', 'shape', 'connector', 'image'];
+/** Tools reachable through the insert sheet. */
+const INSERT_TOOLS: readonly InkTool[] = ['text', 'sticky', 'shape', 'connector', 'image'];
 
 type ActionIslandProps = {
   theme: ThemeColors;
@@ -34,39 +42,36 @@ type ActionIslandProps = {
   inkTool: InkingTool;
   /** Current pen colour, shown as a dot on the Draw anchor. */
   inkColor: string;
-  /** Current note pastel, shown as a dot on the Note anchor. */
-  stickyColorKey: string;
   /** True while the insert sheet is open, so the anchor can report expansion. */
   insertOpen: boolean;
   onSelect: () => void;
+  onPan: () => void;
   onDraw: () => void;
-  onSticky: () => void;
   onInsert: () => void;
 };
 
 /**
- * Tier one of the two-tier action island: four 48pt anchors covering the
- * entire tool set. Selection, inking, sticky notes, and object insertion are
- * one tap away; the ninth tool no longer needs its own crammed button because
- * tier two (the insert sheet) holds them all.
+ * Tier one of the two-tier mobile action island: four sleek pill anchors
+ * (`Select`, `Pan`, `Draw`, and `Insert`) keeping core navigation and inking
+ * one tap away while object creation lives inside `+`.
  */
-export function ActionIsland({
+export const ActionIsland = memo(function ActionIsland({
   theme,
   bottom,
   activeTool,
   inkTool,
   inkColor,
-  stickyColorKey,
   insertOpen,
   onSelect,
+  onPan,
   onDraw,
-  onSticky,
   onInsert,
 }: ActionIslandProps) {
-  const isDrawActive = activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser';
-  const isStickyActive = activeTool === 'sticky';
-  // Objects picked from the insert sheet keep the anchor lit so the user can
-  // see where the armed tool came from.
+  const isDrawActive =
+    activeTool === 'pen' ||
+    activeTool === 'highlighter' ||
+    activeTool === 'eraser' ||
+    activeTool === 'laser';
   const isInsertActive = insertOpen || INSERT_TOOLS.includes(activeTool);
   const InkIcon = INK_ICON[inkTool];
 
@@ -75,7 +80,10 @@ export function ActionIsland({
       <View
         accessibilityRole="toolbar"
         accessibilityLabel="Board tools"
-        style={[styles.pill, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        style={[
+          styles.pill,
+          { backgroundColor: theme.surface, borderColor: theme.border },
+        ]}
       >
         <Anchor
           theme={theme}
@@ -84,10 +92,18 @@ export function ActionIsland({
           onPress={onSelect}
           accessibilityHint="Tap or drag objects on the board"
         >
-          {(color) => <SelectIcon size={22} color={color} />}
+          {(color) => <SelectIcon size={18} color={color} />}
         </Anchor>
 
-        <Divider color={theme.border} />
+        <Anchor
+          theme={theme}
+          label="Pan"
+          selected={activeTool === 'pan'}
+          onPress={onPan}
+          accessibilityHint="Drag with one finger to scroll around the canvas"
+        >
+          {(color) => <HandIcon size={18} color={color} />}
+        </Anchor>
 
         <Anchor
           theme={theme}
@@ -97,8 +113,8 @@ export function ActionIsland({
           accessibilityHint="Pen, highlighter, and eraser; tap again for stroke options"
         >
           {(color) => (
-            <View>
-              <InkIcon size={22} color={color} />
+            <View style={styles.iconWrap}>
+              <InkIcon size={18} color={color} />
               <View
                 style={[
                   styles.dot,
@@ -109,29 +125,10 @@ export function ActionIsland({
           )}
         </Anchor>
 
-        <Divider color={theme.border} />
-
-        <Anchor
-          theme={theme}
-          label="Note"
-          selected={isStickyActive}
-          onPress={onSticky}
-          accessibilityHint="Add a sticky note; tap again for colours and text size"
-        >
-          {(color) => (
-            <View>
-              <StickyIcon size={22} color={color} />
-              <View style={[styles.dot, { backgroundColor: stickyColorValue(stickyColorKey) }]} />
-            </View>
-          )}
-        </Anchor>
-
-        <Divider color={theme.border} />
-
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Insert object"
-          accessibilityHint="Opens the insert sheet for text, shapes, connectors, and photos"
+          accessibilityHint="Opens the insert sheet for notes, text, shapes, math, and utilities"
           accessibilityState={{ selected: isInsertActive, expanded: insertOpen }}
           onPress={onInsert}
           style={({ pressed }) => [
@@ -141,7 +138,7 @@ export function ActionIsland({
             pressed && styles.pressed,
           ]}
         >
-          <PlusIcon size={22} color={theme.onPrimary} />
+          <PlusIcon size={18} color={theme.onPrimary} />
           <Text style={[styles.label, { color: theme.onPrimary }]} numberOfLines={1}>
             Insert
           </Text>
@@ -149,7 +146,7 @@ export function ActionIsland({
       </View>
     </View>
   );
-}
+});
 
 function Anchor({
   theme,
@@ -176,7 +173,10 @@ function Anchor({
       onPress={onPress}
       style={({ pressed }) => [
         styles.anchor,
-        selected && { backgroundColor: theme.primary + '1F', borderColor: theme.primary },
+        selected && {
+          backgroundColor: `${theme.primary}1A`,
+          borderColor: `${theme.primary}66`,
+        },
         pressed && styles.pressed,
       ]}
     >
@@ -187,47 +187,3 @@ function Anchor({
     </Pressable>
   );
 }
-
-function Divider({ color }: { color: string }) {
-  return <View style={[styles.divider, { backgroundColor: color }]} />;
-}
-
-const styles = StyleSheet.create({
-  container: { position: 'absolute', left: 0, right: 0, alignItems: 'center', zIndex: 10 },
-  // Flat design: depth comes from the 1px border, never a drop shadow.
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
-    gap: 2,
-  },
-  anchor: {
-    minWidth: 56,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  insert: {
-    minWidth: 56,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    paddingHorizontal: 14,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  insertActive: { borderColor: '#FFFFFF66' },
-  label: { ...typography.caption, fontSize: 10, fontWeight: '600', textAlign: 'center' },
-  divider: { width: 1, height: 26, opacity: 0.6 },
-  dot: { position: 'absolute', bottom: -3, right: -4, width: 8, height: 8, borderRadius: 4, borderWidth: 1.5, borderColor: '#FFFFFF' },
-  pressed: { opacity: 0.7 },
-});

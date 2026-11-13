@@ -47,13 +47,40 @@ export function formatStorageBytes(bytes: number): string {
   return `${(mb / 1024).toFixed(2)} GB`;
 }
 
+function persistMediaIntoLessonsDir(
+  dir: Directory,
+  sourceUri: string | null | undefined,
+  targetName: string,
+): string | null {
+  if (!sourceUri) return null;
+  try {
+    const src = new File(sourceUri);
+    if (!src.exists) return null;
+    const dest = new File(dir, targetName);
+    if (src.uri === dest.uri) return dest.uri;
+    if (dest.exists) dest.delete();
+    src.copy(dest);
+    return dest.uri;
+  } catch {
+    return sourceUri;
+  }
+}
+
 export async function saveLessonPackage(
   pkg: LessonRecordingPackage,
 ): Promise<SavedLessonSummary> {
   const dir = getLessonsDirectory();
   const safeId = pkg.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const durableVideoUri = persistMediaIntoLessonsDir(dir, pkg.videoUri, `${safeId}.mp4`);
+  const durableAudioUri = persistMediaIntoLessonsDir(dir, pkg.audioUri, `${safeId}.m4a`);
+  const packageToSave: LessonRecordingPackage = {
+    ...pkg,
+    videoUri: durableVideoUri,
+    audioUri: durableAudioUri,
+  };
+
   const file = new File(dir, `${safeId}${LESSON_FILE_EXTENSION}`);
-  const serialized = JSON.stringify(pkg);
+  const serialized = JSON.stringify(packageToSave);
   file.write(serialized);
 
   return {
@@ -65,8 +92,8 @@ export async function saveLessonPackage(
     quality: pkg.quality,
     sizeBytes: file.size || serialized.length,
     lessonUri: file.uri,
-    videoUri: pkg.videoUri ?? null,
-    audioUri: pkg.audioUri ?? null,
+    videoUri: durableVideoUri,
+    audioUri: durableAudioUri,
     eventCount: pkg.events.length,
   };
 }

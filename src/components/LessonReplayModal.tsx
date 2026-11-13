@@ -2,8 +2,10 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
   Pressable,
+  ScrollView,
   Text,
   View,
+  useWindowDimensions,
   type GestureResponderEvent,
   type LayoutChangeEvent,
 } from 'react-native';
@@ -53,11 +55,76 @@ export const LessonReplayModal = memo(function LessonReplayModal({
   onClose,
 }: LessonReplayModalProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const compactHeight = windowHeight < 560;
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<(typeof PLAYBACK_SPEEDS)[number]>(1);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [trackWidth, setTrackWidth] = useState(280);
   const lastTickRef = useRef<number>(Date.now());
+  const audioPlayerRef = useRef<{
+    play: () => void;
+    pause: () => void;
+    seekTo: (seconds: number) => Promise<void>;
+    setPlaybackRate: (rate: number) => void;
+    remove: () => void;
+  } | null>(null);
+
+  useEffect(() => {
+    const mediaUri = lesson?.audioUri ?? lesson?.videoUri ?? null;
+    if (!visible || !mediaUri) {
+      if (audioPlayerRef.current) {
+        try {
+          audioPlayerRef.current.pause();
+          audioPlayerRef.current.remove();
+        } catch {
+          // Ignore cleanup errors.
+        }
+        audioPlayerRef.current = null;
+      }
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const expoAudio = await import('expo-audio');
+        await expoAudio.setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+        });
+        const player = expoAudio.createAudioPlayer(mediaUri);
+        if (cancelled) {
+          player.remove();
+          return;
+        }
+        audioPlayerRef.current = player;
+      } catch {
+        audioPlayerRef.current = null;
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (audioPlayerRef.current) {
+        try {
+          audioPlayerRef.current.pause();
+          audioPlayerRef.current.remove();
+        } catch {
+          // Ignore cleanup errors.
+        }
+        audioPlayerRef.current = null;
+      }
+    };
+  }, [lesson?.audioUri, lesson?.videoUri, visible]);
+
+  useEffect(() => {
+    const player = audioPlayerRef.current;
+    if (!player) return;
+    try {
+      player.setPlaybackRate(speed);
+    } catch {
+      // Ignore if playback rate is unsupported.
+    }
+  }, [speed]);
 
   useEffect(() => {
     if (!visible || !lesson) {
@@ -68,6 +135,22 @@ export const LessonReplayModal = memo(function LessonReplayModal({
     setCurrentTimeMs(0);
     setPlaying(false);
   }, [lesson, visible]);
+
+  useEffect(() => {
+    const player = audioPlayerRef.current;
+    if (player) {
+      try {
+        if (playing) {
+          void player.seekTo(currentTimeMs / 1000);
+          player.play();
+        } else {
+          player.pause();
+        }
+      } catch {
+        // Ignore audio sync errors.
+      }
+    }
+  }, [playing]);
 
   useEffect(() => {
     if (!visible || !playing || !lesson) return;
@@ -112,7 +195,11 @@ export const LessonReplayModal = memo(function LessonReplayModal({
     (event: GestureResponderEvent) => {
       if (!lesson || trackWidth <= 0) return;
       const ratio = Math.max(0, Math.min(1, event.nativeEvent.locationX / trackWidth));
-      setCurrentTimeMs(Math.round(ratio * lesson.durationMs));
+      const nextMs = Math.round(ratio * lesson.durationMs);
+      setCurrentTimeMs(nextMs);
+      if (audioPlayerRef.current) {
+        void audioPlayerRef.current.seekTo(nextMs / 1000).catch(() => {});
+      }
     },
     [lesson, trackWidth],
   );
@@ -169,150 +256,158 @@ export const LessonReplayModal = memo(function LessonReplayModal({
             </Pressable>
           </View>
 
-          <View
-            pointerEvents="none"
-            style={[
-              styles.stage,
-              { backgroundColor: theme.background, borderBottomColor: theme.border },
-            ]}
+          <ScrollView
+            style={styles.bodyScroll}
+            showsVerticalScrollIndicator={false}
+            bounces={false}
           >
-            <CanvasViewport
-              dark={dark}
-              boardBackground={boardBackground}
-              boardStyle={boardStyle}
-              initialViewport={replayed.viewport}
-              activeTool="select"
-              color="slate"
-              width={4}
-              opacity={1}
-              eraserRadius={18}
-              laserColorKey={replayed.laserTrail?.colorKey ?? 'red'}
-              shapeKind="rectangle"
-              shapeColorKey="slate"
-              shapeFillKey="none"
-              shapeStrokeWidth={2}
-              connectorStyle="arrow"
-              connectorColorKey="slate"
-              connectorStrokeWidth={2}
-              document={replayed.document}
-              selectedObjectIds={EMPTY_STRING_ARRAY}
-              editingObjectId={null}
-              editingTableCell={null}
-              editingMath={false}
-              editingMathSpan={null}
-              viewportRequest={{
-                key: Math.floor(currentTimeMs / 100),
-                viewport: replayed.viewport,
-              }}
-              activeInstrument={null}
-              stylusOnlyDrawing={false}
-              pressureSensitivity={true}
-              holdToSnapShapes={false}
-              selectedInkIds={EMPTY_STRING_ARRAY}
-              onViewportChange={NOOP}
-              onCommand={NOOP}
-              onCommitPending={NOOP}
-              onObjectCreate={NOOP}
-              onSelectionChange={NOOP}
-              onInkSelectionChange={NOOP}
-              onSnapStrokeToShape={NOOP}
-              onObjectEdit={NOOP}
-              onObjectMeasure={NOOP}
-              onCanvasTouch={NOOP}
-            />
             <View
+              pointerEvents="none"
               style={[
-                styles.pageBadge,
-                { backgroundColor: theme.surface, borderColor: theme.border },
+                styles.stage,
+                compactHeight && styles.stageCompact,
+                { backgroundColor: theme.background, borderBottomColor: theme.border },
               ]}
             >
-              <Text style={[styles.pageBadgeText, { color: theme.foreground }]}>
-                Page {replayed.pageIndex + 1}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.scrubberSection}>
-            <View
-              onLayout={handleTrackLayout}
-              onStartShouldSetResponder={() => true}
-              onResponderGrant={seekFromEvent}
-              onResponderMove={seekFromEvent}
-              style={styles.scrubberTrack}
-            >
-              <View style={[styles.scrubberRail, { backgroundColor: theme.muted }]}>
-                <View
-                  style={[
-                    styles.scrubberFill,
-                    { width: progressPct, backgroundColor: theme.primary },
-                  ]}
-                />
+              <CanvasViewport
+                dark={dark}
+                boardBackground={boardBackground}
+                boardStyle={boardStyle}
+                initialViewport={replayed.viewport}
+                activeTool="select"
+                color="slate"
+                width={4}
+                opacity={1}
+                eraserRadius={18}
+                laserColorKey={replayed.laserTrail?.colorKey ?? 'red'}
+                shapeKind="rectangle"
+                shapeColorKey="slate"
+                shapeFillKey="none"
+                shapeStrokeWidth={2}
+                connectorStyle="arrow"
+                connectorColorKey="slate"
+                connectorStrokeWidth={2}
+                document={replayed.document}
+                selectedObjectIds={EMPTY_STRING_ARRAY}
+                editingObjectId={null}
+                editingTableCell={null}
+                editingMath={false}
+                editingMathSpan={null}
+                viewportRequest={{
+                  key: Math.floor(currentTimeMs / 100),
+                  viewport: replayed.viewport,
+                }}
+                activeInstrument={null}
+                stylusOnlyDrawing={false}
+                pressureSensitivity={true}
+                holdToSnapShapes={false}
+                selectedInkIds={EMPTY_STRING_ARRAY}
+                hideHud
+                onViewportChange={NOOP}
+                onCommand={NOOP}
+                onCommitPending={NOOP}
+                onObjectCreate={NOOP}
+                onSelectionChange={NOOP}
+                onInkSelectionChange={NOOP}
+                onSnapStrokeToShape={NOOP}
+                onObjectEdit={NOOP}
+                onObjectMeasure={NOOP}
+                onCanvasTouch={NOOP}
+              />
+              <View
+                style={[
+                  styles.pageBadge,
+                  { backgroundColor: theme.surface, borderColor: theme.border },
+                ]}
+              >
+                <Text style={[styles.pageBadgeText, { color: theme.foreground }]}>
+                  Page {replayed.pageIndex + 1}
+                </Text>
               </View>
             </View>
-            <View style={styles.scrubberMetaRow}>
-              <Text style={[styles.timeText, { color: theme.foreground }]}>
-                {formatDurationMMSS(currentTimeMs)}
-              </Text>
-              <Text style={[styles.timeText, { color: theme.foreground }]}>
-                {formatDurationMMSS(lesson.durationMs)}
-              </Text>
-            </View>
-          </View>
 
-          <View style={styles.controlsRow}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={playing ? 'Pause lesson replay' : 'Play lesson replay'}
-              onPress={handleTogglePlay}
-              style={[styles.playButton, { backgroundColor: theme.primary }]}
-            >
-              <Text style={[styles.playButtonText, { color: '#FFFFFF' }]}>
-                {playing ? 'Pause' : 'Play'}
-              </Text>
-            </Pressable>
-
-            <View style={styles.speedGroup}>
-              {PLAYBACK_SPEEDS.map((s) => {
-                const selected = speed === s;
-                return (
-                  <Pressable
-                    key={s}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Playback speed ${s}x`}
-                    accessibilityState={{ selected }}
-                    onPress={() => setSpeed(s)}
+            <View style={styles.scrubberSection}>
+              <View
+                onLayout={handleTrackLayout}
+                onStartShouldSetResponder={() => true}
+                onResponderGrant={seekFromEvent}
+                onResponderMove={seekFromEvent}
+                style={styles.scrubberTrack}
+              >
+                <View style={[styles.scrubberRail, { backgroundColor: theme.muted }]}>
+                  <View
                     style={[
-                      styles.speedChip,
-                      {
-                        backgroundColor: selected ? theme.primary : theme.muted,
-                        borderColor: selected ? theme.primary : theme.border,
-                      },
+                      styles.scrubberFill,
+                      { width: progressPct, backgroundColor: theme.primary },
                     ]}
-                  >
-                    <Text
+                  />
+                </View>
+              </View>
+              <View style={styles.scrubberMetaRow}>
+                <Text style={[styles.timeText, { color: theme.foreground }]}>
+                  {formatDurationMMSS(currentTimeMs)}
+                </Text>
+                <Text style={[styles.timeText, { color: theme.foreground }]}>
+                  {formatDurationMMSS(lesson.durationMs)}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.controlsRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={playing ? 'Pause lesson replay' : 'Play lesson replay'}
+                onPress={handleTogglePlay}
+                style={[styles.playButton, { backgroundColor: theme.primary }]}
+              >
+                <Text style={[styles.playButtonText, { color: '#FFFFFF' }]}>
+                  {playing ? 'Pause' : 'Play'}
+                </Text>
+              </Pressable>
+
+              <View style={styles.speedGroup}>
+                {PLAYBACK_SPEEDS.map((s) => {
+                  const selected = speed === s;
+                  return (
+                    <Pressable
+                      key={s}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Playback speed ${s}x`}
+                      accessibilityState={{ selected }}
+                      onPress={() => setSpeed(s)}
                       style={[
-                        styles.speedText,
-                        { color: selected ? '#FFFFFF' : theme.foreground },
+                        styles.speedChip,
+                        {
+                          backgroundColor: selected ? theme.primary : theme.muted,
+                          borderColor: selected ? theme.primary : theme.border,
+                        },
                       ]}
                     >
-                      {s}×
-                    </Text>
-                  </Pressable>
-                );
-              })}
+                      <Text
+                        style={[
+                          styles.speedText,
+                          { color: selected ? '#FFFFFF' : theme.foreground },
+                        ]}
+                      >
+                        {s}×
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
-          </View>
 
-          {notice && (
-            <View
-              style={[
-                styles.noticeBanner,
-                { backgroundColor: theme.muted, borderColor: theme.border },
-              ]}
-            >
-              <Text style={[styles.noticeText, { color: theme.foreground }]}>{notice}</Text>
-            </View>
-          )}
+            {notice && (
+              <View
+                style={[
+                  styles.noticeBanner,
+                  { backgroundColor: theme.muted, borderColor: theme.border },
+                ]}
+              >
+                <Text style={[styles.noticeText, { color: theme.foreground }]}>{notice}</Text>
+              </View>
+            )}
+          </ScrollView>
 
           <View style={[styles.footer, { borderTopColor: theme.border }]}>
             {!alreadySaved && (

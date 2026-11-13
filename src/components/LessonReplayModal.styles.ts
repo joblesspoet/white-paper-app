@@ -13,10 +13,14 @@ export const lessonReplayModalStyles = StyleSheet.create({
   dialog: {
     width: '100%',
     maxWidth: 720,
-    maxHeight: '92%',
+    maxHeight: '94%',
     borderRadius: radii.lg,
     borderWidth: 1,
     overflow: 'hidden',
+  },
+  bodyScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
   header: {
     flexDirection: 'row',
@@ -52,10 +56,13 @@ export const lessonReplayModalStyles = StyleSheet.create({
     fontWeight: '700',
   },
   stage: {
-    height: 280,
+    height: 260,
     borderBottomWidth: 1,
     position: 'relative',
     overflow: 'hidden',
+  },
+  stageCompact: {
+    height: 156,
   },
   pageBadge: {
     position: 'absolute',

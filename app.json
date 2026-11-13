@@ -68,7 +68,8 @@
           "microphonePermission": "Allow FlowCanvas to record audio during whiteboard lessons.",
           "recordAudioAndroid": true
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "scheme": "flowcanvas"
   }

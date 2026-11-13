@@ -117,6 +117,7 @@ import {
   EditIcon,
   EraserIcon,
   GridIcon,
+  HandIcon,
   HighlighterIcon,
   ImageIcon,
   LaserIcon,
@@ -211,6 +212,7 @@ import { radii, spacing, touchTarget, typography, type ThemeColors } from '../sr
 
 const TOOLS = [
   { tool: 'select', label: 'Select', Icon: SelectIcon },
+  { tool: 'pan', label: 'Pan', Icon: HandIcon },
   { tool: 'text', label: 'Text', Icon: TextIcon },
   { tool: 'sticky', label: 'Sticky note', Icon: StickyIcon },
   { tool: 'shape', label: 'Shape', Icon: ShapeIcon },
@@ -632,6 +634,32 @@ export default function BoardEditorScreen() {
       }
     };
   }, [document, hydrated, boardId, persistDocument]);
+
+  useEffect(() => {
+    if (tablet) return;
+    let active = true;
+    void (async () => {
+      try {
+        const ScreenOrientation = await import('expo-screen-orientation');
+        if (active) {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        }
+      } catch {
+        // Ignore if screen orientation native module is unavailable in this build.
+      }
+    })();
+    return () => {
+      active = false;
+      void (async () => {
+        try {
+          const ScreenOrientation = await import('expo-screen-orientation');
+          await ScreenOrientation.unlockAsync();
+        } catch {
+          // Ignore cleanup errors.
+        }
+      })();
+    };
+  }, [tablet]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -1374,8 +1402,10 @@ function mathSpanAtPoint(
     setReplayAlreadySaved(false);
     setReplayNotice(
       nativeResult.videoUri
-        ? null
-        : 'Recorded as an interactive 60 FPS FlowCanvas replay (.flowlesson.json).',
+        ? 'Recorded MP4 video + 60 FPS FlowCanvas replay.'
+        : nativeResult.audioUri
+          ? 'Recorded voice audio + 60 FPS FlowCanvas replay.'
+          : 'Recorded as an interactive 60 FPS FlowCanvas replay (.flowlesson.json).',
     );
   }, []);
 
@@ -2017,6 +2047,7 @@ function mathSpanAtPoint(
                 pressureSensitivity={preferences.pressureSensitivity}
                 holdToSnapShapes={preferences.holdToSnapShapes}
                 selectedInkIds={selectedInkIds}
+                compactHud={!tablet}
                 onViewportChange={reportViewport}
                 onCommand={runCommand}
                 onCommitPending={commitPending}
@@ -2041,7 +2072,7 @@ function mathSpanAtPoint(
                     theme={theme}
                     currentIndex={activePageIndex}
                     totalPages={pages.length}
-                    compact={width < 400}
+                    compact={!tablet}
                     canDeleteCurrentPage={pages.length > 1}
                     hasBackgroundImage={Boolean(activeBackgroundPdfObject)}
                     isBackgroundLocked={Boolean(activeBackgroundPdfObject?.locked)}
@@ -2850,11 +2881,10 @@ function mathSpanAtPoint(
           activeTool={activeTool}
           inkTool={lastInkingTool}
           inkColor={color}
-          stickyColorKey={stickyColorKey}
           insertOpen={quickCreationOpen}
           onSelect={() => pressTool('select')}
+          onPan={() => pressTool('pan')}
           onDraw={toggleInking}
-          onSticky={() => pressTool('sticky')}
           onInsert={() => {
             setInkTrayOpen(false);
             setInkOptionsVisible(false);
