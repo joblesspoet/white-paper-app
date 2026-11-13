@@ -779,9 +779,17 @@ function mathSpanAtPoint(
     wx = cx + dx * cos - dy * sin;
     wy = cy + dx * sin + dy * cos;
   }
-  const localX = wx - (object.x + OBJECT_PADDING);
-  const localY = wy - (object.y + OBJECT_PADDING);
   const layout = layoutMathExpression(latex, object.fontSize);
+  const availW = Math.max(12, object.width - OBJECT_PADDING * 2);
+  const availH = Math.max(16, object.height - OBJECT_PADDING * 2);
+  const contentScale = Math.min(
+    availW / Math.max(1, layout.width),
+    availH / Math.max(1, layout.height),
+  );
+  const originX = object.x + OBJECT_PADDING + (availW - layout.width * contentScale) / 2;
+  const originY = object.y + OBJECT_PADDING + (availH - layout.height * contentScale) / 2;
+  const localX = (wx - originX) / Math.max(0.01, contentScale);
+  const localY = (wy - originY) / Math.max(0.01, contentScale);
   return hitTestMathSlot(layout, localX, localY)?.span ?? null;
 }
 

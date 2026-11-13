@@ -273,15 +273,16 @@ export function resizeObject(
     minimum,
     west ? anchorLocal.x - local.x : local.x - anchorLocal.x,
   );
-  // Text re-wraps; an image scales proportionally so its pixels are never
-  // stretched. Shapes and connectors take the pointer-driven box.
-  const imageAspect = object.type === 'image' && object.width > 0
-    ? object.height / object.width
-    : null;
+  // Text re-wraps; images and math formulas scale proportionally so pixels and
+  // math notation are never stretched. Shapes and connectors take the pointer-driven box.
+  const lockedAspect =
+    (object.type === 'image' || object.type === 'math') && object.width > 0
+      ? object.height / object.width
+      : null;
   const height = object.type === 'text'
     ? measureTextBlock(object.text, object.fontSize, width, object.fontWeight, object.fontStyle).height
-    : imageAspect !== null
-      ? Math.max(minimum, width * imageAspect)
+    : lockedAspect !== null
+      ? Math.max(minimum, width * lockedAspect)
       : Math.max(minimum, north ? anchorLocal.y - local.y : local.y - anchorLocal.y);
 
   const left = west ? anchorLocal.x - width : anchorLocal.x;

@@ -1347,13 +1347,19 @@ const MathObjectView = memo(function MathObjectView({
         : [{ rotate: (object.rotation * Math.PI) / 180 }],
     [object.rotation],
   );
-  const originX = object.x + OBJECT_PADDING;
-  const originY = object.y + OBJECT_PADDING;
+  const availW = Math.max(12, object.width - OBJECT_PADDING * 2);
+  const availH = Math.max(16, object.height - OBJECT_PADDING * 2);
+  const contentScale = Math.min(
+    availW / Math.max(1, layout.width),
+    availH / Math.max(1, layout.height),
+  );
+  const originX = object.x + OBJECT_PADDING + (availW - layout.width * contentScale) / 2;
+  const originY = object.y + OBJECT_PADDING + (availH - layout.height * contentScale) / 2;
 
   return (
     <Group origin={origin} transform={transform}>
-      {vectorPath ? (
-        <Group transform={[{ translateX: originX }, { translateY: originY }]}>
+      <Group transform={[{ translateX: originX }, { translateY: originY }, { scale: contentScale }]}>
+        {vectorPath ? (
           <Path
             path={vectorPath}
             color={color}
@@ -1362,60 +1368,60 @@ const MathObjectView = memo(function MathObjectView({
             strokeCap="round"
             strokeJoin="round"
           />
-        </Group>
-      ) : null}
-      {activeSpan
-        ? (() => {
-            const matchedSlot = layout.slots.find(
-              (slot) =>
-                slot.span.start === activeSpan.start && slot.span.end === activeSpan.end,
-            );
-            if (matchedSlot) {
-              return (
-                <RoundedRect
-                  key="hl-slot"
-                  x={originX + matchedSlot.x}
-                  y={originY + matchedSlot.y}
-                  width={matchedSlot.width}
-                  height={matchedSlot.height}
-                  r={5}
-                  color="rgba(37, 99, 235, 0.2)"
-                />
+        ) : null}
+        {activeSpan
+          ? (() => {
+              const matchedSlot = layout.slots.find(
+                (slot) =>
+                  slot.span.start === activeSpan.start && slot.span.end === activeSpan.end,
               );
-            }
-            return layout.glyphs.map((glyph, idx) => {
-              if (
-                !glyph.span ||
-                glyph.span.end <= activeSpan.start ||
-                glyph.span.start >= activeSpan.end
-              ) {
-                return null;
+              if (matchedSlot) {
+                return (
+                  <RoundedRect
+                    key="hl-slot"
+                    x={matchedSlot.x}
+                    y={matchedSlot.y}
+                    width={matchedSlot.width}
+                    height={matchedSlot.height}
+                    r={5}
+                    color="rgba(37, 99, 235, 0.2)"
+                  />
+                );
               }
-              const gw = glyph.width ?? glyph.fontSize * 0.6;
-              const gh = glyph.height ?? glyph.fontSize * 1.02;
-              return (
-                <RoundedRect
-                  key={`hl-${idx}`}
-                  x={originX + glyph.x - 3}
-                  y={originY + glyph.y - 2}
-                  width={gw + 6}
-                  height={gh + 4}
-                  r={5}
-                  color="rgba(37, 99, 235, 0.2)"
-                />
-              );
-            });
-          })()
-        : null}
-      {glyphParagraphs.map((entry, idx) => (
-        <Paragraph
-          key={`${idx}-${entry.glyph.text}`}
-          paragraph={entry.para}
-          x={originX + entry.glyph.x}
-          y={originY + entry.glyph.y}
-          width={entry.width}
-        />
-      ))}
+              return layout.glyphs.map((glyph, idx) => {
+                if (
+                  !glyph.span ||
+                  glyph.span.end <= activeSpan.start ||
+                  glyph.span.start >= activeSpan.end
+                ) {
+                  return null;
+                }
+                const gw = glyph.width ?? glyph.fontSize * 0.6;
+                const gh = glyph.height ?? glyph.fontSize * 1.02;
+                return (
+                  <RoundedRect
+                    key={`hl-${idx}`}
+                    x={glyph.x - 3}
+                    y={glyph.y - 2}
+                    width={gw + 6}
+                    height={gh + 4}
+                    r={5}
+                    color="rgba(37, 99, 235, 0.2)"
+                  />
+                );
+              });
+            })()
+          : null}
+        {glyphParagraphs.map((entry, idx) => (
+          <Paragraph
+            key={`${idx}-${entry.glyph.text}`}
+            paragraph={entry.para}
+            x={entry.glyph.x}
+            y={entry.glyph.y}
+            width={entry.width}
+          />
+        ))}
+      </Group>
     </Group>
   );
 });

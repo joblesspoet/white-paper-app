@@ -423,8 +423,17 @@ function drawMathObject(canvas: SkCanvas, object: MathObject, dark: boolean): vo
     canvas.rotate(object.rotation, cx, cy);
   }
 
-  const originX = object.x + OBJECT_PADDING;
-  const originY = object.y + OBJECT_PADDING;
+  const availW = Math.max(12, object.width - OBJECT_PADDING * 2);
+  const availH = Math.max(16, object.height - OBJECT_PADDING * 2);
+  const contentScale = Math.min(
+    availW / Math.max(1, layout.width),
+    availH / Math.max(1, layout.height),
+  );
+  const originX = object.x + OBJECT_PADDING + (availW - layout.width * contentScale) / 2;
+  const originY = object.y + OBJECT_PADDING + (availH - layout.height * contentScale) / 2;
+
+  canvas.translate(originX, originY);
+  canvas.scale(contentScale, contentScale);
 
   if (layout.vectorPathsSvg) {
     const path = Skia.Path.MakeFromSVGString(layout.vectorPathsSvg);
@@ -436,10 +445,7 @@ function drawMathObject(canvas: SkCanvas, object: MathObject, dark: boolean): vo
       paint.setStrokeCap(StrokeCap.Round);
       paint.setStrokeJoin(StrokeJoin.Round);
       paint.setColor(Skia.Color(color));
-      canvas.save();
-      canvas.translate(originX, originY);
       canvas.drawPath(path, paint);
-      canvas.restore();
     }
   }
 
@@ -456,7 +462,7 @@ function drawMathObject(canvas: SkCanvas, object: MathObject, dark: boolean): vo
     builder.addText(glyph.text);
     const para = builder.build();
     para.layout(Math.max(24, glyph.fontSize * glyph.text.length + 12));
-    para.paint(canvas, originX + glyph.x, originY + glyph.y);
+    para.paint(canvas, glyph.x, glyph.y);
   }
 
   canvas.restore();
