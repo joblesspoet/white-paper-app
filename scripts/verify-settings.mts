@@ -103,6 +103,9 @@ function testPreferenceParser(): void {
     defaultPenWidth: 8,
     haptics: false,
     exportFormat: 'pdf',
+    stylusOnlyDrawing: true,
+    pressureSensitivity: false,
+    holdToSnapShapes: false,
   };
   const parsed = parseAppPreferences(serializeAppPreferences(custom));
   assert.deepEqual(parsed, custom);

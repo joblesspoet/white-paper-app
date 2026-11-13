@@ -11,11 +11,20 @@ import type { Point } from './viewport';
 
 export type FreehandTool = 'pen' | 'highlighter';
 
+export type InkPoint = {
+  x: number;
+  y: number;
+  /** Normalized stylus pressure in [0, 1]; undefined or 0.5 for finger input. */
+  pressure?: number;
+};
+
+export type InputPointerKind = 'touch' | 'stylus' | 'mouse' | 'other';
+
 export type InkStroke = {
   id: string;
   tool: FreehandTool;
   /** Canvas-space points. The first point is the start of the stroke. */
-  points: Point[];
+  points: InkPoint[];
   color: string;
   /** Rendered stroke width in canvas units. */
   width: number;
@@ -27,7 +36,7 @@ export type InkStroke = {
 export type CreateStrokeInput = {
   id: string;
   tool: FreehandTool;
-  point: Point;
+  point: InkPoint;
   color: string;
   /** The width the user selected; the tool may render wider than this. */
   width: number;
@@ -68,7 +77,7 @@ export function createInkStroke(input: CreateStrokeInput): InkStroke {
 }
 
 /** Append a sampled point unless it is too close to the previous one. */
-export function appendInkPoint(stroke: InkStroke, point: Point, minDistance = 0): InkStroke {
+export function appendInkPoint(stroke: InkStroke, point: InkPoint, minDistance = 0): InkStroke {
   const last = stroke.points[stroke.points.length - 1];
   if (last && Math.hypot(point.x - last.x, point.y - last.y) < minDistance) return stroke;
   return { ...stroke, points: [...stroke.points, point] };
@@ -79,7 +88,7 @@ export function appendInkPoint(stroke: InkStroke, point: Point, minDistance = 0)
  * midpoints, which removes the faceted look of raw polyline input while still
  * passing through the ends of the stroke.
  */
-export function inkPathData(points: Point[]): string {
+export function inkPathData(points: InkPoint[]): string {
   const first = points[0];
   if (!first) return '';
   if (points.length === 1) {
@@ -146,4 +155,98 @@ export function eraserRadiusForScale(screenRadius: number, scale: number): numbe
   'worklet';
   if (!Number.isFinite(scale) || scale <= 0) return screenRadius;
   return screenRadius / scale;
+}
+
+/**
+ * Palm-rejection filter: when `stylusOnlyDrawing` is enabled, only stylus
+ * (or mouse in simulator/desktop testing) pointers are accepted for inking.
+ */
+export function shouldAcceptInkPointer(
+  pointerKind: InputPointerKind,
+  stylusOnlyDrawing: boolean,
+): boolean {
+  'worklet';
+  if (!stylusOnlyDrawing) return true;
+  return pointerKind === 'stylus' || pointerKind === 'mouse';
+}
+
+/** Map normalized pressure in [0, 1] to a stroke width multiplier in [0.45, 1.45]. */
+export function pressureWidthMultiplier(pressure: number | undefined): number {
+  if (typeof pressure !== 'number' || !Number.isFinite(pressure)) return 1;
+  const clamped = Math.max(0, Math.min(1, pressure));
+  return 0.45 + clamped;
+}
+
+/** True when any point carries explicit stylus pressure metadata. */
+export function hasVariablePressure(points: readonly InkPoint[]): boolean {
+  for (let i = 0; i < points.length; i += 1) {
+    if (typeof points[i].pressure === 'number' && Number.isFinite(points[i].pressure)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Compute a closed filled SVG ribbon path for pressure-sensitive strokes.
+ * Modulates half-width along perpendicular normals using `pressureWidthMultiplier`.
+ */
+export function buildVariableWidthStrokePath(
+  points: readonly InkPoint[],
+  baseWidth: number,
+): string {
+  if (points.length === 0) return '';
+  const safeWidth = Math.max(0.5, baseWidth);
+
+  if (points.length === 1) {
+    const p = points[0];
+    const r = (safeWidth * pressureWidthMultiplier(p.pressure)) / 2;
+    return `M ${p.x - r} ${p.y} A ${r} ${r} 0 1 0 ${p.x + r} ${p.y} A ${r} ${r} 0 1 0 ${p.x - r} ${p.y} Z`;
+  }
+
+  const leftSide: Point[] = [];
+  const rightSide: Point[] = [];
+  let lastNx = 0;
+  let lastNy = -1;
+
+  for (let i = 0; i < points.length; i += 1) {
+    const prev = points[Math.max(0, i - 1)];
+    const next = points[Math.min(points.length - 1, i + 1)];
+    const dx = next.x - prev.x;
+    const dy = next.y - prev.y;
+    const len = Math.hypot(dx, dy);
+    let nx = lastNx;
+    let ny = lastNy;
+    if (len > 1e-4) {
+      nx = -dy / len;
+      ny = dx / len;
+      lastNx = nx;
+      lastNy = ny;
+    }
+    const r = (safeWidth * pressureWidthMultiplier(points[i].pressure)) / 2;
+    leftSide.push({ x: points[i].x + nx * r, y: points[i].y + ny * r });
+    rightSide.push({ x: points[i].x - nx * r, y: points[i].y - ny * r });
+  }
+
+  const first = points[0];
+  const firstR = (safeWidth * pressureWidthMultiplier(first.pressure)) / 2;
+  const last = points[points.length - 1];
+  const lastR = (safeWidth * pressureWidthMultiplier(last.pressure)) / 2;
+
+  const commands: string[] = [`M ${leftSide[0].x.toFixed(2)} ${leftSide[0].y.toFixed(2)}`];
+  for (let i = 1; i < leftSide.length; i += 1) {
+    commands.push(`L ${leftSide[i].x.toFixed(2)} ${leftSide[i].y.toFixed(2)}`);
+  }
+  const lastRight = rightSide[rightSide.length - 1];
+  commands.push(
+    `A ${lastR.toFixed(2)} ${lastR.toFixed(2)} 0 0 1 ${lastRight.x.toFixed(2)} ${lastRight.y.toFixed(2)}`,
+  );
+  for (let i = rightSide.length - 2; i >= 0; i -= 1) {
+    commands.push(`L ${rightSide[i].x.toFixed(2)} ${rightSide[i].y.toFixed(2)}`);
+  }
+  commands.push(
+    `A ${firstR.toFixed(2)} ${firstR.toFixed(2)} 0 0 1 ${leftSide[0].x.toFixed(2)} ${leftSide[0].y.toFixed(2)} Z`,
+  );
+
+  return commands.join(' ');
 }

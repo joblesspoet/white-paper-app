@@ -31,6 +31,7 @@ import {
   connectorPolyline,
   isGeometricObject,
   isImageObject,
+  isMathObject,
   isTableObject,
   isTextualObject,
   objectFill,
@@ -43,12 +44,20 @@ import {
   textColorValue,
   type CanvasDocument,
   type CanvasObject,
+  type MathObject,
   type ConnectorObject,
   type ShapeObject,
   type TableObject,
   type TextualObject,
 } from '../canvas/document';
-import { inkPathData, type InkStroke } from '../canvas/ink';
+import {
+  buildVariableWidthStrokePath,
+  hasVariablePressure,
+  inkPathData,
+  type InkStroke,
+} from '../canvas/ink';
+import { layoutMathExpression } from '../canvas/math-layout';
+import { inkStrokesBoundingBox } from '../canvas/recognition';
 import { buildBackgroundLayers, resolveCanvasBackgroundHex } from '../canvas/background';
 import type { Viewport } from '../canvas/viewport';
 import { resolveMediaUri } from '../media/asset-store';
@@ -136,16 +145,23 @@ function mimeForPath(path: string): string {
 }
 
 function drawStroke(canvas: SkCanvas, stroke: InkStroke, dark: boolean): void {
-  const svg = inkPathData(stroke.points);
+  const useRibbon = stroke.tool === 'pen' && hasVariablePressure(stroke.points);
+  const svg = useRibbon
+    ? buildVariableWidthStrokePath(stroke.points, stroke.width)
+    : inkPathData(stroke.points);
   if (!svg) return;
   const path = Skia.Path.MakeFromSVGString(svg);
   if (!path) return;
   const paint = Skia.Paint();
   paint.setAntiAlias(true);
-  paint.setStyle(PaintStyle.Stroke);
-  paint.setStrokeWidth(stroke.width);
-  paint.setStrokeCap(StrokeCap.Round);
-  paint.setStrokeJoin(StrokeJoin.Round);
+  if (useRibbon) {
+    paint.setStyle(PaintStyle.Fill);
+  } else {
+    paint.setStyle(PaintStyle.Stroke);
+    paint.setStrokeWidth(stroke.width);
+    paint.setStrokeCap(StrokeCap.Round);
+    paint.setStrokeJoin(StrokeJoin.Round);
+  }
   paint.setColor(Skia.Color(stroke.color));
   paint.setAlphaf(stroke.opacity);
   if (stroke.tool === 'highlighter') {
@@ -396,6 +412,56 @@ function drawTextual(
   canvas.restore();
 }
 
+function drawMathObject(canvas: SkCanvas, object: MathObject, dark: boolean): void {
+  const color = textColorValue(object.colorKey, dark);
+  const layout = layoutMathExpression(object.latex, object.fontSize);
+  const cx = object.x + object.width / 2;
+  const cy = object.y + object.height / 2;
+
+  canvas.save();
+  if (object.rotation !== 0) {
+    canvas.rotate(object.rotation, cx, cy);
+  }
+
+  const originX = object.x + OBJECT_PADDING;
+  const originY = object.y + OBJECT_PADDING;
+
+  if (layout.vectorPathsSvg) {
+    const path = Skia.Path.MakeFromSVGString(layout.vectorPathsSvg);
+    if (path) {
+      const paint = Skia.Paint();
+      paint.setAntiAlias(true);
+      paint.setStyle(PaintStyle.Stroke);
+      paint.setStrokeWidth(Math.max(1.2, object.fontSize * 0.065));
+      paint.setStrokeCap(StrokeCap.Round);
+      paint.setStrokeJoin(StrokeJoin.Round);
+      paint.setColor(Skia.Color(color));
+      canvas.save();
+      canvas.translate(originX, originY);
+      canvas.drawPath(path, paint);
+      canvas.restore();
+    }
+  }
+
+  for (const glyph of layout.glyphs) {
+    const builder = Skia.ParagraphBuilder.Make({ textAlign: TextAlign.Left });
+    builder.pushStyle({
+      color: Skia.Color(color),
+      fontSize: glyph.fontSize,
+      fontStyle: {
+        weight: glyph.bold ? FontWeight.Bold : FontWeight.Normal,
+        slant: glyph.italic ? FontSlant.Italic : FontSlant.Upright,
+      },
+    });
+    builder.addText(glyph.text);
+    const para = builder.build();
+    para.layout(Math.max(24, glyph.fontSize * glyph.text.length + 12));
+    para.paint(canvas, originX + glyph.x, originY + glyph.y);
+  }
+
+  canvas.restore();
+}
+
 async function loadSkiaImage(storagePath: string): Promise<SkImage | null> {
   try {
     const file = new File(resolveMediaUri(storagePath));
@@ -495,6 +561,7 @@ async function renderRegionBase64(
   const images = objects.filter(isImageObject);
   const geometrics = objects.filter(isGeometricObject);
   const tables = objects.filter(isTableObject);
+  const maths = objects.filter(isMathObject);
   const textuals = objects.filter(isTextualObject);
 
   const totalSteps = Math.max(1, strokes.length + objects.length);
@@ -553,6 +620,12 @@ async function renderRegionBase64(
       input.onProgress?.(0.05 + 0.75 * progressFraction(completed, totalSteps), 'Rendering text and notes…');
       await yieldToEventLoop();
     }
+  }
+
+  // 5. Math formulas
+  for (let index = 0; index < maths.length; index += 1) {
+    drawMathObject(canvas, maths[index], input.dark);
+    completed += 1;
   }
 
   canvas.restore();
@@ -764,4 +837,38 @@ export async function deleteExportFile(uri: string): Promise<void> {
   } catch {
     // Cleanup is best effort.
   }
+}
+
+/**
+ * Render selected freehand ink strokes onto a white offscreen Skia surface
+ * with 24pt padding and write a temporary PNG for on-device OCR.
+ */
+export async function renderInkStrokesToTempPng(
+  strokes: readonly InkStroke[],
+): Promise<{ uri: string; bounds: { x: number; y: number; width: number; height: number } } | null> {
+  const bounds = inkStrokesBoundingBox(strokes, 24);
+  if (!bounds) return null;
+
+  const scale = 2;
+  const pixelWidth = Math.min(2048, Math.max(64, Math.ceil(bounds.width * scale)));
+  const pixelHeight = Math.min(2048, Math.max(64, Math.ceil(bounds.height * scale)));
+  const surface = Skia.Surface.MakeOffscreen(pixelWidth, pixelHeight);
+  if (!surface) return null;
+
+  const canvas = surface.getCanvas();
+  canvas.clear(Skia.Color('#FFFFFF'));
+  canvas.save();
+  canvas.scale(pixelWidth / bounds.width, pixelHeight / bounds.height);
+  canvas.translate(-bounds.x, -bounds.y);
+
+  for (const stroke of strokes) {
+    drawStroke(canvas, { ...stroke, color: '#111827', opacity: 1 }, false);
+  }
+  canvas.restore();
+
+  const snapshot = surface.makeImageSnapshot();
+  const base64 = snapshot.encodeToBase64(ImageFormat.PNG, 100);
+  if (!base64) return null;
+  const { uri } = writeCacheFile(`ink-ocr-${Date.now()}.png`, base64, 'base64');
+  return { uri, bounds };
 }

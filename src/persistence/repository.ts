@@ -410,6 +410,9 @@ function objectStyle(object: CanvasObject): Record<string, unknown> {
     style.fontWeight = object.fontWeight ?? 'normal';
     style.fontStyle = object.fontStyle ?? 'normal';
   }
+  if (object.type === 'math') {
+    style.fontSize = object.fontSize;
+  }
   return style;
 }
 
@@ -621,6 +624,24 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
     };
   }
 
+  if (value.type === 'math') {
+    if (
+      typeof value.latex !== 'string' ||
+      typeof colorKey !== 'string' ||
+      !isFiniteNumber(fontSize)
+    ) {
+      return null;
+    }
+    return {
+      ...base,
+      type: 'math',
+      latex: value.latex,
+      displayText: typeof value.displayText === 'string' ? value.displayText : value.latex,
+      colorKey,
+      fontSize,
+    };
+  }
+
   return null;
 }
 
@@ -645,10 +666,14 @@ export function parseInkStroke(raw: string): InkStroke | null {
   ) {
     return null;
   }
-  const parsedPoints: { x: number; y: number }[] = [];
+  const parsedPoints: { x: number; y: number; pressure?: number }[] = [];
   for (const point of points) {
     if (!isRecord(point) || !isFiniteNumber(point.x) || !isFiniteNumber(point.y)) return null;
-    parsedPoints.push({ x: point.x, y: point.y });
+    parsedPoints.push(
+      isFiniteNumber(point.pressure)
+        ? { x: point.x, y: point.y, pressure: point.pressure }
+        : { x: point.x, y: point.y },
+    );
   }
   return {
     id,

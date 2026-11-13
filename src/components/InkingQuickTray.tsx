@@ -23,12 +23,14 @@ type InkingQuickTrayProps = {
   strokeWidth: number;
   eraserRadius: number;
   laserColorKey?: LaserColorKey;
+  stylusOnlyDrawing?: boolean;
   bottomOffset: number;
   onToolChange: (tool: InkingTool) => void;
   onColorChange: (color: string) => void;
   onWidthChange: (width: number) => void;
   onEraserRadiusChange: (radius: number) => void;
   onLaserColorChange?: (colorKey: LaserColorKey) => void;
+  onToggleStylusOnly?: () => void;
   onOpenFullOptions: () => void;
 };
 
@@ -43,12 +45,14 @@ export function InkingQuickTray({
   strokeWidth,
   eraserRadius,
   laserColorKey = 'red',
+  stylusOnlyDrawing = false,
   bottomOffset,
   onToolChange,
   onColorChange,
   onWidthChange,
   onEraserRadiusChange,
   onLaserColorChange,
+  onToggleStylusOnly,
   onOpenFullOptions,
 }: InkingQuickTrayProps) {
   const [customColorOpen, setCustomColorOpen] = useState(false);
@@ -347,6 +351,31 @@ export function InkingQuickTray({
                     {!customColor && <PlusIcon size={14} color={theme.foreground} />}
                   </Pressable>
                 </View>
+                {onToggleStylusOnly && (
+                  <Pressable
+                    accessibilityRole="switch"
+                    accessibilityLabel="Stylus-only drawing"
+                    accessibilityState={{ checked: stylusOnlyDrawing }}
+                    onPress={onToggleStylusOnly}
+                    hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                    style={[
+                      styles.laserChip,
+                      {
+                        borderColor: stylusOnlyDrawing ? theme.primary : theme.border,
+                        backgroundColor: stylusOnlyDrawing ? theme.primary + '1F' : theme.background,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.laserChipText,
+                        { color: stylusOnlyDrawing ? theme.primary : theme.foreground },
+                      ]}
+                    >
+                      Stylus
+                    </Text>
+                  </Pressable>
+                )}
                 {optionsButton}
               </View>
             )}

@@ -315,6 +315,78 @@ export default function SettingsScreen() {
               />
             </View>
 
+            {/* Stylus-only drawing (palm rejection) */}
+            <View style={[styles.row, styles.divider, { borderTopColor: theme.border }]}>
+              <View style={styles.rowLeft}>
+                <Text style={[styles.rowLabel, { color: theme.foreground }]}>
+                  Stylus-only drawing
+                </Text>
+                <Text style={[styles.rowSubtitle, { color: theme.foreground }]}>
+                  Palm rejection: fingers pan & zoom while Apple Pencil or S-Pen inks
+                </Text>
+              </View>
+              <Switch
+                accessibilityRole="switch"
+                accessibilityLabel="Stylus-only drawing"
+                accessibilityState={{ checked: preferences.stylusOnlyDrawing }}
+                value={preferences.stylusOnlyDrawing}
+                onValueChange={(enabled) => {
+                  void updatePreference('stylusOnlyDrawing', enabled);
+                  void triggerHapticFeedback('selection', preferences.haptics);
+                }}
+                trackColor={{ false: theme.border, true: theme.primary }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
+            {/* Pressure sensitivity */}
+            <View style={[styles.row, styles.divider, { borderTopColor: theme.border }]}>
+              <View style={styles.rowLeft}>
+                <Text style={[styles.rowLabel, { color: theme.foreground }]}>
+                  Pressure sensitivity
+                </Text>
+                <Text style={[styles.rowSubtitle, { color: theme.foreground }]}>
+                  Variable-width tapered strokes from stylus pressure
+                </Text>
+              </View>
+              <Switch
+                accessibilityRole="switch"
+                accessibilityLabel="Pressure sensitivity"
+                accessibilityState={{ checked: preferences.pressureSensitivity }}
+                value={preferences.pressureSensitivity}
+                onValueChange={(enabled) => {
+                  void updatePreference('pressureSensitivity', enabled);
+                  void triggerHapticFeedback('selection', preferences.haptics);
+                }}
+                trackColor={{ false: theme.border, true: theme.primary }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
+            {/* Hold-to-snap shape recognition */}
+            <View style={[styles.row, styles.divider, { borderTopColor: theme.border }]}>
+              <View style={styles.rowLeft}>
+                <Text style={[styles.rowLabel, { color: theme.foreground }]}>
+                  Hold to snap shapes
+                </Text>
+                <Text style={[styles.rowSubtitle, { color: theme.foreground }]}>
+                  Pause 350 ms at stroke end to convert freehand into crisp shapes
+                </Text>
+              </View>
+              <Switch
+                accessibilityRole="switch"
+                accessibilityLabel="Hold to snap shapes"
+                accessibilityState={{ checked: preferences.holdToSnapShapes }}
+                value={preferences.holdToSnapShapes}
+                onValueChange={(enabled) => {
+                  void updatePreference('holdToSnapShapes', enabled);
+                  void triggerHapticFeedback('selection', preferences.haptics);
+                }}
+                trackColor={{ false: theme.border, true: theme.primary }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+
             {/* Reduced motion banner */}
             <View
               accessibilityRole="text"

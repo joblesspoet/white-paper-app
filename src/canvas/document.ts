@@ -47,6 +47,12 @@ import {
   type TableCell,
   type TableObjectBase,
 } from './table.ts';
+import {
+  DEFAULT_MATH_FONT_SIZE,
+  latexToDisplayText,
+  type MathObjectBase,
+} from './math-model.ts';
+import { layoutMathExpression } from './math-layout.ts';
 import { canvasToScreen, type Point, type Viewport } from './viewport.ts';
 
 export type { Point };
@@ -349,6 +355,7 @@ export type ImageOcr = {
 };
 
 export type TableObject = CanvasObjectBase & TableObjectBase;
+export type MathObject = CanvasObjectBase & MathObjectBase;
 
 export type CanvasObject =
   | TextObject
@@ -356,7 +363,8 @@ export type CanvasObject =
   | ShapeObject
   | ConnectorObject
   | ImageObject
-  | TableObject;
+  | TableObject
+  | MathObject;
 export type CanvasObjectType = CanvasObject['type'];
 export type TextualObject = TextObject | StickyObject;
 export type GeometricObject = ShapeObject | ConnectorObject;
@@ -628,6 +636,59 @@ export function isTableObject(object: CanvasObject): object is TableObject {
   return object.type === 'table';
 }
 
+/** Math formula objects are rendered by Skia using vector paths + glyphs. */
+export function isMathObject(object: CanvasObject): object is MathObject {
+  'worklet';
+  return object.type === 'math';
+}
+
+export type CreateMathInput = {
+  id: string;
+  point: Point;
+  latex: string;
+  colorKey?: string;
+  fontSize?: number;
+};
+
+export function createMathObject({
+  id,
+  point,
+  latex,
+  colorKey = DEFAULT_TEXT_COLOR,
+  fontSize = DEFAULT_MATH_FONT_SIZE,
+}: CreateMathInput): MathObject {
+  const layout = layoutMathExpression(latex, fontSize);
+  const width = Math.max(40, layout.width + OBJECT_PADDING * 2);
+  const height = Math.max(32, layout.height + OBJECT_PADDING * 2);
+  return {
+    id,
+    type: 'math',
+    x: Math.round(point.x - width / 2),
+    y: Math.round(point.y - height / 2),
+    width,
+    height,
+    rotation: 0,
+    latex,
+    displayText: latexToDisplayText(latex),
+    colorKey,
+    fontSize,
+  };
+}
+
+export function withObjectMath(object: CanvasObject, latex: string): CanvasObject {
+  if (object.type !== 'math' || object.latex === latex) return object;
+  const layout = layoutMathExpression(latex, object.fontSize);
+  const width = Math.max(40, layout.width + OBJECT_PADDING * 2);
+  const height = Math.max(32, layout.height + OBJECT_PADDING * 2);
+  return {
+    ...object,
+    latex,
+    displayText: latexToDisplayText(latex),
+    width,
+    height,
+  };
+}
+
 /**
  * Apply new text. Text objects grow and shrink with their content; a sticky
  * note keeps its standard paper size and clips nothing but its own box.
@@ -646,6 +707,21 @@ export function withObjectText(object: CanvasObject, text: string): CanvasObject
 export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): CanvasObject {
   if (object.type === 'image') return object;
   const colorKey = patch.colorKey ?? object.colorKey;
+  if (object.type === 'math') {
+    const fontSize = patch.fontSize ?? object.fontSize;
+    if (colorKey === object.colorKey && fontSize === object.fontSize) return object;
+    if (fontSize !== object.fontSize) {
+      const layout = layoutMathExpression(object.latex, fontSize);
+      return {
+        ...object,
+        colorKey,
+        fontSize,
+        width: Math.max(40, layout.width + OBJECT_PADDING * 2),
+        height: Math.max(32, layout.height + OBJECT_PADDING * 2),
+      };
+    }
+    return { ...object, colorKey };
+  }
   if (object.type === 'text') {
     const fontSize = patch.fontSize ?? object.fontSize;
     const fontWeight = patch.fontWeight ?? object.fontWeight ?? 'normal';
@@ -1022,11 +1098,13 @@ export function findObject(document: CanvasDocument, id: string): CanvasObject |
 export type DocumentCommand =
   | { type: 'ink.add'; stroke: InkStroke }
   | { type: 'ink.erase'; point: Point; radius: number }
+  | { type: 'ink.delete'; id: string }
   | { type: 'object.insert'; object: CanvasObject }
   | {
       type: 'object.update';
       id: string;
       text?: string;
+      latex?: string;
       colorKey?: string;
       fontSize?: number;
       fontWeight?: TextWeight;
@@ -1077,12 +1155,17 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
       const result = eraseStrokesAt(document.strokes, command.point, command.radius);
       return result.erasedIds.length === 0 ? document : { ...document, strokes: result.strokes };
     }
+    case 'ink.delete': {
+      const strokes = document.strokes.filter((s) => s.id !== command.id);
+      return strokes.length === document.strokes.length ? document : { ...document, strokes };
+    }
     case 'object.insert':
       return { ...document, objects: [...document.objects, command.object] };
     case 'object.update':
       return mapObject(document, command.id, (object) => {
         let next = object;
         if (command.text !== undefined) next = withObjectText(next, command.text);
+        if (command.latex !== undefined) next = withObjectMath(next, command.latex);
         if (command.table && next.type === 'table') {
           next = {
             ...next,
@@ -1187,7 +1270,8 @@ function strokeEquals(left: InkStroke, right: InkStroke): boolean {
   for (let index = 0; index < left.points.length; index += 1) {
     if (
       left.points[index].x !== right.points[index].x ||
-      left.points[index].y !== right.points[index].y
+      left.points[index].y !== right.points[index].y ||
+      left.points[index].pressure !== right.points[index].pressure
     ) {
       return false;
     }
@@ -1457,6 +1541,38 @@ export function prepareDocumentCommand(
       }
       if (after.length === 0) return null;
       return geometryHistoryCommand(command.label ?? 'Transform', before, after);
+    }
+    case 'ink.delete': {
+      const index = document.strokes.findIndex((s) => s.id === command.id);
+      if (index === -1) return null;
+      const removed = document.strokes[index];
+      return {
+        type: 'delete',
+        label: 'Delete stroke',
+        apply: (current) => applyCommand(current, command),
+        revert: (current) => {
+          if (current.strokes.some((s) => s.id === removed.id)) return current;
+          const strokes = [...current.strokes];
+          strokes.splice(Math.min(index, strokes.length), 0, removed);
+          return { ...current, strokes };
+        },
+      };
+    }
+    case 'ink.delete': {
+      const index = document.strokes.findIndex((s) => s.id === command.id);
+      if (index === -1) return null;
+      const removed = document.strokes[index];
+      return {
+        type: 'delete',
+        label: 'Delete stroke',
+        apply: (current) => applyCommand(current, command),
+        revert: (current) => {
+          if (current.strokes.some((s) => s.id === removed.id)) return current;
+          const strokes = [...current.strokes];
+          strokes.splice(Math.min(index, strokes.length), 0, removed);
+          return { ...current, strokes };
+        },
+      };
     }
     case 'object.delete': {
       const index = document.objects.findIndex((object) => object.id === command.id);

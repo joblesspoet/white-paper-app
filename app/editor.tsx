@@ -26,6 +26,7 @@ import {
   DEFAULT_TEXT_FONT_SIZE,
   OBJECT_PADDING,
   createDocumentHistory,
+  createMathObject,
   createStickyObject,
   createTableObject,
   createTextObject,
@@ -34,6 +35,7 @@ import {
   duplicateObject,
   editingCommit,
   findObject,
+  isMathObject,
   isTableObject,
   isTextualObject,
   keyboardOverlap,
@@ -46,6 +48,7 @@ import {
   textColorKeyForValue,
   textColorValue,
   textLineHeight,
+  withObjectMath,
   withObjectStyle,
   withObjectText,
   withTableCellText,
@@ -55,9 +58,12 @@ import {
   withTableRowRemoved,
   type CanvasDocument,
   type CanvasObject,
+  type ConnectorObject,
   type DocumentCommand,
+  type MathObject,
   type ObjectStylePatch,
   type ShapeKind,
+  type ShapeObject,
   type TableObject,
   type TextObject,
   type TextSlant,
@@ -68,7 +74,7 @@ import {
   type GeometryInstrumentState,
   type InstrumentKind,
 } from '../src/canvas/geometry-box';
-import { createInkStroke } from '../src/canvas/ink';
+import { createInkStroke, type InkStroke } from '../src/canvas/ink';
 import { GeometryBoxOverlay } from '../src/components/GeometryBoxOverlay';
 import {
   canRedo as historyCanRedo,
@@ -131,6 +137,17 @@ import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
 import { ExportSheet } from '../src/components/ExportSheet';
 import { EditorInspectorPanel } from '../src/components/EditorInspectorPanel';
+import { MathKeyboardSheet } from '../src/components/MathKeyboardSheet';
+import { OcrReviewScreen } from '../src/components/OcrReviewScreen';
+import { deleteExportFile, renderInkStrokesToTempPng } from '../src/export/export-service';
+import { recognizeImageText } from '../src/ocr/native-ocr';
+import {
+  loadingOcrState,
+  ocrReviewStateFromError,
+  ocrReviewStateFromResult,
+  withOcrCorrection,
+  type OcrReviewState,
+} from '../src/ocr/ocr-service';
 import {
   DOCK_TOUCH_TARGET,
   isSoftwareKeyboardVisible,
@@ -183,7 +200,7 @@ export default function BoardEditorScreen() {
   useEffect(() => { if (boardTitle) setTitle(boardTitle); }, [board?.id]);
   const insets = useSafeAreaInsets();
   const { width, height: windowHeight } = useWindowDimensions();
-  const { preferences, theme, isDark } = usePreferences();
+  const { preferences, updatePreference, theme, isDark } = usePreferences();
   const dark = isDark;
 
   const [history, dispatch] = useReducer(documentReducer, createDocumentHistory());
@@ -195,6 +212,15 @@ export default function BoardEditorScreen() {
 
   const [activeTool, setActiveTool] = useState<InkTool>('select');
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
+  const [selectedInkIds, setSelectedInkIds] = useState<string[]>([]);
+  const [mathSheetVisible, setMathSheetVisible] = useState(false);
+  const [editingMathObject, setEditingMathObject] = useState<MathObject | null>(null);
+  const [inkOcrSession, setInkOcrSession] = useState<{
+    uri: string;
+    bounds: { x: number; y: number; width: number; height: number };
+    strokeIds: string[];
+    state: OcrReviewState;
+  } | null>(null);
   const [stylingObjectId, setStylingObjectId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -739,7 +765,15 @@ export default function BoardEditorScreen() {
       });
       return;
     }
-    // Capability check: only text, sticky notes, and tables own editable text.
+    if (isMathObject(object)) {
+      setSelectedObjectIds([id]);
+      setObjectOptionsVisible(false);
+      setStylingObjectId(null);
+      setEditingMathObject(object);
+      setMathSheetVisible(true);
+      return;
+    }
+    // Capability check: only text, sticky notes, tables, and math own editable content.
     if (!isTextualObject(object)) return;
     setSelectedObjectIds([id]);
     setObjectOptionsVisible(false);
@@ -983,6 +1017,9 @@ export default function BoardEditorScreen() {
       if (activeTool === 'select') {
         setActiveTool('pen');
       }
+    } else if (request.type === 'math') {
+      setEditingMathObject(null);
+      setMathSheetVisible(true);
     } else if (request.type === 'image') {
       if (!boardId) return;
       setImageFlowId(`${boardId}-${Date.now()}`);
@@ -998,6 +1035,128 @@ export default function BoardEditorScreen() {
     setActiveTool(tool);
     setInkOptionsVisible(true);
   }, []);
+
+  const handleSnapStrokeToShape = useCallback(
+    (stroke: InkStroke, shape: ShapeObject | ConnectorObject) => {
+      void triggerHapticFeedback('impact', preferences.haptics);
+      dispatch({ type: 'command', command: { type: 'ink.add', stroke } });
+      dispatch({
+        type: 'commands',
+        commands: [
+          { type: 'ink.delete', id: stroke.id },
+          { type: 'object.insert', object: shape },
+        ],
+      });
+      setSelectedObjectIds([shape.id]);
+    },
+    [preferences.haptics],
+  );
+
+  const handleSubmitMath = useCallback(
+    (latex: string) => {
+      if (editingMathObject) {
+        if (latex !== editingMathObject.latex) {
+          dispatch({
+            type: 'command',
+            command: { type: 'object.update', id: editingMathObject.id, latex },
+          });
+        }
+        setMathSheetVisible(false);
+        setEditingMathObject(null);
+        return;
+      }
+      const center = screenToCanvas(
+        {
+          x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
+          y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
+        },
+        viewport,
+      );
+      const mathObj = createMathObject({
+        id: `math-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        point: center,
+        latex,
+        colorKey: textColorKey,
+      });
+      dispatch({ type: 'command', command: { type: 'object.insert', object: mathObj } });
+      setSelectedObjectIds([mathObj.id]);
+      setActiveTool('select');
+      setMathSheetVisible(false);
+    },
+    [canvasRect.height, canvasRect.width, editingMathObject, textColorKey, viewport, width, windowHeight],
+  );
+
+  const runInkOcr = useCallback(async (uri: string) => {
+    try {
+      const result = await recognizeImageText(uri);
+      setInkOcrSession((prev) =>
+        prev && prev.uri === uri ? { ...prev, state: ocrReviewStateFromResult(result) } : prev,
+      );
+    } catch (error) {
+      setInkOcrSession((prev) =>
+        prev && prev.uri === uri ? { ...prev, state: ocrReviewStateFromError(error) } : prev,
+      );
+    }
+  }, []);
+
+  const handleConvertInkToText = useCallback(async () => {
+    const targetStrokes = document.strokes.filter((s) => selectedInkIds.includes(s.id));
+    if (targetStrokes.length === 0) return;
+    const rendered = await renderInkStrokesToTempPng(targetStrokes);
+    if (!rendered) return;
+    setInkOcrSession({
+      uri: rendered.uri,
+      bounds: rendered.bounds,
+      strokeIds: targetStrokes.map((s) => s.id),
+      state: loadingOcrState(),
+    });
+    void runInkOcr(rendered.uri);
+  }, [document.strokes, runInkOcr, selectedInkIds]);
+
+  const handleCloseInkOcr = useCallback(() => {
+    setInkOcrSession((prev) => {
+      if (prev) void deleteExportFile(prev.uri);
+      return null;
+    });
+  }, []);
+
+  const handleCommitInkOcrText = useCallback(() => {
+    if (!inkOcrSession) return;
+    const text = inkOcrSession.state.text.trim();
+    if (!text) return;
+    const targetStrokes = document.strokes.filter((s) =>
+      inkOcrSession.strokeIds.includes(s.id),
+    );
+    const created = createTextObject({
+      id: `text-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      point: {
+        x: inkOcrSession.bounds.x + inkOcrSession.bounds.width / 2,
+        y: inkOcrSession.bounds.y + inkOcrSession.bounds.height / 2,
+      },
+      colorKey: textColorKey,
+      fontSize: textSize,
+    });
+    const textObj = withObjectText(
+      {
+        ...created,
+        x: Math.round(inkOcrSession.bounds.x),
+        y: Math.round(inkOcrSession.bounds.y),
+        width: Math.max(120, Math.round(inkOcrSession.bounds.width)),
+      },
+      text,
+    );
+    const commands: DocumentCommand[] = [
+      ...targetStrokes.map((stroke): DocumentCommand => ({ type: 'ink.delete', id: stroke.id })),
+      { type: 'object.insert', object: textObj },
+    ];
+    dispatch({
+      type: 'commands',
+      commands,
+    });
+    setSelectedInkIds([]);
+    setSelectedObjectIds([textObj.id]);
+    handleCloseInkOcr();
+  }, [document.strokes, handleCloseInkOcr, inkOcrSession, textColorKey, textSize]);
 
   /** An open edit is committed first; it is not the thing undo should remove. */
   const undo = useCallback(() => {
@@ -1038,6 +1197,7 @@ export default function BoardEditorScreen() {
   // Only text and sticky notes have editable text. Shapes and connectors
   // expose duplicate, style, and delete, so the Edit action is capability-driven.
   const selectedIsTextual = selectedObject ? isTextualObject(selectedObject) : false;
+  const selectedIsMath = selectedObject ? isMathObject(selectedObject) : false;
   const selectedIsImage = selectedObject?.type === 'image';
   const selectedIsTable = selectedObject?.type === 'table';
   // The rail is vertical and sits beside the selection, so it never covers the
@@ -1045,7 +1205,7 @@ export default function BoardEditorScreen() {
   const selectionActionCount = selectedObjects.length === 0
     ? 0
     : selectedObject
-      ? (selectedIsTextual ? 4 : selectedIsTable ? 4 : selectedIsImage ? 2 : 3)
+      ? (selectedIsTextual ? 4 : selectedIsMath ? 3 : selectedIsTable ? 4 : selectedIsImage ? 2 : 3)
       : 2;
   const canvasBorder = 1;
   const actionRail = selectedRect && !editing && canvasRect.width > 0
@@ -1150,6 +1310,10 @@ export default function BoardEditorScreen() {
             timerVisible={timerVisible}
             calculatorVisible={calculatorVisible}
             onToolPress={pressTool}
+            onOpenMath={() => {
+              setEditingMathObject(null);
+              setMathSheetVisible(true);
+            }}
             onToggleTimer={() => setTimerVisible((v) => !v)}
             onToggleCalculator={() => setCalculatorVisible((v) => !v)}
           />
@@ -1197,11 +1361,17 @@ export default function BoardEditorScreen() {
                 editingTableCell={editingTableCell}
                 viewportRequest={viewportRequest}
                 activeInstrument={activeInstrument}
+                stylusOnlyDrawing={preferences.stylusOnlyDrawing}
+                pressureSensitivity={preferences.pressureSensitivity}
+                holdToSnapShapes={preferences.holdToSnapShapes}
+                selectedInkIds={selectedInkIds}
                 onViewportChange={reportViewport}
                 onCommand={runCommand}
                 onCommitPending={commitPending}
                 onObjectCreate={startNewObject}
                 onSelectionChange={setSelectedObjectIds}
+                onInkSelectionChange={setSelectedInkIds}
+                onSnapStrokeToShape={handleSnapStrokeToShape}
                 onObjectEdit={startEditingExisting}
                 onObjectMeasure={measureObject}
                 onCanvasTouch={handleCanvasTouch}
@@ -1357,18 +1527,18 @@ export default function BoardEditorScreen() {
                   },
                 ]}
               >
-                {selectedIsTextual && selectedObject && (
+                {(selectedIsTextual || selectedIsMath) && selectedObject && (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Edit selected object"
-                    accessibilityHint="Opens the object's text editor"
+                    accessibilityHint={selectedIsMath ? 'Opens the math formula builder' : "Opens the object's text editor"}
                     onPress={() => startEditingExisting(selectedObject.id)}
                     style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
                   >
                     <EditIcon size={18} color={theme.foreground} />
                   </Pressable>
                 )}
-                {selectedObject && !selectedIsImage && !selectedIsTable && (
+                {selectedObject && !selectedIsImage && !selectedIsTable && !selectedIsMath && (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Style selected object"
@@ -1659,6 +1829,8 @@ export default function BoardEditorScreen() {
           opacity={opacity}
           eraserRadius={eraserRadius}
           laserColorKey={laserColorKey}
+          stylusOnlyDrawing={preferences.stylusOnlyDrawing}
+          holdToSnapShapes={preferences.holdToSnapShapes}
           bottomOffset={optionsBottom}
           variant={layout.toolOptionsVariant}
           leftOffset={layout.toolPopoverLeft}
@@ -1670,6 +1842,12 @@ export default function BoardEditorScreen() {
           onOpacityChange={setOpacity}
           onEraserRadiusChange={setEraserRadius}
           onLaserColorChange={setLaserColorKey}
+          onToggleStylusOnly={() =>
+            void updatePreference('stylusOnlyDrawing', !preferences.stylusOnlyDrawing)
+          }
+          onToggleHoldToSnap={() =>
+            void updatePreference('holdToSnapShapes', !preferences.holdToSnapShapes)
+          }
           onClose={() => setInkOptionsVisible(false)}
         />
       )}
@@ -1682,6 +1860,7 @@ export default function BoardEditorScreen() {
           strokeWidth={strokeWidth}
           eraserRadius={eraserRadius}
           laserColorKey={laserColorKey}
+          stylusOnlyDrawing={preferences.stylusOnlyDrawing}
           bottomOffset={ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom}
           onToolChange={(tool) => {
             setLastInkingTool(tool);
@@ -1694,6 +1873,9 @@ export default function BoardEditorScreen() {
           onWidthChange={setStrokeWidth}
           onEraserRadiusChange={setEraserRadius}
           onLaserColorChange={setLaserColorKey}
+          onToggleStylusOnly={() =>
+            void updatePreference('stylusOnlyDrawing', !preferences.stylusOnlyDrawing)
+          }
           onOpenFullOptions={() => {
             setInkTrayOpen(false);
             setInkOptionsVisible(true);
@@ -1770,6 +1952,82 @@ export default function BoardEditorScreen() {
         defaultFormat={preferences.exportFormat}
         onClose={() => setExportSheetVisible(false)}
       />
+      {selectedInkIds.length > 0 && !editing && (
+        <View
+          style={{
+            position: 'absolute',
+            bottom: ACTION_ISLAND_HEIGHT + spacing.md + islandBottom,
+            alignSelf: 'center',
+            zIndex: 30,
+          }}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Convert selected ink to text"
+            onPress={() => void handleConvertInkToText()}
+            style={({ pressed }) => [
+              {
+                backgroundColor: theme.primary,
+                paddingHorizontal: spacing.md,
+                paddingVertical: spacing.xs + 2,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: theme.border,
+                minHeight: 40,
+                justifyContent: 'center',
+                alignItems: 'center',
+              },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={{ color: theme.surface, fontWeight: '700', fontSize: 13 }}>
+              Convert to text ({selectedInkIds.length})
+            </Text>
+          </Pressable>
+        </View>
+      )}
+      <MathKeyboardSheet
+        visible={mathSheetVisible}
+        theme={theme}
+        initialLatex={editingMathObject?.latex ?? ''}
+        isEditing={Boolean(editingMathObject)}
+        onSubmit={handleSubmitMath}
+        onClose={() => {
+          setMathSheetVisible(false);
+          setEditingMathObject(null);
+        }}
+      />
+      <Modal
+        visible={Boolean(inkOcrSession)}
+        transparent={false}
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={handleCloseInkOcr}
+      >
+        {inkOcrSession && (
+          <OcrReviewScreen
+            theme={theme}
+            uri={inkOcrSession.uri}
+            width={Math.max(1, Math.round(inkOcrSession.bounds.width))}
+            height={Math.max(1, Math.round(inkOcrSession.bounds.height))}
+            state={inkOcrSession.state}
+            onChangeText={(nextText) =>
+              setInkOcrSession((prev) =>
+                prev ? { ...prev, state: withOcrCorrection(prev.state, nextText) } : null,
+              )
+            }
+            onRetry={() => {
+              setInkOcrSession((prev) =>
+                prev ? { ...prev, state: loadingOcrState() } : null,
+              );
+              void runInkOcr(inkOcrSession.uri);
+            }}
+            onAddText={handleCommitInkOcrText}
+            onAddImageOnly={handleCloseInkOcr}
+            onClose={handleCloseInkOcr}
+          />
+        )}
+      </Modal>
       <Modal
         visible={boardStyleModalVisible}
         transparent
@@ -1873,6 +2131,7 @@ function ToolRail({
   timerVisible,
   calculatorVisible,
   onToolPress,
+  onOpenMath,
   onToggleTimer,
   onToggleCalculator,
 }: {
@@ -1882,6 +2141,7 @@ function ToolRail({
   timerVisible: boolean;
   calculatorVisible: boolean;
   onToolPress: (tool: InkTool) => void;
+  onOpenMath: () => void;
   onToggleTimer: () => void;
   onToggleCalculator: () => void;
 }) {
@@ -1939,6 +2199,17 @@ function ToolRail({
             <CalculatorIcon size={22} color={calculatorVisible ? theme.primary : theme.foreground} />
           </View>
           <Text style={[styles.toolLabel, { color: calculatorVisible ? theme.primary : theme.foreground }]} numberOfLines={1}>Calc</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open math formula builder"
+          onPress={onOpenMath}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={styles.toolIconWrap}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: theme.foreground }}>∑</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>Math</Text>
         </Pressable>
       </ScrollView>
     </View>

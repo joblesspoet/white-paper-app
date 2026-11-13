@@ -221,6 +221,9 @@ export type AppPreferences = {
   defaultPenWidth: number;
   haptics: boolean;
   exportFormat: DefaultExportFormat;
+  stylusOnlyDrawing: boolean;
+  pressureSensitivity: boolean;
+  holdToSnapShapes: boolean;
 };
 
 export const DEFAULT_APP_PREFERENCES: AppPreferences = {
@@ -231,6 +234,9 @@ export const DEFAULT_APP_PREFERENCES: AppPreferences = {
   defaultPenWidth: 4,
   haptics: true,
   exportFormat: 'png',
+  stylusOnlyDrawing: false,
+  pressureSensitivity: true,
+  holdToSnapShapes: true,
 };
 
 const VALID_THEMES: readonly AppTheme[] = ['system', 'light', 'dark'];
@@ -274,6 +280,18 @@ export function parseAppPreferences(raw: string | null | undefined): AppPreferen
       VALID_EXPORT_FORMATS.includes(value.exportFormat as DefaultExportFormat)
         ? (value.exportFormat as DefaultExportFormat)
         : DEFAULT_APP_PREFERENCES.exportFormat;
+    const stylusOnlyDrawing =
+      typeof value.stylusOnlyDrawing === 'boolean'
+        ? value.stylusOnlyDrawing
+        : DEFAULT_APP_PREFERENCES.stylusOnlyDrawing;
+    const pressureSensitivity =
+      typeof value.pressureSensitivity === 'boolean'
+        ? value.pressureSensitivity
+        : DEFAULT_APP_PREFERENCES.pressureSensitivity;
+    const holdToSnapShapes =
+      typeof value.holdToSnapShapes === 'boolean'
+        ? value.holdToSnapShapes
+        : DEFAULT_APP_PREFERENCES.holdToSnapShapes;
 
     return {
       theme,
@@ -283,6 +301,9 @@ export function parseAppPreferences(raw: string | null | undefined): AppPreferen
       defaultPenWidth,
       haptics,
       exportFormat,
+      stylusOnlyDrawing,
+      pressureSensitivity,
+      holdToSnapShapes,
     };
   } catch {
     return { ...DEFAULT_APP_PREFERENCES };

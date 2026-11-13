@@ -2,10 +2,12 @@ import {
   Canvas,
   Circle,
   DashPathEffect,
+  FontSlant,
   FontWeight,
   Group,
   Image as SkiaImage,
   Line as SkiaLine,
+  Paragraph,
   Path,
   Rect,
   RoundedRect,
@@ -16,7 +18,7 @@ import {
 } from '@shopify/react-native-skia';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type TextLayoutEvent } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, PointerType } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -38,6 +40,7 @@ import {
   geometryFromPoints,
   isGeometricObject,
   isImageObject,
+  isMathObject,
   isTableObject,
   isTextualObject,
   objectAtPoint,
@@ -55,6 +58,7 @@ import {
   type ConnectorStyle,
   type DocumentCommand,
   type ImageObject,
+  type MathObject,
   type ShapeKind,
   type ShapeObject,
   type TableObject,
@@ -86,14 +90,25 @@ import {
 } from '../canvas/selection';
 import {
   appendInkPoint,
+  buildVariableWidthStrokePath,
   createInkStroke,
   DEFAULT_ERASER_RADIUS,
   eraserRadiusForScale,
+  hasVariablePressure,
   inkPathData,
   MIN_POINT_DISTANCE_SCREEN,
+  shouldAcceptInkPointer,
   type FreehandTool,
+  type InkPoint,
   type InkStroke,
+  type InputPointerKind,
 } from '../canvas/ink';
+import { layoutMathExpression } from '../canvas/math-layout';
+import {
+  classifyInkStroke,
+  recognizedShapeToObject,
+  strokesInRect,
+} from '../canvas/recognition';
 import {
   arrowHeadPathData,
   arrowHeadSize,
@@ -190,11 +205,17 @@ type CanvasViewportProps = {
   viewportRequest?: ViewportRequest | null;
   /** Active Geometry Box instrument for magnetic pen edge snapping. */
   activeInstrument?: GeometryInstrumentState | null;
+  stylusOnlyDrawing?: boolean;
+  pressureSensitivity?: boolean;
+  holdToSnapShapes?: boolean;
+  selectedInkIds?: readonly string[];
   onViewportChange?: (viewport: ViewportState) => void;
   onCommand: (command: DocumentCommand, transient?: boolean) => void;
   onCommitPending: () => void;
   onObjectCreate?: (type: 'text' | 'sticky', point: Point) => void;
   onSelectionChange?: (ids: string[]) => void;
+  onInkSelectionChange?: (ids: string[]) => void;
+  onSnapStrokeToShape?: (stroke: InkStroke, shape: ShapeObject | ConnectorObject) => void;
   onObjectEdit?: (id: string, point?: Point) => void;
   /** Real rendered text height, used to correct the object's estimated height. */
   onObjectMeasure?: (id: string, height: number) => void;
@@ -226,11 +247,17 @@ export function CanvasViewport({
   editingTableCell = null,
   viewportRequest = null,
   activeInstrument = null,
+  stylusOnlyDrawing = false,
+  pressureSensitivity = true,
+  holdToSnapShapes = true,
+  selectedInkIds = [],
   onViewportChange,
   onCommand,
   onCommitPending,
   onObjectCreate,
   onSelectionChange,
+  onInkSelectionChange,
+  onSnapStrokeToShape,
   onObjectEdit,
   onObjectMeasure,
   onCanvasTouch,
@@ -318,10 +345,52 @@ export function CanvasViewport({
     | null
   >(null);
   const [snapReadout, setSnapReadout] = useState<string | null>(null);
+  const holdSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSnapScreenPointRef = useRef<Point | null>(null);
 
-  const beginStroke = useCallback((point: Point) => {
+  const clearHoldSnapTimer = useCallback(() => {
+    if (holdSnapTimerRef.current) {
+      clearTimeout(holdSnapTimerRef.current);
+      holdSnapTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleHoldSnap = useCallback(
+    (screenPoint: Point) => {
+      if (!holdToSnapShapes || activeTool !== 'pen' || !onSnapStrokeToShape) return;
+      const last = lastSnapScreenPointRef.current;
+      if (last && Math.hypot(screenPoint.x - last.x, screenPoint.y - last.y) < 4) {
+        return;
+      }
+      lastSnapScreenPointRef.current = screenPoint;
+      clearHoldSnapTimer();
+      holdSnapTimerRef.current = setTimeout(() => {
+        const stroke = activeStrokeRef.current;
+        if (!stroke || stroke.tool !== 'pen' || lockedGeometryEdgeRef.current) return;
+        const recognized = classifyInkStroke(stroke.points);
+        if (!recognized) return;
+        const shapeId = `snap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const shape = recognizedShapeToObject(shapeId, recognized, {
+          colorKey: stroke.color,
+          strokeWidth: stroke.width,
+        });
+        activeStrokeRef.current = null;
+        lockedGeometryEdgeRef.current = null;
+        setSnapReadout(null);
+        setActiveStroke(null);
+        onSnapStrokeToShape(stroke, shape);
+      }, 350);
+    },
+    [activeTool, clearHoldSnapTimer, holdToSnapShapes, onSnapStrokeToShape],
+  );
+
+  useEffect(() => () => clearHoldSnapTimer(), [clearHoldSnapTimer]);
+
+  const beginStroke = useCallback((point: InkPoint, screenPoint?: Point) => {
+    clearHoldSnapTimer();
+    lastSnapScreenPointRef.current = screenPoint ?? null;
     const tool: FreehandTool = activeTool === 'highlighter' ? 'highlighter' : 'pen';
-    let startPoint = point;
+    let startPoint: InkPoint = point;
     lockedGeometryEdgeRef.current = null;
     setSnapReadout(null);
 
@@ -365,16 +434,17 @@ export function CanvasViewport({
     });
     activeStrokeRef.current = stroke;
     setActiveStroke(stroke);
-  }, [activeInstrument, activeTool, color, opacity, viewport.scale, width]);
-  const addPoint = useCallback((point: Point, minDistance: number) => {
+    if (screenPoint) scheduleHoldSnap(screenPoint);
+  }, [activeInstrument, activeTool, clearHoldSnapTimer, color, opacity, scheduleHoldSnap, viewport.scale, width]);
+  const addPoint = useCallback((point: InkPoint, minDistance: number, screenPoint?: Point) => {
     const current = activeStrokeRef.current;
     if (!current) return;
-    let nextPoint = point;
+    let nextPoint: InkPoint = point;
     const locked = lockedGeometryEdgeRef.current;
     if (locked && activeInstrument) {
       if (locked.kind === 'ruler' && activeInstrument.kind === 'ruler') {
         const proj = projectPointToLockedRulerEdge(point, activeInstrument, locked.edge);
-        nextPoint = proj.snappedPoint;
+        nextPoint = { ...proj.snappedPoint, pressure: point.pressure };
         const dist = Math.round(Math.abs(proj.distanceAlongEdge - locked.startAlong));
         setSnapReadout(`${dist} px · ${Math.round(activeInstrument.angleDeg)}°`);
       } else if (
@@ -388,7 +458,7 @@ export function CanvasViewport({
           locked.edgeIndex,
         );
         if (proj) {
-          nextPoint = proj.snappedPoint;
+          nextPoint = { ...proj.snappedPoint, pressure: point.pressure };
           const dist = Math.round(Math.abs(proj.distanceAlongEdge - locked.startAlong));
           setSnapReadout(`${dist} px · ${Math.round(activeInstrument.angleDeg)}°`);
         }
@@ -397,7 +467,8 @@ export function CanvasViewport({
     const next = appendInkPoint(current, nextPoint, minDistance);
     activeStrokeRef.current = next;
     setActiveStroke(next);
-  }, [activeInstrument]);
+    if (screenPoint) scheduleHoldSnap(screenPoint);
+  }, [activeInstrument, scheduleHoldSnap]);
   /**
    * The in-progress stroke lives in React state for rendering and in a ref for
    * the gesture, because a running gesture keeps the callbacks from the render it
@@ -405,13 +476,15 @@ export function CanvasViewport({
    * may call twice.
    */
   const finishStroke = useCallback(() => {
+    clearHoldSnapTimer();
+    lastSnapScreenPointRef.current = null;
     const stroke = activeStrokeRef.current;
     activeStrokeRef.current = null;
     lockedGeometryEdgeRef.current = null;
     setSnapReadout(null);
     setActiveStroke(null);
     if (stroke) onCommand({ type: 'ink.add', stroke });
-  }, [onCommand]);
+  }, [clearHoldSnapTimer, onCommand]);
 
   const [laserStrokes, setLaserStrokes] = useState<readonly EphemeralLaserStroke[]>([]);
   const [activeLaserStroke, setActiveLaserStroke] = useState<EphemeralLaserStroke | null>(null);
@@ -604,27 +677,73 @@ export function CanvasViewport({
 
   const selectInMarquee = useCallback((rect: CanvasRect) => {
     onSelectionChange?.(objectsInRect(document.objects, rect).map((object) => object.id));
-  }, [document.objects, onSelectionChange]);
+    onInkSelectionChange?.(strokesInRect(document.strokes, rect).map((stroke) => stroke.id));
+  }, [document.objects, document.strokes, onInkSelectionChange, onSelectionChange]);
+
+  const drawAccepted = useSharedValue(true);
 
   const drawGesture = Gesture.Pan()
     .enabled(activeTool === 'pen' || activeTool === 'highlighter')
     .maxPointers(1)
     .minDistance(0)
     .onStart((event) => {
+      const pointerKind: InputPointerKind =
+        event.pointerType === PointerType.STYLUS
+          ? 'stylus'
+          : event.pointerType === PointerType.MOUSE
+            ? 'mouse'
+            : 'touch';
+      const accepted = shouldAcceptInkPointer(pointerKind, stylusOnlyDrawing);
+      drawAccepted.value = accepted;
+      if (!accepted) {
+        startX.value = offsetX.value;
+        startY.value = offsetY.value;
+        return;
+      }
       const point = screenToCanvas(
         { x: event.x, y: event.y },
         { x: offsetX.value, y: offsetY.value, scale: scale.value },
       );
-      runOnJS(beginStroke)(point);
+      const rawPressure =
+        pressureSensitivity && pointerKind === 'stylus' && typeof event.stylusData?.pressure === 'number'
+          ? event.stylusData.pressure
+          : undefined;
+      const inkPoint: InkPoint =
+        rawPressure !== undefined ? { ...point, pressure: rawPressure } : point;
+      runOnJS(beginStroke)(inkPoint, { x: event.x, y: event.y });
     })
     .onUpdate((event) => {
+      if (!drawAccepted.value) {
+        offsetX.value = startX.value + event.translationX;
+        offsetY.value = startY.value + event.translationY;
+        runOnJS(report)(offsetX.value, offsetY.value, scale.value);
+        return;
+      }
+      const pointerKind: InputPointerKind =
+        event.pointerType === PointerType.STYLUS
+          ? 'stylus'
+          : event.pointerType === PointerType.MOUSE
+            ? 'mouse'
+            : 'touch';
       const point = screenToCanvas(
         { x: event.x, y: event.y },
         { x: offsetX.value, y: offsetY.value, scale: scale.value },
       );
-      runOnJS(addPoint)(point, MIN_POINT_DISTANCE_SCREEN / scale.value);
+      const rawPressure =
+        pressureSensitivity && pointerKind === 'stylus' && typeof event.stylusData?.pressure === 'number'
+          ? event.stylusData.pressure
+          : undefined;
+      const inkPoint: InkPoint =
+        rawPressure !== undefined ? { ...point, pressure: rawPressure } : point;
+      runOnJS(addPoint)(inkPoint, MIN_POINT_DISTANCE_SCREEN / scale.value, { x: event.x, y: event.y });
     })
-    .onFinalize(() => { runOnJS(finishStroke)(); });
+    .onFinalize(() => {
+      if (!drawAccepted.value) {
+        runOnJS(commitViewport)(offsetX.value, offsetY.value, scale.value);
+        return;
+      }
+      runOnJS(finishStroke)();
+    });
 
   const shapeGesture = Gesture.Pan()
     .enabled(activeTool === 'shape' || activeTool === 'connector')
@@ -727,7 +846,7 @@ export function CanvasViewport({
         else if (
           alreadySelected &&
           selectedObjectIds.length === 1 &&
-          (isTextualObject(hit) || isTableObject(hit))
+          (isTextualObject(hit) || isTableObject(hit) || isMathObject(hit))
         ) {
           tapOpensEditor.value = hit.id;
         }
@@ -736,6 +855,7 @@ export function CanvasViewport({
 
       gestureMode.value = 'pan';
       if (selectedObjectIds.length > 0) runOnJS(selectObjects)([]);
+      if (selectedInkIds.length > 0 && onInkSelectionChange) runOnJS(onInkSelectionChange)([]);
     })
     .onUpdate((event) => {
       if (gestureMode.value === 'marquee') {
@@ -956,7 +1076,13 @@ export function CanvasViewport({
               />
             ))}
             {renderedStrokes.map((stroke) => (
-              <InkStrokeView key={stroke.id} stroke={stroke} dark={dark} />
+              <InkStrokeView
+                key={stroke.id}
+                stroke={stroke}
+                dark={dark}
+                selected={selectedInkIds.includes(stroke.id)}
+                highlightColor={theme.primary}
+              />
             ))}
             {activeTool === 'eraser' && (
               <Circle
@@ -978,6 +1104,9 @@ export function CanvasViewport({
             ))}
             {document.objects.filter(isTableObject).map((object) => (
               <TableObjectView key={object.id} object={object} dark={dark} />
+            ))}
+            {document.objects.filter(isMathObject).map((object) => (
+              <MathObjectView key={object.id} object={object} dark={dark} />
             ))}
             {renderedLaserStrokes.map((stroke) => {
               const alpha = laserStrokeOpacity(stroke, laserNowMs);
@@ -1093,23 +1222,131 @@ export function CanvasViewport({
   );
 }
 
-function InkStrokeView({ stroke, dark }: { stroke: InkStroke; dark: boolean }) {
+const InkStrokeView = memo(function InkStrokeView({
+  stroke,
+  dark,
+  selected = false,
+  highlightColor = '#0D9488',
+}: {
+  stroke: InkStroke;
+  dark: boolean;
+  selected?: boolean;
+  highlightColor?: string;
+}) {
+  const useRibbon = stroke.tool === 'pen' && hasVariablePressure(stroke.points);
   const path = useMemo(() => {
-    return Skia.Path.MakeFromSVGString(inkPathData(stroke.points)) ?? Skia.Path.Make();
-  }, [stroke.points]);
+    const svg = useRibbon
+      ? buildVariableWidthStrokePath(stroke.points, stroke.width)
+      : inkPathData(stroke.points);
+    return Skia.Path.MakeFromSVGString(svg) ?? Skia.Path.Make();
+  }, [stroke.points, stroke.width, useRibbon]);
+
   return (
-    <Path
-      path={path}
-      color={stroke.color}
-      opacity={stroke.opacity}
-      style="stroke"
-      strokeWidth={stroke.width}
-      strokeCap="round"
-      strokeJoin="round"
-      blendMode={stroke.tool === 'highlighter' ? (dark ? 'screen' : 'multiply') : 'srcOver'}
-    />
+    <>
+      {selected ? (
+        <Path
+          path={path}
+          color={highlightColor}
+          opacity={0.28}
+          style={useRibbon ? 'fill' : 'stroke'}
+          strokeWidth={stroke.width + 8}
+          strokeCap="round"
+          strokeJoin="round"
+        />
+      ) : null}
+      <Path
+        path={path}
+        color={stroke.color}
+        opacity={stroke.opacity}
+        style={useRibbon ? 'fill' : 'stroke'}
+        strokeWidth={stroke.width}
+        strokeCap="round"
+        strokeJoin="round"
+        blendMode={stroke.tool === 'highlighter' ? (dark ? 'screen' : 'multiply') : 'srcOver'}
+      />
+    </>
   );
-}
+});
+
+const MathObjectView = memo(function MathObjectView({
+  object,
+  dark,
+}: {
+  object: MathObject;
+  dark: boolean;
+}) {
+  const color = textColorValue(object.colorKey, dark);
+  const layout = useMemo(
+    () => layoutMathExpression(object.latex, object.fontSize),
+    [object.fontSize, object.latex],
+  );
+  const vectorPath = useMemo(() => {
+    if (!layout.vectorPathsSvg) return null;
+    return Skia.Path.MakeFromSVGString(layout.vectorPathsSvg);
+  }, [layout.vectorPathsSvg]);
+
+  const glyphParagraphs = useMemo(() => {
+    return layout.glyphs.map((glyph) => {
+      const builder = Skia.ParagraphBuilder.Make({ textAlign: TextAlign.Left });
+      builder.pushStyle({
+        color: Skia.Color(color),
+        fontSize: glyph.fontSize,
+        fontStyle: {
+          weight: glyph.bold ? FontWeight.Bold : FontWeight.Normal,
+          slant: glyph.italic ? FontSlant.Italic : FontSlant.Upright,
+        },
+      });
+      builder.addText(glyph.text);
+      const para = builder.build();
+      const paraWidth = Math.max(24, glyph.fontSize * glyph.text.length + 12);
+      para.layout(paraWidth);
+      return { glyph, para, width: paraWidth };
+    });
+  }, [color, layout.glyphs]);
+
+  const origin = useMemo(
+    () => ({
+      x: object.x + object.width / 2,
+      y: object.y + object.height / 2,
+    }),
+    [object.height, object.width, object.x, object.y],
+  );
+  const transform = useMemo(
+    () =>
+      object.rotation === 0
+        ? undefined
+        : [{ rotate: (object.rotation * Math.PI) / 180 }],
+    [object.rotation],
+  );
+  const originX = object.x + OBJECT_PADDING;
+  const originY = object.y + OBJECT_PADDING;
+
+  return (
+    <Group origin={origin} transform={transform}>
+      {vectorPath ? (
+        <Group transform={[{ translateX: originX }, { translateY: originY }]}>
+          <Path
+            path={vectorPath}
+            color={color}
+            style="stroke"
+            strokeWidth={Math.max(1.2, object.fontSize * 0.065)}
+            strokeCap="round"
+            strokeJoin="round"
+          />
+        </Group>
+      ) : null}
+      {glyphParagraphs.map((entry, idx) => (
+        <Paragraph
+          key={`${idx}-${entry.glyph.text}`}
+          paragraph={entry.para}
+          x={originX + entry.glyph.x}
+          y={originY + entry.glyph.y}
+          width={entry.width}
+        />
+      ))}
+    </Group>
+  );
+});
 
 function BackgroundPatternView({
   svgPath,

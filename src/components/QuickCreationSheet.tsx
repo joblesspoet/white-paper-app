@@ -43,6 +43,7 @@ export type InsertToolRequest =
   | { type: 'connector'; style: ConnectorStyle }
   | { type: 'table'; rows: number; columns: number }
   | { type: 'geometry'; instrument: InstrumentKind }
+  | { type: 'math' }
   | { type: 'image' }
   | { type: 'timer' }
   | { type: 'calculator' };
@@ -480,6 +481,13 @@ export function QuickCreationSheet({
                       label="Calculator"
                       icon={<CalculatorIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'calculator' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open math formula builder"
+                      label="Math f(x)"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>∑</Text>}
+                      onPress={() => insert({ type: 'math' })}
                     />
                   </View>
                 </Section>

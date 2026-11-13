@@ -37,6 +37,8 @@ type InkOptionsSheetProps = {
   opacity: number;
   eraserRadius: number;
   laserColorKey?: LaserColorKey;
+  stylusOnlyDrawing?: boolean;
+  holdToSnapShapes?: boolean;
   bottomOffset: number;
   variant?: ToolOptionsVariant;
   leftOffset?: number;
@@ -48,6 +50,8 @@ type InkOptionsSheetProps = {
   onOpacityChange: (opacity: number) => void;
   onEraserRadiusChange: (radius: number) => void;
   onLaserColorChange?: (colorKey: LaserColorKey) => void;
+  onToggleStylusOnly?: () => void;
+  onToggleHoldToSnap?: () => void;
   onClose: () => void;
 };
 
@@ -64,6 +68,8 @@ export function InkOptionsSheet({
   opacity,
   eraserRadius,
   laserColorKey = 'red',
+  stylusOnlyDrawing = false,
+  holdToSnapShapes = true,
   bottomOffset,
   variant = 'bottom-sheet',
   leftOffset = spacing.md,
@@ -75,6 +81,8 @@ export function InkOptionsSheet({
   onOpacityChange,
   onEraserRadiusChange,
   onLaserColorChange,
+  onToggleStylusOnly,
+  onToggleHoldToSnap,
   onClose,
 }: InkOptionsSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
@@ -396,6 +404,60 @@ export function InkOptionsSheet({
                     );
                   })}
                 </View>
+
+                {(onToggleStylusOnly || onToggleHoldToSnap) && (
+                  <>
+                    <Text style={[styles.label, { color: theme.foreground }]}>Stylus & Smart Ink</Text>
+                    <View style={styles.row}>
+                      {onToggleStylusOnly && (
+                        <Pressable
+                          accessibilityRole="switch"
+                          accessibilityLabel="Stylus-only drawing"
+                          accessibilityState={{ checked: stylusOnlyDrawing }}
+                          onPress={onToggleStylusOnly}
+                          style={({ pressed }) => [
+                            styles.chip,
+                            { borderColor: stylusOnlyDrawing ? theme.primary : theme.border },
+                            stylusOnlyDrawing && selectedChip,
+                            pressed && styles.pressed,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.chipText,
+                              stylusOnlyDrawing ? selectedText : { color: theme.foreground },
+                            ]}
+                          >
+                            Stylus-only
+                          </Text>
+                        </Pressable>
+                      )}
+                      {onToggleHoldToSnap && (
+                        <Pressable
+                          accessibilityRole="switch"
+                          accessibilityLabel="Hold to snap shapes"
+                          accessibilityState={{ checked: holdToSnapShapes }}
+                          onPress={onToggleHoldToSnap}
+                          style={({ pressed }) => [
+                            styles.chip,
+                            { borderColor: holdToSnapShapes ? theme.primary : theme.border },
+                            holdToSnapShapes && selectedChip,
+                            pressed && styles.pressed,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.chipText,
+                              holdToSnapShapes ? selectedText : { color: theme.foreground },
+                            ]}
+                          >
+                            Hold-to-snap
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
+                  </>
+                )}
               </>
             )}
           </ScrollView>

@@ -78,6 +78,8 @@ function objectTypeLabel(type: CanvasObject['type']): string {
       return 'Image';
     case 'table':
       return 'Table';
+    case 'math':
+      return 'Math Formula';
   }
 }
 
