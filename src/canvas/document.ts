@@ -264,6 +264,8 @@ type CanvasObjectBase = {
   text?: string;
   /** Present only on textual objects; optional here for backwards-compatible inspection. */
   fontSize?: number;
+  /** When true, normal single-finger Select gestures skip this object (e.g. PDF worksheet backgrounds). */
+  locked?: boolean;
 };
 
 export type TextObject = CanvasObjectBase & {
@@ -994,14 +996,21 @@ export function objectContainsPoint(object: CanvasObject, point: Point): boolean
  * native views layered above the Skia canvas, so they always win over shapes and
  * connectors even when a shape was inserted later.
  */
-export function objectAtPoint(objects: readonly CanvasObject[], point: Point): CanvasObject | null {
+export function objectAtPoint(
+  objects: readonly CanvasObject[],
+  point: Point,
+  options?: { includeLocked?: boolean },
+): CanvasObject | null {
   'worklet';
+  const includeLocked = options?.includeLocked === true;
   for (let index = objects.length - 1; index >= 0; index -= 1) {
     const object = objects[index];
+    if (!includeLocked && object.locked) continue;
     if (isTextualObject(object) && objectContainsPoint(object, point)) return object;
   }
   for (let index = objects.length - 1; index >= 0; index -= 1) {
     const object = objects[index];
+    if (!includeLocked && object.locked) continue;
     if (!isTextualObject(object) && objectContainsPoint(object, point)) return object;
   }
   return null;
@@ -1116,6 +1125,7 @@ export type DocumentCommand =
       style?: ConnectorStyle;
       hasHeaderRow?: boolean;
       fillHeader?: boolean;
+      locked?: boolean;
       table?: Partial<
         Pick<
           TableObject,
@@ -1166,6 +1176,9 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
         let next = object;
         if (command.text !== undefined) next = withObjectText(next, command.text);
         if (command.latex !== undefined) next = withObjectMath(next, command.latex);
+        if (command.locked !== undefined && Boolean(next.locked) !== command.locked) {
+          next = { ...next, locked: command.locked };
+        }
         if (command.table && next.type === 'table') {
           next = {
             ...next,
@@ -1216,6 +1229,7 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
 function objectEquals(left: CanvasObject, right: CanvasObject): boolean {
   if (left === right) return true;
   if (left.type !== right.type) return false;
+  if (Boolean(left.locked) !== Boolean(right.locked)) return false;
   if (left.type === 'table' && right.type === 'table') {
     return tableEquals(left, right);
   }

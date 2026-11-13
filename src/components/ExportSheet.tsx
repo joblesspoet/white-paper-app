@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { CanvasDocument } from '../canvas/document';
 import type { Viewport } from '../canvas/viewport';
-import { deleteExportFile, exportBoard } from '../export/export-service';
+import { deleteExportFile, exportBoard, type ExportPageInput } from '../export/export-service';
 import { formatBytes, type ExportFileFormat, type ExportScope } from '../export/regions';
 import { isShareAvailable, shareFile } from '../export/share';
 import type { BoardSettings } from '../persistence/schema';
@@ -32,6 +32,7 @@ type ExportSheetProps = {
   canvasSize: { width: number; height: number };
   settings: BoardSettings;
   selectedIds: readonly string[];
+  pages?: readonly ExportPageInput[];
   defaultFormat?: ExportFileFormat;
   onClose: () => void;
 };
@@ -53,6 +54,7 @@ export function ExportSheet({
   canvasSize,
   settings,
   selectedIds,
+  pages,
   defaultFormat = 'png',
   onClose,
 }: ExportSheetProps) {
@@ -61,6 +63,7 @@ export function ExportSheet({
   const modalLayout = resolveFlowModalLayout(width, height);
   const { centeredModal, modalMaxWidth } = modalLayout;
   const hasSelection = selectedIds.length > 0;
+  const pageCount = pages && pages.length > 0 ? pages.length : 1;
   const pdfSupported = Platform.OS !== 'web';
 
   const [format, setFormat] = useState<ExportFileFormat>(defaultFormat);
@@ -92,7 +95,11 @@ export function ExportSheet({
     {
       format: 'pdf',
       label: 'PDF document',
-      subtitle: pdfSupported ? 'Single-page local PDF' : 'Available on iOS and Android',
+      subtitle: pdfSupported
+        ? scope === 'all-pages'
+          ? `Multi-page PDF (${pageCount} page${pageCount === 1 ? '' : 's'})`
+          : 'Current page local PDF'
+        : 'Available on iOS and Android',
       supported: pdfSupported,
     },
     {
@@ -113,7 +120,7 @@ export function ExportSheet({
 
     let exportedUri: string | null = null;
     try {
-      const effectiveScope: ExportScope = format === 'backup' ? 'visible' : scope;
+      const effectiveScope: ExportScope = format === 'backup' ? 'all-pages' : scope;
       const result = await exportBoard({
         boardTitle,
         document,
@@ -124,6 +131,7 @@ export function ExportSheet({
         format,
         scope: effectiveScope,
         selectedIds,
+        pages,
         onProgress: (fraction, label) => {
           setProgress(fraction);
           setProgressLabel(label);
@@ -165,7 +173,7 @@ export function ExportSheet({
         await deleteExportFile(exportedUri);
       }
     }
-  }, [boardTitle, busy, canvasSize, dark, document, format, scope, selectedIds, settings, viewport]);
+  }, [boardTitle, busy, canvasSize, dark, document, format, pages, scope, selectedIds, settings, viewport]);
 
   const showScopePicker = format !== 'backup';
 
@@ -253,6 +261,28 @@ export function ExportSheet({
                       Selection{hasSelection ? ` (${selectedIds.length})` : ''}
                     </Text>
                   </Pressable>
+                  <Pressable
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: scope === 'all-pages' }}
+                    disabled={busy}
+                    onPress={() => {
+                      setScope('all-pages');
+                      if (format === 'png' || format === 'jpeg') {
+                        setFormat(pdfSupported ? 'pdf' : 'backup');
+                      }
+                    }}
+                    style={[
+                      styles.scopeChip,
+                      {
+                        borderColor: scope === 'all-pages' ? theme.primary : theme.border,
+                        backgroundColor: scope === 'all-pages' ? theme.muted : theme.surface,
+                      },
+                    ]}
+                  >
+                    <Text style={[typography.bodyStrong, { color: theme.foreground }]}>
+                      All pages ({pageCount})
+                    </Text>
+                  </Pressable>
                 </View>
               </View>
             )}
@@ -268,7 +298,12 @@ export function ExportSheet({
                       accessibilityRole="radio"
                       accessibilityState={{ selected, disabled: !option.supported }}
                       disabled={!option.supported || busy}
-                      onPress={() => setFormat(option.format)}
+                      onPress={() => {
+                        setFormat(option.format);
+                        if ((option.format === 'png' || option.format === 'jpeg') && scope === 'all-pages') {
+                          setScope('visible');
+                        }
+                      }}
                       style={[
                         styles.formatRow,
                         {

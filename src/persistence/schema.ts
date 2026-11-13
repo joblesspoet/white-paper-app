@@ -134,6 +134,14 @@ export const MIGRATIONS: readonly Migration[] = [
       )`,
     ],
   },
+  {
+    version: 4,
+    name: 'multi-page viewports and pdf backgrounds',
+    statements: [
+      `ALTER TABLE board_pages ADD COLUMN viewport_json TEXT`,
+      `ALTER TABLE board_pages ADD COLUMN background_asset_id TEXT`,
+    ],
+  },
 ] as const;
 
 /** Latest schema version this build understands. */

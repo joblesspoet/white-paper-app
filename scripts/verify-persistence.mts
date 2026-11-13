@@ -195,13 +195,14 @@ const fullDocument: CanvasDocument = {
 async function testFreshDatabase(): Promise<void> {
   const test = openTestDatabase();
   try {
-    assert.deepEqual(planMigrations(0).map((migration) => migration.version), [1, 2, 3]);
-    assert.deepEqual(planMigrations(1).map((migration) => migration.version), [2, 3]);
-    assert.deepEqual(planMigrations(2).map((migration) => migration.version), [3]);
+    assert.deepEqual(planMigrations(0).map((migration) => migration.version), [1, 2, 3, 4]);
+    assert.deepEqual(planMigrations(1).map((migration) => migration.version), [2, 3, 4]);
+    assert.deepEqual(planMigrations(2).map((migration) => migration.version), [3, 4]);
+    assert.deepEqual(planMigrations(3).map((migration) => migration.version), [4]);
     assert.deepEqual(planMigrations(SCHEMA_VERSION), []);
 
     const result = await migrateDatabase(test.database);
-    assert.deepEqual(result, { from: 0, to: SCHEMA_VERSION, applied: [1, 2, 3] });
+    assert.deepEqual(result, { from: 0, to: SCHEMA_VERSION, applied: [1, 2, 3, 4] });
     assert.equal(await readSchemaVersion(test.database), SCHEMA_VERSION);
 
     const tables = await tableNames(test.database);
@@ -209,6 +210,8 @@ async function testFreshDatabase(): Promise<void> {
       assert.ok(tables.includes(table), `missing table ${table}`);
     }
     assert.ok((await columnNames(test.database, 'boards')).includes('viewport_json'));
+    assert.ok((await columnNames(test.database, 'board_pages')).includes('viewport_json'));
+    assert.ok((await columnNames(test.database, 'board_pages')).includes('background_asset_id'));
     assert.ok((await columnNames(test.database, 'canvas_objects')).includes('revision'));
 
     // Re-running is a no-op, not an error.
@@ -256,7 +259,7 @@ async function testVersionOneUpgrade(): Promise<void> {
     );
 
     const result = await migrateDatabase(test.database);
-    assert.deepEqual(result, { from: 1, to: SCHEMA_VERSION, applied: [2, 3] });
+    assert.deepEqual(result, { from: 1, to: SCHEMA_VERSION, applied: [2, 3, 4] });
     assert.ok((await columnNames(test.database, 'boards')).includes('viewport_json'));
 
     const snapshot = await loadBoardDocument(test.database, 'legacy');
@@ -276,7 +279,7 @@ async function testVersionTwoUpgrade(): Promise<void> {
     await test.database.execAsync('PRAGMA user_version = 2');
 
     const result = await migrateDatabase(test.database);
-    assert.deepEqual(result, { from: 2, to: SCHEMA_VERSION, applied: [3] });
+    assert.deepEqual(result, { from: 2, to: SCHEMA_VERSION, applied: [3, 4] });
     const tables = await tableNames(test.database);
     assert.ok(tables.includes('app_preferences'));
   } finally {

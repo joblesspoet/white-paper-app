@@ -37,7 +37,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:viewport && npm run test:ink && npm run test:history && npm run test:objects && npm run test:selection && npm run test:persistence && npm run test:image && npm run test:ocr && npm run test:export && npm run test:settings && npm run test:responsive && npm run test:teaching-utilities && npm run test:geometry-shapes-tables && npm run test:math-recognition-stylus",
+    "test": "npm run test:viewport && npm run test:ink && npm run test:history && npm run test:objects && npm run test:selection && npm run test:persistence && npm run test:image && npm run test:ocr && npm run test:export && npm run test:settings && npm run test:responsive && npm run test:teaching-utilities && npm run test:geometry-shapes-tables && npm run test:math-recognition-stylus && npm run test:multipage-pdf",
     "test:viewport": "node --no-warnings --experimental-strip-types scripts/verify-viewport.mts",
     "test:ink": "node --no-warnings --experimental-strip-types scripts/verify-ink.mts",
     "test:history": "node --no-warnings --experimental-strip-types scripts/verify-history.mts",
@@ -51,7 +51,8 @@
     "test:responsive": "node --no-warnings --experimental-strip-types scripts/verify-responsive.mts",
     "test:teaching-utilities": "node --no-warnings --experimental-strip-types scripts/verify-teaching-utilities.mts",
     "test:geometry-shapes-tables": "node --no-warnings --experimental-strip-types scripts/verify-geometry-shapes-tables.mts",
-    "test:math-recognition-stylus": "node --no-warnings --experimental-strip-types scripts/verify-math-recognition-stylus.mts"
+    "test:math-recognition-stylus": "node --no-warnings --experimental-strip-types scripts/verify-math-recognition-stylus.mts",
+    "test:multipage-pdf": "node --no-warnings --experimental-strip-types scripts/verify-multipage-pdf.mts"
   },
   "private": true
 }

@@ -67,12 +67,19 @@ import {
   buildBoardBackup,
   serializeBackup,
   type BackupMediaEntry,
+  type BoardPageBackup,
 } from './backup';
+import {
+  buildMultiPagePdfHtml,
+  computePdfPageSize,
+  type PdfRenderedPage,
+} from './pdf-layout';
 import {
   exportFileName,
   exportPixelSize,
   isLargeExport,
   objectsForScope,
+  pageExportRegion,
   progressFraction,
   selectionExportRegion,
   visibleBoardRegion,
@@ -87,6 +94,15 @@ const RENDER_BATCH_SIZE = 20;
 
 export type ExportProgress = (fraction: number, label: string) => void;
 
+export type ExportPageInput = {
+  id: string;
+  name: string;
+  orderIndex: number;
+  document: CanvasDocument;
+  viewport: Viewport | null;
+  backgroundAssetId?: string | null;
+};
+
 export type ExportInput = {
   boardTitle: string;
   document: CanvasDocument;
@@ -97,6 +113,7 @@ export type ExportInput = {
   format: ExportFileFormat;
   scope: ExportScope;
   selectedIds?: readonly string[];
+  pages?: readonly ExportPageInput[];
   onProgress?: ExportProgress;
 };
 
@@ -527,7 +544,10 @@ async function renderRegionBase64(
   input: ExportInput,
   imageFormat: ExportImageFormat,
 ): Promise<{ ok: true; base64: string; pixelWidth: number; pixelHeight: number; isLarge: boolean } | { ok: false; error: string }> {
-  const region = resolveRegion(input);
+  const region =
+    input.scope === 'all-pages'
+      ? pageExportRegion(input.document, input.viewport, input.canvasSize)
+      : resolveRegion(input);
   if (!region) {
     return { ok: false, error: 'Select one or more objects before exporting a selection.' };
   }
@@ -562,7 +582,8 @@ async function renderRegionBase64(
     canvas.drawPath(path, paint);
   }
 
-  const strokes = input.scope === 'visible' ? input.document.strokes : [];
+  const strokes =
+    input.scope === 'visible' || input.scope === 'all-pages' ? input.document.strokes : [];
   const objects = objectsForScope(input.document, input.scope, input.selectedIds);
   const images = objects.filter(isImageObject);
   const geometrics = objects.filter(isGeometricObject);
@@ -692,33 +713,65 @@ export async function exportBoardPdf(input: ExportInput): Promise<ExportResult> 
     };
   }
 
-  const rendered = await renderRegionBase64(input, 'png');
-  if (!rendered.ok) return rendered;
+  const bg = resolveCanvasBackgroundHex(input.settings.background, input.dark);
+  const orderedPages: readonly ExportPageInput[] =
+    input.scope === 'all-pages' && input.pages && input.pages.length > 0
+      ? [...input.pages].sort((a, b) => a.orderIndex - b.orderIndex)
+      : [
+          {
+            id: 'current',
+            name: 'Page 1',
+            orderIndex: 0,
+            document: input.document,
+            viewport: input.viewport,
+          },
+        ];
+
+  const renderedPages: PdfRenderedPage[] = [];
+  let anyLarge = orderedPages.length > 1;
+
+  for (let i = 0; i < orderedPages.length; i += 1) {
+    const page = orderedPages[i];
+    const pagePrefix =
+      orderedPages.length > 1 ? `Page ${i + 1} of ${orderedPages.length}: ` : '';
+    const pageBaseFraction = i / orderedPages.length;
+    const pageSlice = 0.85 / orderedPages.length;
+
+    const rendered = await renderRegionBase64(
+      {
+        ...input,
+        document: page.document,
+        viewport: page.viewport ?? input.viewport,
+        onProgress: (fraction, label) => {
+          input.onProgress?.(
+            pageBaseFraction + fraction * pageSlice,
+            `${pagePrefix}${label}`,
+          );
+        },
+      },
+      'png',
+    );
+    if (!rendered.ok) return rendered;
+    if (rendered.isLarge) anyLarge = true;
+
+    renderedPages.push({
+      pixelWidth: rendered.pixelWidth,
+      pixelHeight: rendered.pixelHeight,
+      base64Png: rendered.base64,
+      name: page.name,
+    });
+    await yieldToEventLoop();
+  }
 
   input.onProgress?.(0.9, 'Generating PDF…');
   await yieldToEventLoop();
 
-  const maxPageEdge = 792;
-  const aspect = rendered.pixelWidth / Math.max(1, rendered.pixelHeight);
-  const pageWidth = aspect >= 1 ? maxPageEdge : Math.max(200, Math.round(maxPageEdge * aspect));
-  const pageHeight = aspect >= 1 ? Math.max(200, Math.round(maxPageEdge / aspect)) : maxPageEdge;
-  const bg = input.dark ? darkColors.background : colors.background;
-
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8" />
-<title>${escapeHtml(input.boardTitle || 'FlowCanvas Board')}</title>
-<style>
-  @page { margin: 0; size: ${pageWidth}pt ${pageHeight}pt; }
-  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: ${bg}; display: flex; align-items: center; justify-content: center; }
-  img { width: 100%; height: 100%; object-fit: contain; display: block; }
-</style>
-</head>
-<body>
-  <img src="data:image/png;base64,${rendered.base64}" />
-</body>
-</html>`;
+  const firstPage = renderedPages[0];
+  const { pageWidth, pageHeight } = computePdfPageSize(
+    firstPage?.pixelWidth ?? 612,
+    firstPage?.pixelHeight ?? 792,
+  );
+  const html = buildMultiPagePdfHtml(renderedPages, input.boardTitle, bg);
 
   const printed = await Print.printToFileAsync({
     html,
@@ -726,7 +779,7 @@ export async function exportBoardPdf(input: ExportInput): Promise<ExportResult> 
     height: pageHeight,
   });
 
-  const fileName = exportFileName(input.boardTitle, 'pdf', input.scope);
+  const fileName = exportFileName(input.boardTitle, 'pdf', input.scope === 'selection' ? 'selection' : 'visible');
   const dir = ensureExportDirectory();
   const destination = new File(dir, fileName);
   const source = new File(printed.uri);
@@ -746,7 +799,7 @@ export async function exportBoardPdf(input: ExportInput): Promise<ExportResult> 
     mimeType: 'application/pdf',
     uti: 'com.adobe.pdf',
     bytes: destination.size ?? 0,
-    isLarge: rendered.isLarge,
+    isLarge: anyLarge,
   };
 }
 
@@ -755,21 +808,39 @@ export async function exportBoardBackup(input: {
   document: CanvasDocument;
   viewport: Viewport | null;
   settings: BoardSettings;
+  pages?: readonly ExportPageInput[];
   onProgress?: ExportProgress;
 }): Promise<ExportResult> {
-  const images = input.document.objects.filter(isImageObject);
+  const orderedPages: readonly ExportPageInput[] =
+    input.pages && input.pages.length > 0
+      ? [...input.pages].sort((a, b) => a.orderIndex - b.orderIndex)
+      : [
+          {
+            id: 'page:0',
+            name: 'Page 1',
+            orderIndex: 0,
+            document: input.document,
+            viewport: input.viewport,
+          },
+        ];
+
   const uniquePaths = new Map<string, { width?: number; height?: number }>();
-  for (const image of images) {
-    if (!uniquePaths.has(image.storagePath)) {
-      uniquePaths.set(image.storagePath, { width: image.sourceWidth, height: image.sourceHeight });
-    }
-    if (!uniquePaths.has(image.originalStoragePath)) {
-      uniquePaths.set(image.originalStoragePath, { width: image.originalWidth, height: image.originalHeight });
+  let totalItems = 0;
+  for (const page of orderedPages) {
+    totalItems += page.document.objects.length + page.document.strokes.length;
+    const images = page.document.objects.filter(isImageObject);
+    for (const image of images) {
+      if (!uniquePaths.has(image.storagePath)) {
+        uniquePaths.set(image.storagePath, { width: image.sourceWidth, height: image.sourceHeight });
+      }
+      if (!uniquePaths.has(image.originalStoragePath)) {
+        uniquePaths.set(image.originalStoragePath, { width: image.originalWidth, height: image.originalHeight });
+      }
     }
   }
 
   const totalMedia = uniquePaths.size;
-  const large = input.document.objects.length + input.document.strokes.length > 80 || totalMedia > 3;
+  const large = totalItems > 80 || totalMedia > 3 || orderedPages.length > 3;
   const media: BackupMediaEntry[] = [];
   let index = 0;
 
@@ -797,11 +868,21 @@ export async function exportBoardBackup(input: {
   input.onProgress?.(0.85, 'Serializing board backup…');
   await yieldToEventLoop();
 
+  const backupPages: BoardPageBackup[] = orderedPages.map((page, idx) => ({
+    id: page.id,
+    name: page.name,
+    orderIndex: idx,
+    viewport: page.viewport,
+    backgroundAssetId: page.backgroundAssetId ?? null,
+    document: page.document,
+  }));
+
   const backup = buildBoardBackup({
     title: input.boardTitle,
     document: input.document,
     viewport: input.viewport,
     settings: input.settings,
+    pages: backupPages,
     media,
   });
   const json = serializeBackup(backup);
@@ -827,6 +908,7 @@ export async function exportBoard(input: ExportInput): Promise<ExportResult> {
       document: input.document,
       viewport: input.viewport,
       settings: input.settings,
+      pages: input.pages,
       onProgress: input.onProgress,
     });
   }

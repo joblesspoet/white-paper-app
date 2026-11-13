@@ -25,7 +25,7 @@ import {
 } from '../persistence/schema.ts';
 
 export const BACKUP_FORMAT = 'flowcanvas';
-export const BACKUP_VERSION = 1;
+export const BACKUP_VERSION = 2;
 export const BACKUP_EXTENSION = '.flowcanvas.json';
 
 /** Refuse a backup larger than this before reading it into memory. */
@@ -39,6 +39,15 @@ export type BackupMediaEntry = {
   data: string;
   width?: number;
   height?: number;
+};
+
+export type BoardPageBackup = {
+  id: string;
+  name: string;
+  orderIndex: number;
+  viewport: Viewport | null;
+  backgroundAssetId?: string | null;
+  document: CanvasDocument;
 };
 
 export type BoardBackup = {
@@ -55,6 +64,7 @@ export type BoardBackup = {
     settings: BoardSettings;
   };
   document: CanvasDocument;
+  pages?: BoardPageBackup[];
   media: BackupMediaEntry[];
 };
 
@@ -99,6 +109,15 @@ export type ImportedMediaPlan = {
   bytes: number;
 };
 
+export type ImportedPagePlan = {
+  id: string;
+  name: string;
+  orderIndex: number;
+  viewport: Viewport | null;
+  backgroundAssetId?: string | null;
+  document: CanvasDocument;
+};
+
 export type BackupImportPlan = {
   board: {
     id: string;
@@ -108,6 +127,7 @@ export type BackupImportPlan = {
   };
   viewport: Viewport | null;
   document: CanvasDocument;
+  pages: ImportedPagePlan[];
   media: ImportedMediaPlan[];
   /** Image paths whose bytes were not embedded in the backup. */
   missingMedia: string[];
@@ -206,6 +226,7 @@ export type BuildBackupInput = {
   document: CanvasDocument;
   viewport: Viewport | null;
   settings: BoardSettings;
+  pages?: readonly BoardPageBackup[];
   media?: BackupMediaEntry[];
   exportedAt?: string;
   appVersion?: string;
@@ -216,10 +237,40 @@ export function buildBoardBackup({
   document,
   viewport,
   settings,
+  pages,
   media = [],
   exportedAt = new Date().toISOString(),
   appVersion,
 }: BuildBackupInput): BoardBackup {
+  const normalizedPages: BoardPageBackup[] =
+    pages && pages.length > 0
+      ? pages.map((page, index) => ({
+          id: page.id,
+          name: page.name.trim() || `Page ${index + 1}`,
+          orderIndex: index,
+          viewport: page.viewport,
+          backgroundAssetId: page.backgroundAssetId ?? null,
+          document: {
+            strokes: [...page.document.strokes],
+            objects: [...page.document.objects],
+          },
+        }))
+      : [
+          {
+            id: 'page:0',
+            name: 'Page 1',
+            orderIndex: 0,
+            viewport,
+            backgroundAssetId: null,
+            document: {
+              strokes: [...document.strokes],
+              objects: [...document.objects],
+            },
+          },
+        ];
+
+  const primaryDocument = normalizedPages[0]?.document ?? document;
+
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
@@ -234,9 +285,10 @@ export function buildBoardBackup({
       settings: { ...settings },
     },
     document: {
-      strokes: [...document.strokes],
-      objects: [...document.objects],
+      strokes: [...primaryDocument.strokes],
+      objects: [...primaryDocument.objects],
     },
+    pages: normalizedPages,
     media: media.map((entry) => ({ ...entry })),
   };
 }
@@ -398,6 +450,57 @@ export function parseBackup(raw: string): BackupParseResult {
     ? null
     : parseViewport(JSON.stringify(boardValue.viewport));
 
+  let pages: BoardPageBackup[];
+  if (Array.isArray(value.pages) && value.pages.length > 0) {
+    pages = [];
+    for (let index = 0; index < value.pages.length; index += 1) {
+      const rawPage = value.pages[index];
+      if (!isRecord(rawPage)) {
+        warnings.push(`Skipped malformed page at index ${index}.`);
+        continue;
+      }
+      const pageDocResult = parseDocumentValue(rawPage, sourceVersion);
+      warnings.push(...pageDocResult.warnings);
+      const pageViewport =
+        rawPage.viewport === undefined || rawPage.viewport === null
+          ? null
+          : parseViewport(JSON.stringify(rawPage.viewport));
+      pages.push({
+        id: nonEmptyString(rawPage.id) ? rawPage.id.trim() : `page:${index}`,
+        name: nonEmptyString(rawPage.name) ? rawPage.name.trim() : `Page ${pages.length + 1}`,
+        orderIndex: pages.length,
+        viewport: pageViewport,
+        backgroundAssetId: nonEmptyString(rawPage.backgroundAssetId)
+          ? rawPage.backgroundAssetId.trim()
+          : null,
+        document: pageDocResult.document,
+      });
+    }
+    if (pages.length === 0) {
+      pages = [
+        {
+          id: 'page:0',
+          name: 'Page 1',
+          orderIndex: 0,
+          viewport,
+          backgroundAssetId: null,
+          document,
+        },
+      ];
+    }
+  } else {
+    pages = [
+      {
+        id: 'page:0',
+        name: 'Page 1',
+        orderIndex: 0,
+        viewport,
+        backgroundAssetId: null,
+        document,
+      },
+    ];
+  }
+
   const exportedAt = nonEmptyString(value.exportedAt)
     ? value.exportedAt
     : new Date(0).toISOString();
@@ -415,7 +518,8 @@ export function parseBackup(raw: string): BackupParseResult {
         viewport,
         settings: { ...DEFAULT_BOARD_SETTINGS, ...settings },
       },
-      document,
+      document: pages[0].document,
+      pages,
       media: mediaResult.media,
     },
     sourceVersion,
@@ -496,35 +600,63 @@ export function planBackupImport(
     return plan;
   };
 
-  const objectIdMap = new Map<string, string>();
-  const mappedObjects = backup.document.objects.map((object) => {
-    const newId = `${newBoardId}:${object.id}`;
-    objectIdMap.set(object.id, newId);
-    if (object.type !== 'image') return { ...object, id: newId };
-    const placed = missingPath(object.storagePath);
-    const original = object.storagePath === object.originalStoragePath
-      ? placed
-      : missingPath(object.originalStoragePath);
-    return {
-      ...object,
-      id: newId,
-      assetId: placed.assetId,
-      storagePath: placed.storagePath,
-      originalAssetId: original.assetId,
-      originalStoragePath: original.storagePath,
-    } satisfies ImageObject;
-  });
+  const mapPageDocument = (doc: CanvasDocument, pageIndex: number): CanvasDocument => {
+    const idPrefix = pageIndex === 0 ? newBoardId : `${newBoardId}:p${pageIndex}`;
+    const objectIdMap = new Map<string, string>();
+    const mappedObjects = doc.objects.map((object) => {
+      const newId = `${idPrefix}:${object.id}`;
+      objectIdMap.set(object.id, newId);
+      if (object.type !== 'image') return { ...object, id: newId };
+      const placed = missingPath(object.storagePath);
+      const original = object.storagePath === object.originalStoragePath
+        ? placed
+        : missingPath(object.originalStoragePath);
+      return {
+        ...object,
+        id: newId,
+        assetId: placed.assetId,
+        storagePath: placed.storagePath,
+        originalAssetId: original.assetId,
+        originalStoragePath: original.storagePath,
+      } satisfies ImageObject;
+    });
 
-  const objects = mappedObjects.map((object) => {
-    if (object.type !== 'text' || !object.sourceImageId) return object;
-    const mapped = objectIdMap.get(object.sourceImageId);
-    if (!mapped) return object;
-    return { ...object, sourceImageId: mapped };
-  });
+    const objects = mappedObjects.map((object) => {
+      if (object.type !== 'text' || !object.sourceImageId) return object;
+      const mapped = objectIdMap.get(object.sourceImageId);
+      if (!mapped) return object;
+      return { ...object, sourceImageId: mapped };
+    });
 
-  const strokes = backup.document.strokes.map((stroke) => ({
-    ...stroke,
-    id: `${newBoardId}:${stroke.id}`,
+    const strokes = doc.strokes.map((stroke) => ({
+      ...stroke,
+      id: `${idPrefix}:${stroke.id}`,
+    }));
+
+    return { strokes, objects };
+  };
+
+  const sourcePages: BoardPageBackup[] =
+    backup.pages && backup.pages.length > 0
+      ? backup.pages
+      : [
+          {
+            id: 'page:0',
+            name: 'Page 1',
+            orderIndex: 0,
+            viewport: backup.board.viewport,
+            backgroundAssetId: null,
+            document: backup.document,
+          },
+        ];
+
+  const pages: ImportedPagePlan[] = sourcePages.map((page, index) => ({
+    id: `${newBoardId}:page:${index}`,
+    name: page.name,
+    orderIndex: index,
+    viewport: page.viewport,
+    backgroundAssetId: page.backgroundAssetId ?? null,
+    document: mapPageDocument(page.document, index),
   }));
 
   return {
@@ -535,7 +667,8 @@ export function planBackupImport(
       createdAt: now,
     },
     viewport: backup.board.viewport,
-    document: { strokes, objects },
+    document: pages[0]?.document ?? { strokes: [], objects: [] },
+    pages,
     media,
     missingMedia: [...missingMedia],
   };
@@ -545,13 +678,21 @@ export function planBackupImport(
 
 /** One-line summary shown after choosing a backup file. */
 export function backupSummary(backup: BoardBackup): string {
-  const objectCount = backup.document.objects.length;
-  const strokeCount = backup.document.strokes.length;
-  const imageCount = backup.document.objects.filter((object) => object.type === 'image').length;
-  const parts = [
+  const pages = backup.pages && backup.pages.length > 0 ? backup.pages : [{ document: backup.document }];
+  let objectCount = 0;
+  let strokeCount = 0;
+  let imageCount = 0;
+  for (const page of pages) {
+    objectCount += page.document.objects.length;
+    strokeCount += page.document.strokes.length;
+    imageCount += page.document.objects.filter((object) => object.type === 'image').length;
+  }
+  const parts: string[] = [];
+  if (pages.length > 1) parts.push(`${pages.length} pages`);
+  parts.push(
     `${objectCount} object${objectCount === 1 ? '' : 's'}`,
     `${strokeCount} stroke${strokeCount === 1 ? '' : 's'}`,
-  ];
+  );
   if (imageCount > 0) parts.push(`${imageCount} image${imageCount === 1 ? '' : 's'}`);
   if (backup.media.length > 0) parts.push(`${backup.media.length} media file${backup.media.length === 1 ? '' : 's'}`);
   return parts.join(' · ');

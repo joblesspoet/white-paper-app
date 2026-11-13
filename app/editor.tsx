@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useReducer, useRef, useState, type ComponentRef } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ComponentRef } from 'react';
 import {
   ActivityIndicator,
   AppState,
@@ -95,10 +95,17 @@ import { screenToCanvas, type Point, type Viewport } from '../src/canvas/viewpor
 import { storageErrorMessage } from '../src/persistence/errors';
 import { getLocalDatabase } from '../src/persistence/expo-store';
 import {
+  createPage,
   DEFAULT_BOARD_SETTINGS,
+  deletePage,
+  duplicatePage,
+  listBoardPages,
   loadBoardDocument,
+  renamePage,
+  reorderPages,
   saveBoardDocument,
   saveBoardViewport,
+  type BoardPageRecord,
 } from '../src/persistence/repository';
 import { enqueuePersistenceWrite } from '../src/persistence/write-queue';
 import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
@@ -143,6 +150,8 @@ import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptions
 import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
 import { ExportSheet } from '../src/components/ExportSheet';
+import { PageNavigatorPill, PageSorterSheet } from '../src/components/PageNavigator';
+import { PdfImportModal } from '../src/components/PdfImportModal';
 import { EditorInspectorPanel } from '../src/components/EditorInspectorPanel';
 import { MathKeyboardSheet } from '../src/components/MathKeyboardSheet';
 import { OcrReviewScreen } from '../src/components/OcrReviewScreen';
@@ -317,6 +326,11 @@ export default function BoardEditorScreen() {
   const [timerVisible, setTimerVisible] = useState(false);
   const [calculatorVisible, setCalculatorVisible] = useState(false);
   const [boardStyleModalVisible, setBoardStyleModalVisible] = useState(false);
+  const [pages, setPages] = useState<BoardPageRecord[]>([]);
+  const [activePageId, setActivePageId] = useState<string | null>(null);
+  const activePageIdRef = useRef<string | null>(null);
+  const [pageSorterVisible, setPageSorterVisible] = useState(false);
+  const [pdfImportVisible, setPdfImportVisible] = useState(false);
 
   const insertMediaAssetRow = useCallback(async (asset: MediaAssetRecord) => {
     if (!boardId) return;
@@ -412,13 +426,16 @@ export default function BoardEditorScreen() {
     });
   }, []);
 
-  const persistDocument = useCallback((snapshot: CanvasDocument, viewport: Viewport) => {
+  const persistDocument = useCallback((snapshot: CanvasDocument, viewport: Viewport, pageIdOverride?: string | null) => {
     if (!boardId) return;
+    const targetPageId = pageIdOverride ?? activePageIdRef.current ?? undefined;
     enqueueWrite(async () => {
       const database = await getLocalDatabase();
-      await saveBoardDocument(database, boardId, snapshot, viewport);
-      lastSavedDocument.current = snapshot;
-      savedViewport.current = viewport;
+      await saveBoardDocument(database, boardId, snapshot, viewport, undefined, targetPageId);
+      if (targetPageId === activePageIdRef.current) {
+        lastSavedDocument.current = snapshot;
+        savedViewport.current = viewport;
+      }
       setStorageError(null);
       touchBoard(boardId, snapshot.strokes.length + snapshot.objects.length);
     });
@@ -440,6 +457,7 @@ export default function BoardEditorScreen() {
     }
     const snapshot = documentRef.current;
     const viewport = viewportLive.current;
+    const targetPageId = activePageIdRef.current ?? undefined;
     const documentDirty = lastSavedDocument.current !== snapshot;
     const viewportDirty = !savedViewport.current || !sameViewport(savedViewport.current, viewport);
     if (!documentDirty && !viewportDirty) return;
@@ -447,13 +465,17 @@ export default function BoardEditorScreen() {
     enqueueWrite(async () => {
       const database = await getLocalDatabase();
       if (documentDirty) {
-        await saveBoardDocument(database, boardId, snapshot, viewport);
-        lastSavedDocument.current = snapshot;
-        savedViewport.current = viewport;
+        await saveBoardDocument(database, boardId, snapshot, viewport, undefined, targetPageId);
+        if (targetPageId === activePageIdRef.current) {
+          lastSavedDocument.current = snapshot;
+          savedViewport.current = viewport;
+        }
         touchBoard(boardId, snapshot.strokes.length + snapshot.objects.length);
       } else {
-        await saveBoardViewport(database, boardId, viewport);
-        savedViewport.current = viewport;
+        await saveBoardViewport(database, boardId, viewport, targetPageId);
+        if (targetPageId === activePageIdRef.current) {
+          savedViewport.current = viewport;
+        }
       }
       setStorageError(null);
     });
@@ -466,18 +488,21 @@ export default function BoardEditorScreen() {
     viewportSaveTimer.current = setTimeout(() => {
       viewportSaveTimer.current = null;
       const viewport = viewportLive.current;
+      const targetPageId = activePageIdRef.current ?? undefined;
       if (!boardId || !hydratedRef.current) return;
       if (savedViewport.current && sameViewport(savedViewport.current, viewport)) return;
       enqueueWrite(async () => {
         const database = await getLocalDatabase();
-        await saveBoardViewport(database, boardId, viewport);
-        savedViewport.current = viewport;
+        await saveBoardViewport(database, boardId, viewport, targetPageId);
+        if (targetPageId === activePageIdRef.current) {
+          savedViewport.current = viewport;
+        }
         setStorageError(null);
       });
     }, VIEWPORT_SAVE_DELAY);
   }, [boardId, enqueueWrite]);
 
-  // Load the saved board once. Rendering the canvas only after this finishes
+  // Load the saved board pages once. Rendering the canvas only after this finishes
   // keeps CanvasViewport's initial viewport and the document in agreement.
   useEffect(() => {
     let cancelled = false;
@@ -492,11 +517,31 @@ export default function BoardEditorScreen() {
     (async () => {
       try {
         const database = await getLocalDatabase();
-        const snapshot = await loadBoardDocument(database, boardId);
+        let loadedPages = await listBoardPages(database, boardId);
+        if (loadedPages.length === 0) {
+          const snapshot = await loadBoardDocument(database, boardId);
+          loadedPages = [
+            {
+              id: snapshot.pageId ?? `${boardId}:page:0`,
+              boardId,
+              name: 'Page 1',
+              orderIndex: 0,
+              document: snapshot.document,
+              viewport: snapshot.viewport,
+              backgroundAssetId: null,
+              createdAt: '',
+              updatedAt: '',
+            },
+          ];
+        }
         if (cancelled) return;
-        dispatch({ type: 'hydrate', document: snapshot.document });
-        lastSavedDocument.current = snapshot.document;
-        const saved = snapshot.viewport ?? INITIAL_VIEWPORT;
+        const firstPage = loadedPages[0];
+        setPages(loadedPages);
+        activePageIdRef.current = firstPage.id;
+        setActivePageId(firstPage.id);
+        dispatch({ type: 'hydrate', document: firstPage.document });
+        lastSavedDocument.current = firstPage.document;
+        const saved = firstPage.viewport ?? INITIAL_VIEWPORT;
         viewportLive.current = saved;
         savedViewport.current = saved;
         setInitialViewport(saved);
@@ -1107,12 +1152,234 @@ function mathSpanAtPoint(
       if (!boardId) return;
       setImageFlowId(`${boardId}-${Date.now()}`);
       setImageFlowOpen(true);
+    } else if (request.type === 'pdf') {
+      if (!boardId) return;
+      setPdfImportVisible(true);
     } else if (request.type === 'timer') {
       setTimerVisible(true);
     } else if (request.type === 'calculator') {
       setCalculatorVisible(true);
     }
   }, [activeTool, boardId, canvasRect.height, canvasRect.width, pressTool, viewport, width, windowHeight]);
+
+  const activePageIndex = useMemo(() => {
+    if (!activePageId || pages.length === 0) return 0;
+    const found = pages.findIndex((page) => page.id === activePageId);
+    return found >= 0 ? found : 0;
+  }, [activePageId, pages]);
+
+  const switchToPage = useCallback(
+    (targetPageId: string, overridePages?: readonly BoardPageRecord[]) => {
+      const sourcePages = overridePages ?? pages;
+      if (targetPageId === activePageIdRef.current) return;
+      const target = sourcePages.find((p) => p.id === targetPageId);
+      if (!target) return;
+
+      commitEditing();
+      flushPendingSaves();
+
+      const outgoingId = activePageIdRef.current;
+      const outgoingDoc = documentRef.current;
+      const outgoingViewport = viewportLive.current;
+
+      setPages((prev) =>
+        (overridePages ? [...overridePages] : prev).map((p) =>
+          p.id === outgoingId
+            ? { ...p, document: outgoingDoc, viewport: outgoingViewport }
+            : p,
+        ),
+      );
+
+      activePageIdRef.current = target.id;
+      setActivePageId(target.id);
+      setSelectedObjectIds([]);
+      setSelectedInkIds([]);
+      dispatch({ type: 'hydrate', document: target.document });
+      lastSavedDocument.current = target.document;
+      const nextViewport = target.viewport ?? INITIAL_VIEWPORT;
+      viewportLive.current = nextViewport;
+      savedViewport.current = nextViewport;
+      setInitialViewport(nextViewport);
+      setViewport(nextViewport);
+    },
+    [commitEditing, flushPendingSaves, pages],
+  );
+
+  const handlePrevPage = useCallback(() => {
+    if (activePageIndex <= 0) return;
+    const target = pages[activePageIndex - 1];
+    if (target) switchToPage(target.id);
+  }, [activePageIndex, pages, switchToPage]);
+
+  const handleNextPage = useCallback(() => {
+    if (activePageIndex >= pages.length - 1) return;
+    const target = pages[activePageIndex + 1];
+    if (target) switchToPage(target.id);
+  }, [activePageIndex, pages, switchToPage]);
+
+  const handleAddPage = useCallback(async () => {
+    if (!boardId) return;
+    commitEditing();
+    flushPendingSaves();
+    try {
+      const database = await getLocalDatabase();
+      const created = await createPage(database, boardId, {
+        insertAtIndex: activePageIndex + 1,
+      });
+      const updatedPages = await listBoardPages(database, boardId);
+      setPages(updatedPages);
+      switchToPage(created.id, updatedPages);
+    } catch (error) {
+      setStorageError(storageErrorMessage(error));
+    }
+  }, [activePageIndex, boardId, commitEditing, flushPendingSaves, switchToPage]);
+
+  const handleDuplicatePage = useCallback(
+    async (pageId: string) => {
+      if (!boardId) return;
+      commitEditing();
+      flushPendingSaves();
+      try {
+        const database = await getLocalDatabase();
+        const created = await duplicatePage(database, boardId, pageId);
+        const updatedPages = await listBoardPages(database, boardId);
+        setPages(updatedPages);
+        switchToPage(created.id, updatedPages);
+      } catch (error) {
+        setStorageError(storageErrorMessage(error));
+      }
+    },
+    [boardId, commitEditing, flushPendingSaves, switchToPage],
+  );
+
+  const handleRenamePage = useCallback(
+    async (pageId: string, name: string) => {
+      if (!boardId) return;
+      try {
+        const database = await getLocalDatabase();
+        await renamePage(database, boardId, pageId, name);
+        setPages((prev) =>
+          prev.map((p) => (p.id === pageId ? { ...p, name: name.trim() || 'Page' } : p)),
+        );
+      } catch (error) {
+        setStorageError(storageErrorMessage(error));
+      }
+    },
+    [boardId],
+  );
+
+  const handleMovePage = useCallback(
+    async (pageId: string, direction: -1 | 1) => {
+      if (!boardId) return;
+      const index = pages.findIndex((p) => p.id === pageId);
+      const targetIndex = index + direction;
+      if (index < 0 || targetIndex < 0 || targetIndex >= pages.length) return;
+      const nextOrder = [...pages];
+      const [moved] = nextOrder.splice(index, 1);
+      nextOrder.splice(targetIndex, 0, moved);
+      const reindexed = nextOrder.map((p, idx) => ({ ...p, orderIndex: idx }));
+      setPages(reindexed);
+      try {
+        const database = await getLocalDatabase();
+        await reorderPages(
+          database,
+          boardId,
+          reindexed.map((p) => p.id),
+        );
+      } catch (error) {
+        setStorageError(storageErrorMessage(error));
+      }
+    },
+    [boardId, pages],
+  );
+
+  const handleDeletePage = useCallback(
+    async (pageId: string) => {
+      if (!boardId || pages.length <= 1) return;
+      commitEditing();
+      flushPendingSaves();
+      try {
+        const database = await getLocalDatabase();
+        const result = await deletePage(database, boardId, pageId);
+        setPages(result.remainingPages);
+        if (activePageIdRef.current === pageId && result.remainingPages.length > 0) {
+          switchToPage(result.remainingPages[0].id, result.remainingPages);
+        }
+      } catch (error) {
+        setStorageError(storageErrorMessage(error));
+      }
+    },
+    [boardId, commitEditing, flushPendingSaves, pages.length, switchToPage],
+  );
+
+  const handleImportedPdfPages = useCallback(
+    async (createdPages: BoardPageRecord[]) => {
+      if (!boardId || createdPages.length === 0) return;
+      try {
+        const database = await getLocalDatabase();
+        const updatedPages = await listBoardPages(database, boardId);
+        setPages(updatedPages);
+        switchToPage(createdPages[0].id, updatedPages);
+      } catch (error) {
+        setStorageError(storageErrorMessage(error));
+      }
+    },
+    [boardId, switchToPage],
+  );
+
+  const activeBackgroundPdfObject = useMemo(() => {
+    const activePage = pages[activePageIndex];
+    return (
+      document.objects.find(
+        (obj): obj is ImageObject =>
+          obj.type === 'image' &&
+          (obj.id.startsWith('pdf-bg-') ||
+            (Boolean(activePage?.backgroundAssetId) && obj.assetId === activePage?.backgroundAssetId)),
+      ) ?? null
+    );
+  }, [activePageIndex, document.objects, pages]);
+
+  const handleToggleBackgroundLock = useCallback(() => {
+    if (!activeBackgroundPdfObject) return;
+    const nextLocked = !activeBackgroundPdfObject.locked;
+    dispatch({
+      type: 'command',
+      command: {
+        type: 'object.update',
+        id: activeBackgroundPdfObject.id,
+        locked: nextLocked,
+      },
+    });
+    if (nextLocked) {
+      setSelectedObjectIds((prev) => prev.filter((id) => id !== activeBackgroundPdfObject.id));
+    } else {
+      setActiveTool('select');
+      setSelectedObjectIds([activeBackgroundPdfObject.id]);
+    }
+  }, [activeBackgroundPdfObject]);
+
+  const exportPages = useMemo(() => {
+    const currentId = activePageIdRef.current;
+    return pages.map((page) =>
+      page.id === currentId
+        ? {
+            id: page.id,
+            name: page.name,
+            orderIndex: page.orderIndex,
+            document,
+            viewport,
+            backgroundAssetId: page.backgroundAssetId,
+          }
+        : {
+            id: page.id,
+            name: page.name,
+            orderIndex: page.orderIndex,
+            document: page.document,
+            viewport: page.viewport,
+            backgroundAssetId: page.backgroundAssetId,
+          },
+    );
+  }, [document, pages, viewport]);
 
   const selectInkTool = useCallback((tool: FreehandTool) => {
     setActiveTool(tool);
@@ -1397,6 +1664,10 @@ function mathSpanAtPoint(
               setEditingMathObject(null);
               setMathSheetVisible(true);
             }}
+            onOpenPdfImport={() => {
+              commitEditing();
+              setPdfImportVisible(true);
+            }}
             onToggleTimer={() => setTimerVisible((v) => !v)}
             onToggleCalculator={() => setCalculatorVisible((v) => !v)}
           />
@@ -1465,6 +1736,37 @@ function mathSpanAtPoint(
                 onObjectMeasure={measureObject}
                 onCanvasTouch={handleCanvasTouch}
               />
+              {hydrated && pages.length > 0 && !editing && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: spacing.sm,
+                    left: spacing.sm,
+                    zIndex: 20,
+                  }}
+                >
+                  <PageNavigatorPill
+                    theme={theme}
+                    currentIndex={activePageIndex}
+                    totalPages={pages.length}
+                    compact={width < 400}
+                    canDeleteCurrentPage={pages.length > 1}
+                    hasBackgroundImage={Boolean(activeBackgroundPdfObject)}
+                    isBackgroundLocked={Boolean(activeBackgroundPdfObject?.locked)}
+                    onPrevPage={handlePrevPage}
+                    onNextPage={handleNextPage}
+                    onAddPage={handleAddPage}
+                    onDeleteCurrentPage={() => {
+                      if (activePageId) void handleDeletePage(activePageId);
+                    }}
+                    onToggleBackgroundLock={handleToggleBackgroundLock}
+                    onOpenSorter={() => {
+                      commitEditing();
+                      setPageSorterVisible(true);
+                    }}
+                  />
+                </View>
+              )}
               {activeInstrument ? (
                 <GeometryBoxOverlay
                   instrument={activeInstrument}
@@ -2282,8 +2584,36 @@ function mathSpanAtPoint(
         }}
         settings={board?.settings ?? DEFAULT_BOARD_SETTINGS}
         selectedIds={selectedObjectIds}
+        pages={exportPages}
         defaultFormat={preferences.exportFormat}
         onClose={() => setExportSheetVisible(false)}
+      />
+      <PageSorterSheet
+        visible={pageSorterVisible}
+        theme={theme}
+        pages={pages}
+        activePageId={activePageId}
+        onClose={() => setPageSorterVisible(false)}
+        onSelectPage={(pageId) => switchToPage(pageId)}
+        onAddPage={handleAddPage}
+        onDuplicatePage={handleDuplicatePage}
+        onRenamePage={handleRenamePage}
+        onMovePage={handleMovePage}
+        onDeletePage={handleDeletePage}
+        onOpenPdfImport={() => setPdfImportVisible(true)}
+      />
+      <PdfImportModal
+        visible={pdfImportVisible}
+        boardId={boardId ?? null}
+        theme={theme}
+        insertAtIndex={activePageIndex + 1}
+        onClose={() => setPdfImportVisible(false)}
+        onImportedPages={handleImportedPdfPages}
+        onFallbackImageImport={() => {
+          if (!boardId) return;
+          setImageFlowId(`${boardId}-${Date.now()}`);
+          setImageFlowOpen(true);
+        }}
       />
       {selectedInkIds.length > 0 && !editing && (
         <View
@@ -2465,6 +2795,7 @@ function ToolRail({
   calculatorVisible,
   onToolPress,
   onOpenMath,
+  onOpenPdfImport,
   onToggleTimer,
   onToggleCalculator,
 }: {
@@ -2475,6 +2806,7 @@ function ToolRail({
   calculatorVisible: boolean;
   onToolPress: (tool: InkTool) => void;
   onOpenMath: () => void;
+  onOpenPdfImport: () => void;
   onToggleTimer: () => void;
   onToggleCalculator: () => void;
 }) {
@@ -2543,6 +2875,17 @@ function ToolRail({
             <Text style={{ fontSize: 18, fontWeight: '700', color: theme.foreground }}>∑</Text>
           </View>
           <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>Math</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Import PDF for markup"
+          onPress={onOpenPdfImport}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={styles.toolIconWrap}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.foreground }}>PDF</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>PDF</Text>
         </Pressable>
       </ScrollView>
     </View>

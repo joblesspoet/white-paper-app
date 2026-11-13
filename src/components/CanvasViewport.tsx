@@ -122,6 +122,7 @@ import {
   MIN_ZOOM,
   resetViewport,
   screenToCanvas,
+  zoomViewportAt,
   type Point,
   type Viewport,
 } from '../canvas/viewport';
@@ -328,6 +329,26 @@ export function CanvasViewport({
     scale.value = next.scale;
     commitViewport(next.x, next.y, next.scale);
   }, [commitViewport, offsetX, offsetY, scale]);
+
+  const stepZoom = useCallback(
+    (factor: number) => {
+      const current: Viewport = {
+        x: offsetX.value,
+        y: offsetY.value,
+        scale: scale.value,
+      };
+      const anchor = {
+        x: viewportSize.width / 2,
+        y: viewportSize.height / 2,
+      };
+      const next = zoomViewportAt(current, anchor, current.scale * factor);
+      offsetX.value = next.x;
+      offsetY.value = next.y;
+      scale.value = next.scale;
+      commitViewport(next.x, next.y, next.scale);
+    },
+    [commitViewport, offsetX, offsetY, scale, viewportSize.height, viewportSize.width],
+  );
 
   useEffect(() => {
     if (!viewportRequest) return;
@@ -1228,22 +1249,60 @@ export function CanvasViewport({
 
       <View style={styles.hud} pointerEvents="box-none">
         {snapReadout ? (
-          <View style={[styles.viewBadge, { backgroundColor: theme.surface, borderColor: '#0D9488' }]} pointerEvents="none">
+          <View style={[styles.snapBadge, { backgroundColor: theme.surface, borderColor: '#0D9488' }]} pointerEvents="none">
             <Text style={[styles.zoomText, { color: '#0D9488' }]}>{snapReadout}</Text>
           </View>
         ) : null}
-        <View style={[styles.viewBadge, { backgroundColor: theme.surface, borderColor: theme.border }]} pointerEvents="none" accessibilityLabel={`Zoom ${zoomLabel}`}>
-          <Text style={[styles.zoomText, { color: theme.foreground }]}>{zoomLabel}</Text>
+        <View style={[styles.zoomPill, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Zoom out"
+            accessibilityState={{ disabled: viewport.scale <= MIN_ZOOM + 0.001 }}
+            disabled={viewport.scale <= MIN_ZOOM + 0.001}
+            onPress={() => stepZoom(0.8)}
+            style={({ pressed }) => [
+              styles.zoomStepButton,
+              viewport.scale <= MIN_ZOOM + 0.001 && { opacity: 0.35 },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.zoomStepGlyph, { color: theme.foreground }]}>−</Text>
+          </Pressable>
+          <View
+            style={[styles.zoomPercentWrap, { borderLeftColor: theme.border, borderRightColor: theme.border }]}
+            pointerEvents="none"
+            accessibilityLabel={`Zoom ${zoomLabel}`}
+          >
+            <Text style={[styles.zoomText, { color: theme.foreground }]}>{zoomLabel}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Zoom in"
+            accessibilityState={{ disabled: viewport.scale >= MAX_ZOOM - 0.001 }}
+            disabled={viewport.scale >= MAX_ZOOM - 0.001}
+            onPress={() => stepZoom(1.25)}
+            style={({ pressed }) => [
+              styles.zoomStepButton,
+              viewport.scale >= MAX_ZOOM - 0.001 && { opacity: 0.35 },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.zoomStepGlyph, { color: theme.foreground }]}>+</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Reset viewport"
+            accessibilityHint="Returns the canvas to 100% zoom at the origin"
+            onPress={resetView}
+            style={({ pressed }) => [
+              styles.resetButton,
+              { borderLeftColor: theme.border },
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.resetText, { color: theme.foreground }]}>Reset</Text>
+          </Pressable>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Reset viewport"
-          accessibilityHint="Returns the canvas to 100% zoom at the origin"
-          onPress={resetView}
-          style={({ pressed }) => [styles.resetButton, { backgroundColor: theme.surface, borderColor: theme.border }, pressed && styles.pressed]}
-        >
-          <Text style={[styles.resetText, { color: theme.foreground }]}>Reset view</Text>
-        </Pressable>
       </View>
     </View>
   );

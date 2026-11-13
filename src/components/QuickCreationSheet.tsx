@@ -45,6 +45,7 @@ export type InsertToolRequest =
   | { type: 'geometry'; instrument: InstrumentKind }
   | { type: 'math' }
   | { type: 'image' }
+  | { type: 'pdf' }
   | { type: 'timer' }
   | { type: 'calculator' };
 
@@ -430,6 +431,28 @@ export function QuickCreationSheet({
                       <Text style={[styles.cardTitle, { color: theme.foreground }]}>Photo</Text>
                       <Text style={[styles.cardCaption, { color: theme.foreground + '99' }]}>
                         Take a picture or choose one from the library
+                      </Text>
+                    </View>
+                  </Pressable>
+
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Import PDF for markup"
+                    accessibilityHint="Create locked worksheet pages from a PDF document"
+                    onPress={() => insert({ type: 'pdf' })}
+                    style={({ pressed }) => [
+                      styles.mediaCard,
+                      { backgroundColor: theme.background, borderColor: theme.border, marginTop: spacing.xs },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={[styles.iconPill, { backgroundColor: theme.primary + '18' }]}>
+                      <Text style={[styles.tablePresetIcon, { color: theme.primary }]}>PDF</Text>
+                    </View>
+                    <View style={styles.cardText}>
+                      <Text style={[styles.cardTitle, { color: theme.foreground }]}>Import PDF for markup</Text>
+                      <Text style={[styles.cardCaption, { color: theme.foreground + '99' }]}>
+                        Turn PDF pages into locked background worksheets
                       </Text>
                     </View>
                   </Pressable>

@@ -64,6 +64,18 @@ export type BoardSnapshot = {
   pageId: string | null;
 };
 
+export type BoardPageRecord = {
+  id: string;
+  boardId: string;
+  name: string;
+  orderIndex: number;
+  document: CanvasDocument;
+  viewport: Viewport | null;
+  backgroundAssetId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type MediaAssetRecord = {
   id: string;
   boardId: string;
@@ -90,6 +102,10 @@ type PageRow = {
   board_id: string;
   name: string;
   order_index: number;
+  viewport_json?: string | null;
+  background_asset_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
 };
 
 type CanvasObjectRow = {
@@ -219,9 +235,21 @@ async function firstPage(
   boardId: string,
 ): Promise<PageRow | null> {
   return database.getFirstAsync<PageRow>(
-    `SELECT id, board_id, name, order_index
-     FROM board_pages WHERE board_id = ? ORDER BY order_index ASC LIMIT 1`,
+    `SELECT id, board_id, name, order_index, viewport_json, background_asset_id, created_at, updated_at
+     FROM board_pages WHERE board_id = ? ORDER BY order_index ASC, rowid ASC LIMIT 1`,
     [boardId],
+  );
+}
+
+async function getPageRow(
+  database: PersistenceDatabase,
+  boardId: string,
+  pageId: string,
+): Promise<PageRow | null> {
+  return database.getFirstAsync<PageRow>(
+    `SELECT id, board_id, name, order_index, viewport_json, background_asset_id, created_at, updated_at
+     FROM board_pages WHERE board_id = ? AND id = ?`,
+    [boardId, pageId],
   );
 }
 
@@ -241,25 +269,16 @@ async function ensurePage(
   return id;
 }
 
-/** Load a board's document and saved viewport. Corrupt rows are skipped. */
-export async function loadBoardDocument(
+async function loadPageDocumentRows(
   database: PersistenceDatabase,
-  boardId: string,
-): Promise<BoardSnapshot> {
-  const board = await database.getFirstAsync<{ viewport_json: string | null }>(
-    `SELECT viewport_json FROM boards WHERE id = ?`,
-    [boardId],
-  );
-  const viewport = parseViewport(board?.viewport_json);
-  const page = await firstPage(database, boardId);
-  if (!page) return { document: { strokes: [], objects: [] }, viewport, pageId: null };
-
+  pageId: string,
+): Promise<CanvasDocument> {
   const rows = await database.getAllAsync<CanvasObjectRow>(
     `SELECT id, type, z_index, content_json
      FROM canvas_objects
      WHERE page_id = ? AND deleted_at IS NULL
      ORDER BY z_index ASC, rowid ASC`,
-    [page.id],
+    [pageId],
   );
 
   const strokes: InkStroke[] = [];
@@ -273,7 +292,115 @@ export async function loadBoardDocument(
     const object = parseCanvasObject(row.content_json);
     if (object) objects.push(object);
   }
-  return { document: { strokes, objects }, viewport, pageId: page.id };
+  return { strokes, objects };
+}
+
+/** Load all pages for a board in `order_index` order, each with its document and viewport. */
+export async function listBoardPages(
+  database: PersistenceDatabase,
+  boardId: string,
+): Promise<BoardPageRecord[]> {
+  const board = await database.getFirstAsync<{ viewport_json: string | null }>(
+    `SELECT viewport_json FROM boards WHERE id = ?`,
+    [boardId],
+  );
+  const boardViewport = parseViewport(board?.viewport_json);
+  const pageRows = await database.getAllAsync<PageRow>(
+    `SELECT id, board_id, name, order_index, viewport_json, background_asset_id, created_at, updated_at
+     FROM board_pages WHERE board_id = ? ORDER BY order_index ASC, rowid ASC`,
+    [boardId],
+  );
+  const pages: BoardPageRecord[] = [];
+  for (let index = 0; index < pageRows.length; index += 1) {
+    const row = pageRows[index];
+    const document = await loadPageDocumentRows(database, row.id);
+    const pageViewport = parseViewport(row.viewport_json);
+    pages.push({
+      id: row.id,
+      boardId: row.board_id,
+      name: row.name,
+      orderIndex: row.order_index,
+      document,
+      viewport: pageViewport ?? (index === 0 ? boardViewport : null),
+      backgroundAssetId: row.background_asset_id ?? null,
+      createdAt: row.created_at ?? '',
+      updatedAt: row.updated_at ?? '',
+    });
+  }
+  return pages;
+}
+
+/** Load a board's document and saved viewport (for a specific page or page 0). Corrupt rows are skipped. */
+export async function loadBoardDocument(
+  database: PersistenceDatabase,
+  boardId: string,
+  pageId?: string,
+): Promise<BoardSnapshot> {
+  const board = await database.getFirstAsync<{ viewport_json: string | null }>(
+    `SELECT viewport_json FROM boards WHERE id = ?`,
+    [boardId],
+  );
+  const boardViewport = parseViewport(board?.viewport_json);
+  const page = pageId ? await getPageRow(database, boardId, pageId) : await firstPage(database, boardId);
+  if (!page) return { document: { strokes: [], objects: [] }, viewport: boardViewport, pageId: null };
+
+  const document = await loadPageDocumentRows(database, page.id);
+  const pageViewport = parseViewport(page.viewport_json);
+  return {
+    document,
+    viewport: pageViewport ?? boardViewport,
+    pageId: page.id,
+  };
+}
+
+async function writePageObjects(
+  database: PersistenceDatabase,
+  pageId: string,
+  document: CanvasDocument,
+  now: string,
+): Promise<void> {
+  let zIndex = 0;
+  for (const stroke of document.strokes) {
+    await insertCanvasRow(database, {
+      id: stroke.id,
+      pageId,
+      type: 'ink',
+      zIndex,
+      x: null,
+      y: null,
+      width: null,
+      height: null,
+      rotation: 0,
+      content: stroke,
+      style: {
+        color: stroke.color,
+        width: stroke.width,
+        opacity: stroke.opacity,
+        tool: stroke.tool,
+      },
+      createdAt: stroke.createdAt,
+      updatedAt: now,
+    });
+    zIndex += 1;
+  }
+  for (const object of document.objects) {
+    await insertCanvasRow(database, {
+      id: object.id,
+      pageId,
+      type: object.type,
+      zIndex,
+      x: object.x,
+      y: object.y,
+      width: object.width,
+      height: object.height,
+      rotation: object.rotation,
+      content: object,
+      style: objectStyle(object),
+      createdAt: now,
+      updatedAt: now,
+    });
+    zIndex += 1;
+  }
 }
 
 /** Save a board document and viewport in one transaction. */
@@ -283,57 +410,20 @@ export async function saveBoardDocument(
   document: CanvasDocument,
   viewport: Viewport | null,
   now = new Date().toISOString(),
+  targetPageId?: string,
 ): Promise<void> {
-  const pageId = await ensurePage(database, boardId, now);
+  const pageId = targetPageId ?? (await ensurePage(database, boardId, now));
+  const serializedViewport = viewport ? serializeViewport(viewport) : null;
   await database.withTransactionAsync(async () => {
     await database.runAsync(`DELETE FROM canvas_objects WHERE page_id = ?`, [pageId]);
-
-    let zIndex = 0;
-    for (const stroke of document.strokes) {
-      await insertCanvasRow(database, {
-        id: stroke.id,
-        pageId,
-        type: 'ink',
-        zIndex,
-        x: null,
-        y: null,
-        width: null,
-        height: null,
-        rotation: 0,
-        content: stroke,
-        style: {
-          color: stroke.color,
-          width: stroke.width,
-          opacity: stroke.opacity,
-          tool: stroke.tool,
-        },
-        createdAt: stroke.createdAt,
-        updatedAt: now,
-      });
-      zIndex += 1;
-    }
-    for (const object of document.objects) {
-      await insertCanvasRow(database, {
-        id: object.id,
-        pageId,
-        type: object.type,
-        zIndex,
-        x: object.x,
-        y: object.y,
-        width: object.width,
-        height: object.height,
-        rotation: object.rotation,
-        content: object,
-        style: objectStyle(object),
-        createdAt: now,
-        updatedAt: now,
-      });
-      zIndex += 1;
-    }
-
+    await writePageObjects(database, pageId, document, now);
+    await database.runAsync(
+      `UPDATE board_pages SET updated_at = ?, viewport_json = ? WHERE id = ?`,
+      [now, serializedViewport, pageId],
+    );
     await database.runAsync(
       `UPDATE boards SET updated_at = ?, viewport_json = ? WHERE id = ?`,
-      [now, viewport ? serializeViewport(viewport) : null, boardId],
+      [now, serializedViewport, boardId],
     );
   });
 }
@@ -422,11 +512,283 @@ export async function saveBoardViewport(
   database: PersistenceDatabase,
   boardId: string,
   viewport: Viewport,
+  pageId?: string,
 ): Promise<void> {
-  await database.runAsync(`UPDATE boards SET viewport_json = ? WHERE id = ?`, [
-    serializeViewport(viewport),
+  const serialized = serializeViewport(viewport);
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(`UPDATE boards SET viewport_json = ? WHERE id = ?`, [
+      serialized,
+      boardId,
+    ]);
+    if (pageId) {
+      await database.runAsync(`UPDATE board_pages SET viewport_json = ? WHERE id = ? AND board_id = ?`, [
+        serialized,
+        pageId,
+        boardId,
+      ]);
+    }
+  });
+}
+
+// ----------------------------------------------------------------- multi-page
+
+function newPageId(boardId: string): string {
+  return `${boardId}:page:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function freshId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function cloneDocumentWithFreshIds(document: CanvasDocument): CanvasDocument {
+  const objectIdMap = new Map<string, string>();
+  for (const obj of document.objects) {
+    objectIdMap.set(obj.id, freshId(obj.type));
+  }
+  const strokes: InkStroke[] = document.strokes.map((stroke) => ({
+    ...stroke,
+    id: freshId('ink'),
+    points: stroke.points.map((point) => ({ ...point })),
+  }));
+  const objects: CanvasObject[] = document.objects.map((obj) => {
+    const clonedId = objectIdMap.get(obj.id) ?? freshId(obj.type);
+    if (obj.type === 'text' && obj.sourceImageId) {
+      return {
+        ...obj,
+        id: clonedId,
+        sourceImageId: objectIdMap.get(obj.sourceImageId) ?? obj.sourceImageId,
+      };
+    }
+    if (obj.type === 'table') {
+      return {
+        ...obj,
+        id: clonedId,
+        columnRatios: [...obj.columnRatios],
+        cells: obj.cells.map((cell) => ({ ...cell })),
+      };
+    }
+    if (obj.type === 'image') {
+      return {
+        ...obj,
+        id: clonedId,
+        crop: { ...obj.crop },
+        ...(obj.ocr ? { ocr: { ...obj.ocr } } : {}),
+      };
+    }
+    return { ...obj, id: clonedId };
+  });
+  return { strokes, objects };
+}
+
+export type CreatePageOptions = {
+  id?: string;
+  name?: string;
+  document?: CanvasDocument;
+  viewport?: Viewport | null;
+  backgroundAssetId?: string | null;
+  insertAtIndex?: number;
+  now?: string;
+};
+
+/** Create a new page in a board, optionally inserting at a specific `order_index`. */
+export async function createPage(
+  database: PersistenceDatabase,
+  boardId: string,
+  options: CreatePageOptions = {},
+): Promise<BoardPageRecord> {
+  const now = options.now ?? new Date().toISOString();
+  const pageId = options.id ?? newPageId(boardId);
+  const document = options.document ?? { strokes: [], objects: [] };
+  const viewport = options.viewport ?? null;
+  const backgroundAssetId = options.backgroundAssetId ?? null;
+
+  let finalOrderIndex = 0;
+  let finalName = options.name?.trim() || '';
+
+  await database.withTransactionAsync(async () => {
+    const existing = await database.getAllAsync<{ id: string; order_index: number }>(
+      `SELECT id, order_index FROM board_pages WHERE board_id = ? ORDER BY order_index ASC, rowid ASC`,
+      [boardId],
+    );
+    const targetIndex =
+      typeof options.insertAtIndex === 'number' && Number.isFinite(options.insertAtIndex)
+        ? Math.max(0, Math.min(existing.length, Math.round(options.insertAtIndex)))
+        : existing.length;
+    finalOrderIndex = targetIndex;
+    if (!finalName) {
+      finalName = `Page ${existing.length + 1}`;
+    }
+
+    if (targetIndex < existing.length) {
+      // Shift subsequent pages via negative temporary indices to satisfy UNIQUE(board_id, order_index).
+      for (let i = targetIndex; i < existing.length; i += 1) {
+        await database.runAsync(`UPDATE board_pages SET order_index = ? WHERE id = ?`, [
+          -(i + 1000),
+          existing[i].id,
+        ]);
+      }
+      for (let i = targetIndex; i < existing.length; i += 1) {
+        await database.runAsync(`UPDATE board_pages SET order_index = ? WHERE id = ?`, [
+          i + 1,
+          existing[i].id,
+        ]);
+      }
+    }
+
+    await database.runAsync(
+      `INSERT INTO board_pages (id, board_id, name, order_index, viewport_json, background_asset_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        pageId,
+        boardId,
+        finalName,
+        finalOrderIndex,
+        viewport ? serializeViewport(viewport) : null,
+        backgroundAssetId,
+        now,
+        now,
+      ],
+    );
+
+    if (document.strokes.length > 0 || document.objects.length > 0) {
+      await writePageObjects(database, pageId, document, now);
+    }
+
+    await database.runAsync(`UPDATE boards SET updated_at = ? WHERE id = ?`, [now, boardId]);
+  });
+
+  return {
+    id: pageId,
     boardId,
-  ]);
+    name: finalName,
+    orderIndex: finalOrderIndex,
+    document,
+    viewport,
+    backgroundAssetId,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+/** Duplicate an existing page right after it with fresh object/stroke ids. */
+export async function duplicatePage(
+  database: PersistenceDatabase,
+  boardId: string,
+  pageId: string,
+  now = new Date().toISOString(),
+): Promise<BoardPageRecord> {
+  const pages = await listBoardPages(database, boardId);
+  const index = pages.findIndex((p) => p.id === pageId);
+  if (index === -1) {
+    throw new Error(`Page ${pageId} not found on board ${boardId}.`);
+  }
+  const source = pages[index];
+  const clonedDoc = cloneDocumentWithFreshIds(source.document);
+  return createPage(database, boardId, {
+    name: `${source.name} (copy)`,
+    document: clonedDoc,
+    viewport: source.viewport,
+    backgroundAssetId: source.backgroundAssetId ?? null,
+    insertAtIndex: index + 1,
+    now,
+  });
+}
+
+/** Rename a page on a board. */
+export async function renamePage(
+  database: PersistenceDatabase,
+  boardId: string,
+  pageId: string,
+  name: string,
+  now = new Date().toISOString(),
+): Promise<void> {
+  const cleanName = name.trim() || 'Page';
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `UPDATE board_pages SET name = ?, updated_at = ? WHERE id = ? AND board_id = ?`,
+      [cleanName, now, pageId, boardId],
+    );
+    await database.runAsync(`UPDATE boards SET updated_at = ? WHERE id = ?`, [now, boardId]);
+  });
+}
+
+/** Reorder all pages of a board to match `orderedPageIds`. */
+export async function reorderPages(
+  database: PersistenceDatabase,
+  boardId: string,
+  orderedPageIds: readonly string[],
+  now = new Date().toISOString(),
+): Promise<void> {
+  await database.withTransactionAsync(async () => {
+    const existing = await database.getAllAsync<{ id: string }>(
+      `SELECT id FROM board_pages WHERE board_id = ? ORDER BY order_index ASC, rowid ASC`,
+      [boardId],
+    );
+    const existingSet = new Set(existing.map((r) => r.id));
+    const filtered = orderedPageIds.filter((id) => existingSet.has(id));
+    for (const row of existing) {
+      if (!filtered.includes(row.id)) filtered.push(row.id);
+    }
+
+    for (let i = 0; i < filtered.length; i += 1) {
+      await database.runAsync(`UPDATE board_pages SET order_index = ? WHERE id = ? AND board_id = ?`, [
+        -(i + 1000),
+        filtered[i],
+        boardId,
+      ]);
+    }
+    for (let i = 0; i < filtered.length; i += 1) {
+      await database.runAsync(
+        `UPDATE board_pages SET order_index = ?, updated_at = ? WHERE id = ? AND board_id = ?`,
+        [i, now, filtered[i], boardId],
+      );
+    }
+    await database.runAsync(`UPDATE boards SET updated_at = ? WHERE id = ?`, [now, boardId]);
+  });
+}
+
+/**
+ * Delete a page from a board and compact `order_index` values. Refuses to delete
+ * the sole remaining page so a board always has at least one page.
+ */
+export async function deletePage(
+  database: PersistenceDatabase,
+  boardId: string,
+  pageId: string,
+  now = new Date().toISOString(),
+): Promise<{ deleted: boolean; remainingPages: BoardPageRecord[] }> {
+  const existing = await listBoardPages(database, boardId);
+  if (existing.length <= 1) {
+    throw new Error('Cannot delete the last remaining page of a board.');
+  }
+  const exists = existing.some((p) => p.id === pageId);
+  if (!exists) {
+    return { deleted: false, remainingPages: existing };
+  }
+
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(`DELETE FROM board_pages WHERE id = ? AND board_id = ?`, [pageId, boardId]);
+    const remaining = await database.getAllAsync<{ id: string }>(
+      `SELECT id FROM board_pages WHERE board_id = ? ORDER BY order_index ASC, rowid ASC`,
+      [boardId],
+    );
+    for (let i = 0; i < remaining.length; i += 1) {
+      await database.runAsync(`UPDATE board_pages SET order_index = ? WHERE id = ?`, [
+        -(i + 1000),
+        remaining[i].id,
+      ]);
+    }
+    for (let i = 0; i < remaining.length; i += 1) {
+      await database.runAsync(`UPDATE board_pages SET order_index = ? WHERE id = ?`, [
+        i,
+        remaining[i].id,
+      ]);
+    }
+    await database.runAsync(`UPDATE boards SET updated_at = ? WHERE id = ?`, [now, boardId]);
+  });
+
+  const remainingPages = await listBoardPages(database, boardId);
+  return { deleted: true, remainingPages };
 }
 
 // ------------------------------------------------------------------- parsing
@@ -485,6 +847,7 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
     width: value.width as number,
     height: value.height as number,
     rotation: value.rotation as number,
+    ...(value.locked === true ? { locked: true } : {}),
   };
   const text = value.text;
   const fontSize = value.fontSize;
@@ -746,6 +1109,15 @@ export async function listMediaAssets(
  * a type import from `backup.ts`, so the repository can stay free of a runtime
  * cycle: the backup module imports this file, this file never imports it back.
  */
+export type ImportedPagePlan = {
+  id: string;
+  name: string;
+  orderIndex: number;
+  viewport: Viewport | null;
+  backgroundAssetId?: string | null;
+  document: CanvasDocument;
+};
+
 export type ImportedBoardPlan = {
   board: {
     id: string;
@@ -755,6 +1127,7 @@ export type ImportedBoardPlan = {
   };
   viewport: Viewport | null;
   document: CanvasDocument;
+  pages?: readonly ImportedPagePlan[];
   media: readonly {
     assetId: string;
     storagePath: string;
@@ -766,10 +1139,10 @@ export type ImportedBoardPlan = {
 };
 
 /**
- * Insert a fully-planned imported board in one transaction: board row, first
- * page, every media asset row, and every canvas object row. Media files are
- * written by the caller; this function only records the references, so a
- * failure here leaves no orphaned database rows.
+ * Insert a fully-planned imported board in one transaction: board row, pages,
+ * every media asset row, and every canvas object row. Media files are written by
+ * the caller; this function only records the references, so a failure here
+ * leaves no orphaned database rows.
  */
 export async function insertImportedBoard(
   database: PersistenceDatabase,
@@ -789,12 +1162,6 @@ export async function insertImportedBoard(
         plan.viewport ? serializeViewport(plan.viewport) : null,
       ],
     );
-    await database.runAsync(
-      `INSERT OR IGNORE INTO board_pages (id, board_id, name, order_index, created_at, updated_at)
-       VALUES (?, ?, ?, 0, ?, ?)`,
-      [defaultPageId(plan.board.id), plan.board.id, 'Page 1', plan.board.createdAt, now],
-    );
-    const pageId = defaultPageId(plan.board.id);
 
     for (const asset of plan.media) {
       await database.runAsync(
@@ -814,47 +1181,37 @@ export async function insertImportedBoard(
       );
     }
 
-    let zIndex = 0;
-    for (const stroke of plan.document.strokes) {
-      await insertCanvasRow(database, {
-        id: stroke.id,
-        pageId,
-        type: 'ink',
-        zIndex,
-        x: null,
-        y: null,
-        width: null,
-        height: null,
-        rotation: 0,
-        content: stroke,
-        style: {
-          color: stroke.color,
-          width: stroke.width,
-          opacity: stroke.opacity,
-          tool: stroke.tool,
-        },
-        createdAt: stroke.createdAt,
-        updatedAt: now,
-      });
-      zIndex += 1;
-    }
-    for (const object of plan.document.objects) {
-      await insertCanvasRow(database, {
-        id: object.id,
-        pageId,
-        type: object.type,
-        zIndex,
-        x: object.x,
-        y: object.y,
-        width: object.width,
-        height: object.height,
-        rotation: object.rotation,
-        content: object,
-        style: objectStyle(object),
-        createdAt: now,
-        updatedAt: now,
-      });
-      zIndex += 1;
+    const pagesToInsert: readonly ImportedPagePlan[] =
+      plan.pages && plan.pages.length > 0
+        ? plan.pages
+        : [
+            {
+              id: defaultPageId(plan.board.id),
+              name: 'Page 1',
+              orderIndex: 0,
+              viewport: plan.viewport,
+              backgroundAssetId: null,
+              document: plan.document,
+            },
+          ];
+
+    for (let pageIdx = 0; pageIdx < pagesToInsert.length; pageIdx += 1) {
+      const page = pagesToInsert[pageIdx];
+      await database.runAsync(
+        `INSERT OR IGNORE INTO board_pages (id, board_id, name, order_index, viewport_json, background_asset_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          page.id,
+          plan.board.id,
+          page.name,
+          page.orderIndex,
+          page.viewport ? serializeViewport(page.viewport) : null,
+          page.backgroundAssetId ?? null,
+          plan.board.createdAt,
+          now,
+        ],
+      );
+      await writePageObjects(database, page.id, page.document, now);
     }
   });
 }

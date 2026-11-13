@@ -178,10 +178,13 @@ export function handleAtPoint(
 export function objectsInRect(
   objects: readonly CanvasObject[],
   rect: CanvasRect,
+  options?: { includeLocked?: boolean },
 ): CanvasObject[] {
   const right = rect.x + rect.width;
   const bottom = rect.y + rect.height;
+  const includeLocked = options?.includeLocked === true;
   return objects.filter((object) => {
+    if (!includeLocked && object.locked) return false;
     const bounds = objectBounds(object);
     return (
       bounds.x <= right &&

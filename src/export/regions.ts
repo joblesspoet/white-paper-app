@@ -30,7 +30,7 @@ export const EXPORT_PIXEL_RATIO = 2;
 export const LARGE_EXPORT_OBJECTS = 80;
 export const LARGE_EXPORT_PIXELS = 4_000_000;
 
-export type ExportScope = 'visible' | 'selection';
+export type ExportScope = 'visible' | 'selection' | 'all-pages';
 export type ExportImageFormat = 'png' | 'jpeg';
 export type ExportFileFormat = ExportImageFormat | 'pdf' | 'backup';
 
@@ -128,13 +128,71 @@ export function isLargeExport(
   );
 }
 
+/**
+ * Bounds of an entire page's content (objects + strokes) with padding, falling
+ * back to `visibleBoardRegion` when the page is empty. Used for multi-page PDF
+ * exports so off-viewport worksheet pages export in full.
+ */
+export function pageExportRegion(
+  document: CanvasDocument,
+  viewport: Viewport,
+  canvasSize: { width: number; height: number },
+  padding = EXPORT_SELECTION_PADDING,
+): ExportRect {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  if (document.objects.length > 0) {
+    const objBounds = selectionBounds(document.objects);
+    if (objBounds) {
+      minX = Math.min(minX, objBounds.x);
+      minY = Math.min(minY, objBounds.y);
+      maxX = Math.max(maxX, objBounds.x + objBounds.width);
+      maxY = Math.max(maxY, objBounds.y + objBounds.height);
+    }
+  }
+
+  for (const stroke of document.strokes) {
+    const halfW = stroke.width / 2;
+    for (const pt of stroke.points) {
+      minX = Math.min(minX, pt.x - halfW);
+      minY = Math.min(minY, pt.y - halfW);
+      maxX = Math.max(maxX, pt.x + halfW);
+      maxY = Math.max(maxY, pt.y + halfW);
+    }
+  }
+
+  if (
+    Number.isFinite(minX) &&
+    Number.isFinite(minY) &&
+    Number.isFinite(maxX) &&
+    Number.isFinite(maxY)
+  ) {
+    return (
+      padRegion(
+        {
+          x: minX,
+          y: minY,
+          width: Math.max(1, maxX - minX),
+          height: Math.max(1, maxY - minY),
+        },
+        padding,
+      ) ?? visibleBoardRegion(viewport, canvasSize)
+    );
+  }
+
+  return visibleBoardRegion(viewport, canvasSize);
+}
+
 /** Only the objects a selection export should paint. */
 export function objectsForScope(
   document: CanvasDocument,
   scope: ExportScope,
   selectedIds: readonly string[] = [],
 ): CanvasObject[] {
-  if (scope === 'visible') return document.objects;
+  if (scope === 'visible' || scope === 'all-pages') return document.objects;
   const ids = new Set(selectedIds);
   return document.objects.filter((object) => ids.has(object.id));
 }
