@@ -47,7 +47,10 @@ export type InsertToolRequest =
   | { type: 'image' }
   | { type: 'pdf' }
   | { type: 'timer' }
-  | { type: 'calculator' };
+  | { type: 'calculator' }
+  | { type: 'facecam' }
+  | { type: 'recorder' }
+  | { type: 'saved-lessons' };
 
 type QuickCreationSheetProps = {
   theme: ThemeColors;
@@ -511,6 +514,29 @@ export function QuickCreationSheet({
                       label="Math f(x)"
                       icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>∑</Text>}
                       onPress={() => insert({ type: 'math' })}
+                    />
+                  </View>
+                  <View style={styles.row}>
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Toggle floating Face-Cam"
+                      label="Face-Cam"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>◉</Text>}
+                      onPress={() => insert({ type: 'facecam' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open lesson recorder"
+                      label="Record"
+                      icon={<Text style={[styles.tablePresetIcon, { color: '#DC2626' }]}>●</Text>}
+                      onPress={() => insert({ type: 'recorder' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open saved lessons library"
+                      label="Lessons"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>▶</Text>}
+                      onPress={() => insert({ type: 'saved-lessons' })}
                     />
                   </View>
                 </Section>

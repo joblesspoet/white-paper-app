@@ -139,6 +139,44 @@ import { createTimerPinCommand, type TimerState } from '../src/timer/timer-model
 import { createCalculatorPasteCommand } from '../src/calculator/calculator-engine';
 import { FloatingTimer } from '../src/components/FloatingTimer';
 import { FloatingCalculator } from '../src/components/FloatingCalculator';
+import { FaceCamBubble } from '../src/components/FaceCamBubble';
+import { LessonRecorderBar } from '../src/components/LessonRecorderBar';
+import { LessonReplayModal } from '../src/components/LessonReplayModal';
+import { SavedLessonsModal } from '../src/components/SavedLessonsModal';
+import { shareFile } from '../src/export/share';
+import {
+  beginCountdown,
+  completeRecording,
+  getElapsedMs,
+  pauseRecording,
+  recordDocumentChange,
+  recordPageSwitch,
+  recordViewportSample,
+  resumeRecording,
+  startRecording,
+  stopRecordingBegin,
+  createRecorderSession,
+  type LessonRecorderSession,
+  type LessonRecordingPackage,
+  type RecorderStatus,
+  type VideoQuality,
+} from '../src/recorder/lesson-recorder';
+import {
+  clearRecoveryCheckpoint,
+  deleteSavedLesson,
+  listSavedLessons,
+  loadLessonPackage,
+  saveLessonPackage,
+  saveRecoveryCheckpoint,
+  type SavedLessonSummary,
+} from '../src/recorder/lesson-store';
+import {
+  pauseNativeCapture,
+  resumeNativeCapture,
+  startNativeCapture,
+  stopNativeCapture,
+} from '../src/recorder/native-recorder';
+import { requestMicrophonePermission } from '../src/recorder/permissions';
 import { ImageImportFlow } from '../src/components/ImageImportFlow';
 import { insertMediaAsset, type MediaAssetRecord } from '../src/persistence/repository';
 import { cropMetadata } from '../src/media/asset-store';
@@ -325,6 +363,19 @@ export default function BoardEditorScreen() {
   const [laserColorKey, setLaserColorKey] = useState<LaserColorKey>('red');
   const [timerVisible, setTimerVisible] = useState(false);
   const [calculatorVisible, setCalculatorVisible] = useState(false);
+  const [faceCamVisible, setFaceCamVisible] = useState(false);
+  const [recorderBarVisible, setRecorderBarVisible] = useState(false);
+  const [recorderQuality, setRecorderQuality] = useState<VideoQuality>('720p');
+  const [recorderMic, setRecorderMic] = useState(true);
+  const [recorderStatus, setRecorderStatus] = useState<RecorderStatus>('idle');
+  const [recorderElapsedMs, setRecorderElapsedMs] = useState(0);
+  const [recorderCountdown, setRecorderCountdown] = useState(3);
+  const recorderSessionRef = useRef<LessonRecorderSession | null>(null);
+  const [replayLesson, setReplayLesson] = useState<LessonRecordingPackage | null>(null);
+  const [replayAlreadySaved, setReplayAlreadySaved] = useState(false);
+  const [replayNotice, setReplayNotice] = useState<string | null>(null);
+  const [savedLessonsVisible, setSavedLessonsVisible] = useState(false);
+  const [savedLessons, setSavedLessons] = useState<SavedLessonSummary[]>([]);
   const [boardStyleModalVisible, setBoardStyleModalVisible] = useState(false);
   const [pages, setPages] = useState<BoardPageRecord[]>([]);
   const [activePageId, setActivePageId] = useState<string | null>(null);
@@ -584,7 +635,19 @@ export default function BoardEditorScreen() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'background' || state === 'inactive') flushPendingSaves();
+      if (state === 'background' || state === 'inactive') {
+        flushPendingSaves();
+        const session = recorderSessionRef.current;
+        if (session && session.status === 'recording') {
+          const paused = pauseRecording(session, Date.now());
+          recorderSessionRef.current = paused;
+          setRecorderStatus('paused');
+          setRecorderElapsedMs(getElapsedMs(paused, Date.now()));
+          void pauseNativeCapture();
+          const { pkg } = completeRecording(paused, Date.now());
+          void saveRecoveryCheckpoint(pkg);
+        }
+      }
     });
     return () => subscription.remove();
   }, [flushPendingSaves]);
@@ -594,6 +657,14 @@ export default function BoardEditorScreen() {
   const reportViewport = useCallback((next: Viewport) => {
     viewportLive.current = next;
     scheduleViewportSave(next);
+    if (recorderSessionRef.current?.status === 'recording' && activePageIdRef.current) {
+      recorderSessionRef.current = recordViewportSample(
+        recorderSessionRef.current,
+        activePageIdRef.current,
+        next,
+        Date.now(),
+      );
+    }
     const now = Date.now();
     if (now - viewportFlushedAt.current >= VIEWPORT_RENDER_INTERVAL) {
       viewportFlushedAt.current = now;
@@ -1159,8 +1230,213 @@ function mathSpanAtPoint(
       setTimerVisible(true);
     } else if (request.type === 'calculator') {
       setCalculatorVisible(true);
+    } else if (request.type === 'facecam') {
+      setFaceCamVisible((prev) => !prev);
+    } else if (request.type === 'recorder') {
+      setRecorderBarVisible(true);
+    } else if (request.type === 'saved-lessons') {
+      setSavedLessonsVisible(true);
     }
   }, [activeTool, boardId, canvasRect.height, canvasRect.width, pressTool, viewport, width, windowHeight]);
+
+  const refreshSavedLessons = useCallback(async () => {
+    const list = await listSavedLessons();
+    setSavedLessons(list);
+  }, []);
+
+  useEffect(() => {
+    if (recorderBarVisible || savedLessonsVisible) {
+      void refreshSavedLessons();
+    }
+  }, [recorderBarVisible, refreshSavedLessons, savedLessonsVisible]);
+
+  // Capture any document mutation (ink, shapes, math, tables, undo/redo) while recording.
+  useEffect(() => {
+    const session = recorderSessionRef.current;
+    const pageId = activePageIdRef.current;
+    if (!session || session.status !== 'recording' || !pageId) return;
+    recorderSessionRef.current = recordDocumentChange(session, pageId, document, Date.now());
+  }, [document]);
+
+  // Countdown timer -> starts recording & native capture when it reaches 0.
+  useEffect(() => {
+    if (recorderStatus !== 'countdown') return;
+    if (recorderCountdown <= 0) {
+      const session = recorderSessionRef.current;
+      if (!session) return;
+      const started = startRecording(session, Date.now());
+      recorderSessionRef.current = started;
+      setRecorderStatus('recording');
+      setRecorderElapsedMs(0);
+      const aspect =
+        canvasRect.width > 0 && canvasRect.height > 0
+          ? canvasRect.width / canvasRect.height
+          : 16 / 9;
+      void startNativeCapture({
+        quality: started.quality,
+        includeMic: started.includeMic,
+        aspectRatio: aspect,
+      });
+      return;
+    }
+    const timer = setTimeout(() => {
+      setRecorderCountdown((c) => c - 1);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [canvasRect.height, canvasRect.width, recorderCountdown, recorderStatus]);
+
+  // Update MM:SS elapsed display while recording.
+  useEffect(() => {
+    if (recorderStatus !== 'recording') return;
+    const id = setInterval(() => {
+      const session = recorderSessionRef.current;
+      if (session) setRecorderElapsedMs(getElapsedMs(session, Date.now()));
+    }, 250);
+    return () => clearInterval(id);
+  }, [recorderStatus]);
+
+  const handleStartRecording = useCallback(async () => {
+    if (!boardId) return;
+    if (recorderMic) {
+      await requestMicrophonePermission();
+    }
+    const initialPages =
+      pages.length > 0
+        ? pages.map((p) => ({
+            id: p.id,
+            title: p.name,
+            document: p.id === activePageIdRef.current ? document : p.document,
+            viewport: p.id === activePageIdRef.current ? viewportLive.current : (p.viewport ?? INITIAL_VIEWPORT),
+          }))
+        : [
+            {
+              id: activePageIdRef.current ?? 'page-1',
+              title: 'Page 1',
+              document,
+              viewport: viewportLive.current,
+            },
+          ];
+
+    const session = createRecorderSession({
+      id: `lesson-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      boardId,
+      title: title.trim() || 'Whiteboard Lesson',
+      quality: recorderQuality,
+      includeMic: recorderMic,
+      initialPageId: activePageIdRef.current ?? initialPages[0].id,
+      pages: initialPages,
+    });
+    recorderSessionRef.current = beginCountdown(session, 3);
+    setRecorderCountdown(3);
+    setRecorderElapsedMs(0);
+    setRecorderStatus('countdown');
+  }, [boardId, document, pages, recorderMic, recorderQuality, title]);
+
+  const handleCancelCountdown = useCallback(() => {
+    recorderSessionRef.current = null;
+    setRecorderStatus('idle');
+    setRecorderCountdown(3);
+  }, []);
+
+  const handlePauseResumeRecording = useCallback(() => {
+    const session = recorderSessionRef.current;
+    if (!session) return;
+    if (session.status === 'recording') {
+      const paused = pauseRecording(session, Date.now());
+      recorderSessionRef.current = paused;
+      setRecorderStatus('paused');
+      setRecorderElapsedMs(getElapsedMs(paused, Date.now()));
+      void pauseNativeCapture();
+    } else if (session.status === 'paused') {
+      const resumed = resumeRecording(session, Date.now());
+      recorderSessionRef.current = resumed;
+      setRecorderStatus('recording');
+      void resumeNativeCapture();
+    }
+  }, []);
+
+  const handleStopRecording = useCallback(async () => {
+    const session = recorderSessionRef.current;
+    if (!session) return;
+    const stopping = stopRecordingBegin(session, Date.now());
+    recorderSessionRef.current = stopping;
+    setRecorderStatus('stopping');
+    const nativeResult = await stopNativeCapture();
+    const { pkg } = completeRecording(stopping, Date.now(), {
+      videoUri: nativeResult.videoUri,
+      audioUri: nativeResult.audioUri,
+    });
+    recorderSessionRef.current = null;
+    setRecorderStatus('idle');
+    setRecorderElapsedMs(0);
+    await clearRecoveryCheckpoint();
+    setReplayLesson(pkg);
+    setReplayAlreadySaved(false);
+    setReplayNotice(
+      nativeResult.videoUri
+        ? null
+        : 'Recorded as an interactive 60 FPS FlowCanvas replay (.flowlesson.json).',
+    );
+  }, []);
+
+  const handleSaveReplayLesson = useCallback(
+    async (lesson: LessonRecordingPackage) => {
+      await saveLessonPackage(lesson);
+      setReplayAlreadySaved(true);
+      setReplayNotice('Saved to your in-app Saved Lessons library.');
+      void refreshSavedLessons();
+    },
+    [refreshSavedLessons],
+  );
+
+  const handleShareReplayLesson = useCallback(async (lesson: LessonRecordingPackage) => {
+    let uriToShare = lesson.videoUri;
+    let mimeType = 'video/mp4';
+    if (!uriToShare) {
+      const saved = await saveLessonPackage(lesson);
+      uriToShare = saved.lessonUri;
+      mimeType = 'application/json';
+      setReplayAlreadySaved(true);
+      void refreshSavedLessons();
+    }
+    const result = await shareFile({
+      uri: uriToShare,
+      mimeType,
+      dialogTitle: `Share ${lesson.title}`,
+    });
+    if (result.outcome === 'unavailable') {
+      setReplayNotice('System share sheet is unavailable on this device.');
+    } else if (result.outcome === 'failed') {
+      setReplayNotice(result.message ?? 'Could not open the share sheet.');
+    } else if (result.outcome === 'shared') {
+      setReplayNotice('Lesson shared.');
+    }
+  }, [refreshSavedLessons]);
+
+  const handlePlaySavedLesson = useCallback(async (item: SavedLessonSummary) => {
+    const pkg = await loadLessonPackage(item.lessonUri);
+    if (!pkg) return;
+    setSavedLessonsVisible(false);
+    setReplayLesson(pkg);
+    setReplayAlreadySaved(true);
+    setReplayNotice(null);
+  }, []);
+
+  const handleShareSavedLesson = useCallback(async (item: SavedLessonSummary) => {
+    await shareFile({
+      uri: item.videoUri ?? item.lessonUri,
+      mimeType: item.videoUri ? 'video/mp4' : 'application/json',
+      dialogTitle: `Share ${item.title}`,
+    });
+  }, []);
+
+  const handleDeleteSavedLesson = useCallback(
+    async (item: SavedLessonSummary) => {
+      await deleteSavedLesson(item);
+      void refreshSavedLessons();
+    },
+    [refreshSavedLessons],
+  );
 
   const activePageIndex = useMemo(() => {
     if (!activePageId || pages.length === 0) return 0;
@@ -1197,6 +1473,17 @@ function mathSpanAtPoint(
       dispatch({ type: 'hydrate', document: target.document });
       lastSavedDocument.current = target.document;
       const nextViewport = target.viewport ?? INITIAL_VIEWPORT;
+      if (recorderSessionRef.current?.status === 'recording') {
+        const targetIndex = sourcePages.findIndex((p) => p.id === target.id);
+        recorderSessionRef.current = recordPageSwitch(
+          recorderSessionRef.current,
+          target.id,
+          targetIndex >= 0 ? targetIndex : 0,
+          target.document,
+          nextViewport,
+          Date.now(),
+        );
+      }
       viewportLive.current = nextViewport;
       savedViewport.current = nextViewport;
       setInitialViewport(nextViewport);
@@ -1659,6 +1946,8 @@ function mathSpanAtPoint(
             bottomInset={insets.bottom}
             timerVisible={timerVisible}
             calculatorVisible={calculatorVisible}
+            faceCamVisible={faceCamVisible}
+            recorderBarVisible={recorderBarVisible}
             onToolPress={pressTool}
             onOpenMath={() => {
               setEditingMathObject(null);
@@ -1670,6 +1959,9 @@ function mathSpanAtPoint(
             }}
             onToggleTimer={() => setTimerVisible((v) => !v)}
             onToggleCalculator={() => setCalculatorVisible((v) => !v)}
+            onToggleFaceCam={() => setFaceCamVisible((v) => !v)}
+            onToggleRecorder={() => setRecorderBarVisible((v) => !v)}
+            onOpenSavedLessons={() => setSavedLessonsVisible(true)}
           />
         )}
         {!hydrated ? (
@@ -2114,6 +2406,40 @@ function mathSpanAtPoint(
                 }}
                 onClose={() => setCalculatorVisible(false)}
               />
+              <LessonRecorderBar
+                visible={recorderBarVisible}
+                status={recorderStatus}
+                elapsedMs={recorderElapsedMs}
+                countdownRemaining={recorderCountdown}
+                quality={recorderQuality}
+                includeMic={recorderMic}
+                savedCount={savedLessons.length}
+                theme={theme}
+                onSelectQuality={setRecorderQuality}
+                onToggleMic={() => setRecorderMic((v) => !v)}
+                onStart={() => {
+                  void handleStartRecording();
+                }}
+                onCancelCountdown={handleCancelCountdown}
+                onPauseResume={handlePauseResumeRecording}
+                onStop={() => {
+                  void handleStopRecording();
+                }}
+                onOpenSavedLessons={() => setSavedLessonsVisible(true)}
+                onClose={() => setRecorderBarVisible(false)}
+              />
+              <FaceCamBubble
+                visible={faceCamVisible}
+                isRecording={recorderStatus === 'recording'}
+                theme={theme}
+                haptics={preferences.haptics}
+                bounds={{
+                  width: canvasRect.width > 0 ? canvasRect.width : width,
+                  height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
+                }}
+                bottomExclusion={tablet ? 0 : ACTION_ISLAND_HEIGHT}
+                onClose={() => setFaceCamVisible(false)}
+              />
               {editingTextObject && overlayRect && (
                 <TextInput
                   multiline
@@ -2555,6 +2881,45 @@ function mathSpanAtPoint(
           }}
         />
       )}
+      <LessonReplayModal
+        visible={Boolean(replayLesson)}
+        lesson={replayLesson}
+        alreadySaved={replayAlreadySaved}
+        dark={dark}
+        boardBackground={board?.settings.background ?? DEFAULT_BOARD_SETTINGS.background}
+        boardStyle={board?.settings.style ?? DEFAULT_BOARD_SETTINGS.style}
+        theme={theme}
+        notice={replayNotice}
+        onSaveToLibrary={(lesson) => {
+          void handleSaveReplayLesson(lesson);
+        }}
+        onShareLesson={(lesson) => {
+          void handleShareReplayLesson(lesson);
+        }}
+        onDiscard={() => {
+          setReplayLesson(null);
+          setReplayNotice(null);
+        }}
+        onClose={() => {
+          setReplayLesson(null);
+          setReplayNotice(null);
+        }}
+      />
+      <SavedLessonsModal
+        visible={savedLessonsVisible}
+        lessons={savedLessons}
+        theme={theme}
+        onPlayLesson={(item) => {
+          void handlePlaySavedLesson(item);
+        }}
+        onShareLesson={(item) => {
+          void handleShareSavedLesson(item);
+        }}
+        onDeleteLesson={(item) => {
+          void handleDeleteSavedLesson(item);
+        }}
+        onClose={() => setSavedLessonsVisible(false)}
+      />
       {imageFlowOpen && imageFlowId && boardId && (
         <ImageImportFlow
           key={imageFlowId}
@@ -2793,22 +3158,32 @@ function ToolRail({
   bottomInset,
   timerVisible,
   calculatorVisible,
+  faceCamVisible,
+  recorderBarVisible,
   onToolPress,
   onOpenMath,
   onOpenPdfImport,
   onToggleTimer,
   onToggleCalculator,
+  onToggleFaceCam,
+  onToggleRecorder,
+  onOpenSavedLessons,
 }: {
   theme: ThemeColors;
   activeTool: InkTool;
   bottomInset: number;
   timerVisible: boolean;
   calculatorVisible: boolean;
+  faceCamVisible: boolean;
+  recorderBarVisible: boolean;
   onToolPress: (tool: InkTool) => void;
   onOpenMath: () => void;
   onOpenPdfImport: () => void;
   onToggleTimer: () => void;
   onToggleCalculator: () => void;
+  onToggleFaceCam: () => void;
+  onToggleRecorder: () => void;
+  onOpenSavedLessons: () => void;
 }) {
   return (
     <View style={[styles.rail, { borderRightColor: theme.border, backgroundColor: theme.surface }]}>
@@ -2886,6 +3261,41 @@ function ToolRail({
             <Text style={{ fontSize: 12, fontWeight: '700', color: theme.foreground }}>PDF</Text>
           </View>
           <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>PDF</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Toggle floating Face-Cam"
+          accessibilityState={{ selected: faceCamVisible }}
+          onPress={onToggleFaceCam}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, faceCamVisible && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: faceCamVisible ? theme.primary : theme.foreground }}>◉</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: faceCamVisible ? theme.primary : theme.foreground }]} numberOfLines={1}>Cam</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Toggle lesson recorder"
+          accessibilityState={{ selected: recorderBarVisible }}
+          onPress={onToggleRecorder}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, recorderBarVisible && { backgroundColor: '#DC26261F', borderColor: '#DC2626' }]}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: '#DC2626' }}>●</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: recorderBarVisible ? '#DC2626' : theme.foreground }]} numberOfLines={1}>Rec</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open saved lessons"
+          onPress={onOpenSavedLessons}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={styles.toolIconWrap}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.foreground }}>▶</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>Lessons</Text>
         </Pressable>
       </ScrollView>
     </View>

@@ -1,6 +1,19 @@
 # Task status
 
 ## Current phase
+Session 24 — Phase E: Lesson Recorder & Floating Face-Cam (branch `feat/phase-e-lesson-recorder-facecam`).
+
+## Status
+`implemented-unverified` — Phase E (`prompts/24-phase-e-lesson-recorder-facecam.md`) is implemented with `npm run typecheck`, `npm test` (16 suites including `npm run test:lesson-recorder`), and the iOS Metro bundle check (`npx expo export --platform ios`) passing; simulator/device camera, microphone, and touch testing remain unverified in this environment:
+- **Floating Face-Cam Bubble (`src/recorder/facecam-model.ts`, `src/recorder/permissions.ts`, `src/recorder/permission-model.ts`, `src/components/FaceCamBubble.tsx`, `src/components/FaceCamBubble.styles.ts`):** draggable front/back camera PiP bubble with magnetic corner snapping, safe-area clamping above `ACTION_ISLAND_HEIGHT`, size presets (`88pt`, `124pt`, `164pt`), Circle vs Rounded `16pt` Card toggle, mirror toggle, `2px` `#0D9488`/`#DC2626` ring, and cross-version iOS/Android permission handling with `Open Settings` guidance.
+- **Lesson Recorder & Deterministic 60 FPS Replay (`src/recorder/lesson-recorder.ts`, `src/recorder/native-recorder.ts`, `src/recorder/lesson-store.ts`, `src/components/LessonRecorderBar.tsx`, `src/components/LessonRecorderBar.styles.ts`, `src/components/LessonReplayModal.tsx`, `src/components/LessonReplayModal.styles.ts`, `src/components/SavedLessonsModal.tsx`, `src/components/SavedLessonsModal.styles.ts`, `app/editor.tsx`):**
+  - In-editor `44pt` recording HUD (`Rec ● MM:SS`, `Pause/Resume`, `Stop`, quality selector `480p`/`720p`/`1080p`, microphone toggle, 3-2-1 countdown, and automatic pause + recovery checkpoint on app backgrounding).
+  - Lazy `requireOptionalNativeModule` screen/audio capture adapter (`native-recorder.ts`) that never crashes in Expo Go, paired with a compact `.flowlesson.json` delta timeline recorder (`DocumentDelta`, viewport samples, laser trails, and page switches) and an interactive `0.5×`–`2×` Lesson Replay modal with `Save`, `Share` (`expo-sharing`), and `Discard`.
+  - In-app `SavedLessonsModal` (`FlatList`-backed with storage usage readout, `Play`, `Share`, and `Delete` cleanup controls).
+- Verification suite added at `scripts/verify-lesson-recorder.mts` and wired into `npm test` via `npm run test:lesson-recorder`.
+- The next task is Session 25 — Phase F: Live Classroom Broadcasting (`prompts/25-phase-f-live-classroom.md`).
+
+Previous slice (Phase D):
 Session 23 — Phase D: Multi-Page Boards & Multi-Page PDF Annotation (branch `feat/phase-d-multipage-pdf-annotation`).
 
 ## Status
