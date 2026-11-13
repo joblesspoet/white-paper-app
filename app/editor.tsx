@@ -75,6 +75,13 @@ import {
   type InstrumentKind,
 } from '../src/canvas/geometry-box';
 import { createInkStroke, type InkStroke } from '../src/canvas/ink';
+import {
+  applyMathSpanEdit,
+  getEditableMathSlots,
+  hitTestMathSlot,
+  layoutMathExpression,
+  type MathSourceSpan,
+} from '../src/canvas/math-layout';
 import { GeometryBoxOverlay } from '../src/components/GeometryBoxOverlay';
 import {
   canRedo as historyCanRedo,
@@ -215,6 +222,13 @@ export default function BoardEditorScreen() {
   const [selectedInkIds, setSelectedInkIds] = useState<string[]>([]);
   const [mathSheetVisible, setMathSheetVisible] = useState(false);
   const [editingMathObject, setEditingMathObject] = useState<MathObject | null>(null);
+  const mathInlineInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
+  const [editingMathInline, setEditingMathInline] = useState<{
+    objectId: string;
+    latex: string;
+    span: MathSourceSpan | null;
+    slotText: string;
+  } | null>(null);
   const [inkOcrSession, setInkOcrSession] = useState<{
     uri: string;
     bounds: { x: number; y: number; width: number; height: number };
@@ -747,6 +761,30 @@ export default function BoardEditorScreen() {
     [document],
   );
 
+function mathSpanAtPoint(
+  object: MathObject,
+  latex: string,
+  point: { x: number; y: number },
+): MathSourceSpan | null {
+  let wx = point.x;
+  let wy = point.y;
+  if (object.rotation !== 0) {
+    const cx = object.x + object.width / 2;
+    const cy = object.y + object.height / 2;
+    const rad = (-object.rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const dx = point.x - cx;
+    const dy = point.y - cy;
+    wx = cx + dx * cos - dy * sin;
+    wy = cy + dx * sin + dy * cos;
+  }
+  const localX = wx - (object.x + OBJECT_PADDING);
+  const localY = wy - (object.y + OBJECT_PADDING);
+  const layout = layoutMathExpression(latex, object.fontSize);
+  return hitTestMathSlot(layout, localX, localY)?.span ?? null;
+}
+
   const startEditingExisting = useCallback((id: string, point?: { x: number; y: number }) => {
     const object = findObject(document, id);
     if (!object) return;
@@ -766,11 +804,13 @@ export default function BoardEditorScreen() {
       return;
     }
     if (isMathObject(object)) {
+      const span = point ? mathSpanAtPoint(object, object.latex, point) : null;
+      const slotText = span ? object.latex.slice(span.start, span.end) : object.latex;
       setSelectedObjectIds([id]);
       setObjectOptionsVisible(false);
       setStylingObjectId(null);
-      setEditingMathObject(object);
-      setMathSheetVisible(true);
+      setSheetHeight(0);
+      setEditingMathInline({ objectId: id, latex: object.latex, span, slotText });
       return;
     }
     // Capability check: only text, sticky notes, tables, and math own editable content.
@@ -970,10 +1010,45 @@ export default function BoardEditorScreen() {
     setActiveInstrument(null);
   }, []);
 
-  const handleCanvasTouch = useCallback(() => {
+  const commitInlineMath = useCallback(() => {
+    if (!editingMathInline) return;
+    const trimmed = editingMathInline.latex.trim();
+    if (trimmed.length === 0) {
+      dispatch({ type: 'command', command: { type: 'object.delete', id: editingMathInline.objectId } });
+    } else {
+      dispatch({ type: 'commit' });
+    }
+    setEditingMathInline(null);
+  }, [editingMathInline]);
+
+  const handleCanvasTouch = useCallback((point?: { x: number; y: number }) => {
+    if (editingMathInline && point) {
+      const mathObj = findObject(document, editingMathInline.objectId);
+      if (mathObj && isMathObject(mathObj)) {
+        const margin = 12;
+        const inside =
+          point.x >= mathObj.x - margin &&
+          point.x <= mathObj.x + mathObj.width + margin &&
+          point.y >= mathObj.y - margin &&
+          point.y <= mathObj.y + mathObj.height + margin;
+        if (inside) {
+          const nextSpan = mathSpanAtPoint(mathObj, editingMathInline.latex, point);
+          if (nextSpan) {
+            setEditingMathInline({
+              ...editingMathInline,
+              span: nextSpan,
+              slotText: editingMathInline.latex.slice(nextSpan.start, nextSpan.end),
+            });
+            mathInlineInputRef.current?.focus();
+            return;
+          }
+        }
+      }
+    }
     commitEditing();
     commitTableCell();
-  }, [commitEditing, commitTableCell]);
+    commitInlineMath();
+  }, [commitEditing, commitInlineMath, commitTableCell, document, editingMathInline]);
 
   const handleSelectInsert = useCallback((request: InsertToolRequest) => {
     if (request.type === 'sticky') {
@@ -1359,6 +1434,12 @@ export default function BoardEditorScreen() {
                 selectedObjectIds={selectedObjectIds}
                 editingObjectId={editingId}
                 editingTableCell={editingTableCell}
+                editingMath={Boolean(editingMathInline)}
+                editingMathSpan={
+                  editingMathInline?.span
+                    ? { objectId: editingMathInline.objectId, span: editingMathInline.span }
+                    : null
+                }
                 viewportRequest={viewportRequest}
                 activeInstrument={activeInstrument}
                 stylusOnlyDrawing={preferences.stylusOnlyDrawing}
@@ -1422,6 +1503,250 @@ export default function BoardEditorScreen() {
                       },
                     ]}
                   />
+                );
+              })() : null}
+              {editingMathInline ? (() => {
+                const mathObj = findObject(document, editingMathInline.objectId);
+                if (!mathObj || !isMathObject(mathObj)) return null;
+                const rect = objectScreenRect(mathObj, viewport);
+                const canvasW = canvasRect.width > 0 ? canvasRect.width : width;
+                const canvasH = canvasRect.height > 0 ? canvasRect.height : windowHeight - 120;
+                const isSlotMode = editingMathInline.span !== null;
+                const editableSlots = getEditableMathSlots(
+                  layoutMathExpression(editingMathInline.latex, mathObj.fontSize),
+                );
+                const activeSlot = editingMathInline.span
+                  ? editableSlots.find(
+                      (s) =>
+                        s.span.start === editingMathInline.span!.start &&
+                        s.span.end === editingMathInline.span!.end,
+                    )
+                  : undefined;
+                const editorW = Math.min(isSlotMode ? 360 : 380, Math.max(250, canvasW - 24));
+                const left = Math.max(12, Math.min(canvasW - editorW - 12, rect.x));
+                const placeAbove = rect.y + rect.height + 64 > canvasH;
+                const top = placeAbove
+                  ? Math.max(12, rect.y - 56)
+                  : Math.min(canvasH - 56, rect.y + rect.height + 8);
+                const stepSlot = (delta: 1 | -1) => {
+                  if (editableSlots.length === 0) return;
+                  const cur = editingMathInline.span;
+                  const currentIdx = cur
+                    ? editableSlots.findIndex(
+                        (s) => s.span.start === cur.start && s.span.end === cur.end,
+                      )
+                    : -1;
+                  const baseIdx = currentIdx >= 0 ? currentIdx : 0;
+                  const nextIdx =
+                    (baseIdx + delta + editableSlots.length) % editableSlots.length;
+                  const nextSlot = editableSlots[nextIdx];
+                  setEditingMathInline({
+                    ...editingMathInline,
+                    span: nextSlot.span,
+                    slotText: editingMathInline.latex.slice(
+                      nextSlot.span.start,
+                      nextSlot.span.end,
+                    ),
+                  });
+                  mathInlineInputRef.current?.focus();
+                };
+                return (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      left,
+                      top,
+                      width: editorW,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 5,
+                      paddingHorizontal: 8,
+                      paddingVertical: 6,
+                      borderRadius: 10,
+                      borderWidth: 1.5,
+                      borderColor: theme.primary,
+                      backgroundColor: theme.surface,
+                      zIndex: 40,
+                    }}
+                  >
+                    {activeSlot?.label ? (
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          fontWeight: '700',
+                          color: theme.primary,
+                        }}
+                      >
+                        {activeSlot.label}
+                      </Text>
+                    ) : null}
+                    <TextInput
+                      ref={mathInlineInputRef}
+                      autoFocus
+                      accessibilityLabel={
+                        isSlotMode ? 'Inline math token input' : 'Inline math formula input'
+                      }
+                      value={isSlotMode ? editingMathInline.slotText : editingMathInline.latex}
+                      onChangeText={(nextValue) => {
+                        let nextLatex = nextValue;
+                        let nextSpan: MathSourceSpan | null = null;
+                        if (editingMathInline.span) {
+                          const edited = applyMathSpanEdit(
+                            editingMathInline.latex,
+                            editingMathInline.span,
+                            nextValue,
+                          );
+                          nextLatex = edited.latex;
+                          nextSpan = edited.span;
+                        }
+                        setEditingMathInline((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                latex: nextLatex,
+                                span: nextSpan,
+                                slotText: nextValue,
+                              }
+                            : null,
+                        );
+                        dispatch({
+                          type: 'command',
+                          command: {
+                            type: 'object.update',
+                            id: mathObj.id,
+                            latex: nextLatex,
+                          },
+                          transient: true,
+                        });
+                      }}
+                      onSubmitEditing={() => {
+                        if (isSlotMode && editableSlots.length > 1) {
+                          stepSlot(1);
+                        } else {
+                          commitInlineMath();
+                        }
+                      }}
+                      returnKeyType={isSlotMode && editableSlots.length > 1 ? 'next' : 'done'}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      placeholder={isSlotMode ? 'Value…' : 'Type LaTeX…'}
+                      placeholderTextColor={theme.foreground + '70'}
+                      style={{
+                        flex: 1,
+                        minHeight: 34,
+                        fontSize: 14,
+                        color: theme.foreground,
+                        backgroundColor: theme.background,
+                        borderRadius: 6,
+                        paddingHorizontal: 8,
+                        paddingVertical: 4,
+                      }}
+                    />
+                    {editableSlots.length > 1 ? (
+                      <>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Previous formula slot"
+                          onPress={() => stepSlot(-1)}
+                          style={{
+                            minHeight: 34,
+                            paddingHorizontal: 7,
+                            borderRadius: 6,
+                            borderWidth: 1,
+                            borderColor: theme.border,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: theme.foreground }}>
+                            ←
+                          </Text>
+                        </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Next formula slot"
+                          onPress={() => stepSlot(1)}
+                          style={{
+                            minHeight: 34,
+                            paddingHorizontal: 7,
+                            borderRadius: 6,
+                            borderWidth: 1,
+                            borderColor: theme.border,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <Text style={{ fontSize: 12, fontWeight: '600', color: theme.foreground }}>
+                            →
+                          </Text>
+                        </Pressable>
+                      </>
+                    ) : null}
+                    {isSlotMode ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Edit full formula"
+                        onPress={() =>
+                          setEditingMathInline((prev) =>
+                            prev ? { ...prev, span: null, slotText: prev.latex } : null,
+                          )
+                        }
+                        style={{
+                          minHeight: 34,
+                          paddingHorizontal: 8,
+                          borderRadius: 6,
+                          borderWidth: 1,
+                          borderColor: theme.border,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: theme.foreground }}>
+                          Full
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Open math keypad"
+                      onPress={() => {
+                        dispatch({ type: 'commit' });
+                        setEditingMathInline(null);
+                        setEditingMathObject({ ...mathObj, latex: editingMathInline.latex });
+                        setMathSheetVisible(true);
+                      }}
+                      style={{
+                        minHeight: 34,
+                        paddingHorizontal: 10,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor: theme.border,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: theme.foreground }}>
+                        ∑
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Done editing formula"
+                      onPress={commitInlineMath}
+                      style={{
+                        minHeight: 34,
+                        paddingHorizontal: 10,
+                        borderRadius: 6,
+                        backgroundColor: theme.primary,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: theme.surface }}>
+                        Done
+                      </Text>
+                    </Pressable>
+                  </View>
                 );
               })() : null}
               {showGuidance && (

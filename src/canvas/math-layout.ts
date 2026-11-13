@@ -8,6 +8,11 @@
  * zero WebView or external font dependencies.
  */
 
+export type MathSourceSpan = {
+  start: number;
+  end: number;
+};
+
 export type MathGlyph = {
   text: string;
   /** Left edge in layout-local coordinates. */
@@ -17,6 +22,18 @@ export type MathGlyph = {
   fontSize: number;
   italic: boolean;
   bold?: boolean;
+  width?: number;
+  height?: number;
+  span?: MathSourceSpan;
+};
+
+export type MathEditSlot = {
+  span: MathSourceSpan;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label?: string;
 };
 
 export type MathLayoutResult = {
@@ -24,6 +41,7 @@ export type MathLayoutResult = {
   height: number;
   baseline: number;
   glyphs: readonly MathGlyph[];
+  slots: readonly MathEditSlot[];
   paths: readonly string[];
   vectorPathsSvg: string;
 };
@@ -34,7 +52,7 @@ export type MathLayoutResult = {
 
 type MathNode =
   | { kind: 'row'; items: MathNode[] }
-  | { kind: 'text'; text: string; italic: boolean; bold?: boolean }
+  | { kind: 'text'; text: string; italic: boolean; bold?: boolean; span?: MathSourceSpan }
   | { kind: 'space'; factor: number }
   | { kind: 'frac'; num: MathNode; den: MathNode }
   | { kind: 'sqrt'; index: MathNode | null; body: MathNode }
@@ -44,7 +62,12 @@ type MathNode =
   | { kind: 'delim'; left: string; right: string; body: MathNode }
   | { kind: 'vec'; body: MathNode }
   | { kind: 'binom'; top: MathNode; bottom: MathNode }
-  | { kind: 'matrix'; style: 'bmatrix' | 'pmatrix' | 'vmatrix'; rows: MathNode[][] };
+  | {
+      kind: 'matrix';
+      style: 'bmatrix' | 'pmatrix' | 'vmatrix';
+      rows: MathNode[][];
+      cellSpans?: MathSourceSpan[][];
+    };
 
 const NAMED_FUNCTIONS = new Set([
   'sin', 'cos', 'tan', 'cot', 'sec', 'csc',
@@ -264,28 +287,32 @@ class LatexParser {
     }
 
     if (/[a-zA-Z]/.test(ch)) {
+      const start = this.pos;
       this.pos += 1;
-      return { kind: 'text', text: ch, italic: true };
+      return { kind: 'text', text: ch, italic: true, span: { start, end: this.pos } };
     }
 
     if (/[0-9.]/.test(ch)) {
+      const start = this.pos;
       let num = '';
       while (!this.eof() && /[0-9.]/.test(this.peek())) {
         num += this.peek();
         this.pos += 1;
       }
-      return { kind: 'text', text: num, italic: false };
+      return { kind: 'text', text: num, italic: false, span: { start, end: this.pos } };
     }
 
     // Operators & punctuation
+    const start = this.pos;
     this.pos += 1;
     const display = ch === '-' ? '−' : ch;
-    return { kind: 'text', text: display, italic: false };
+    return { kind: 'text', text: display, italic: false, span: { start, end: this.pos } };
   }
 
   private parseCommand(): MathNode {
+    const cmdStart = this.pos;
     this.pos += 1; // consume '\'
-    if (this.eof()) return { kind: 'text', text: '\\', italic: false };
+    if (this.eof()) return { kind: 'text', text: '\\', italic: false, span: { start: cmdStart, end: this.pos } };
 
     const next = this.peek();
     if (next === ',') {
@@ -298,7 +325,7 @@ class LatexParser {
     }
     if (next === '{' || next === '}' || next === '|') {
       this.pos += 1;
-      return { kind: 'text', text: next, italic: false };
+      return { kind: 'text', text: next, italic: false, span: { start: cmdStart, end: this.pos } };
     }
 
     let cmd = '';
@@ -349,6 +376,7 @@ class LatexParser {
         text: BLACKBOARD_BOLD[letter] ?? letter,
         italic: false,
         bold: true,
+        span: { start: cmdStart, end: this.pos },
       };
     }
 
@@ -374,19 +402,19 @@ class LatexParser {
       const envName = envNode.kind === 'text' ? envNode.text : this.extractPlainText(envNode);
       const style: 'bmatrix' | 'pmatrix' | 'vmatrix' =
         envName === 'pmatrix' ? 'pmatrix' : envName === 'vmatrix' ? 'vmatrix' : 'bmatrix';
-      const rows = this.parseMatrixRows(envName);
-      return { kind: 'matrix', style, rows };
+      const { rows, cellSpans } = this.parseMatrixRows(envName);
+      return { kind: 'matrix', style, rows, cellSpans };
     }
 
     if (NAMED_FUNCTIONS.has(cmd)) {
-      return { kind: 'text', text: cmd, italic: false };
+      return { kind: 'text', text: cmd, italic: false, span: { start: cmdStart, end: this.pos } };
     }
 
     if (cmd in GREEK_AND_SYMBOLS) {
-      return { kind: 'text', text: GREEK_AND_SYMBOLS[cmd], italic: false };
+      return { kind: 'text', text: GREEK_AND_SYMBOLS[cmd], italic: false, span: { start: cmdStart, end: this.pos } };
     }
 
-    return { kind: 'text', text: cmd, italic: false };
+    return { kind: 'text', text: cmd, italic: false, span: { start: cmdStart, end: this.pos } };
   }
 
   private consumeDelimiter(): string {
@@ -412,10 +440,12 @@ class LatexParser {
     return '';
   }
 
-  private parseMatrixRows(envName: string): MathNode[][] {
+  private parseMatrixRows(envName: string): { rows: MathNode[][]; cellSpans: MathSourceSpan[][] } {
     const endToken = `\\end{${envName}}`;
     const rows: MathNode[][] = [];
+    const cellSpans: MathSourceSpan[][] = [];
     let currentRow: MathNode[] = [];
+    let currentSpanRow: MathSourceSpan[] = [];
 
     while (!this.eof()) {
       this.skipSpaces();
@@ -423,24 +453,38 @@ class LatexParser {
         this.pos += endToken.length;
         break;
       }
-      if (this.startsWith('\\\\')) {
-        this.pos += 2;
-        rows.push(currentRow);
-        currentRow = [];
-        continue;
+      const cellStart = this.pos;
+      const cell = this.parseRow(['&', '\\\\', endToken]);
+      let cellEnd = this.pos;
+      while (cellEnd > cellStart && /\s/.test(this.src[cellEnd - 1])) {
+        cellEnd -= 1;
       }
+      currentRow.push(cell);
+      currentSpanRow.push({ start: cellStart, end: cellEnd });
+
+      this.skipSpaces();
       if (this.peek() === '&') {
         this.pos += 1;
         continue;
       }
-      const cell = this.parseRow(['&', '\\\\', endToken]);
-      currentRow.push(cell);
+      if (this.startsWith('\\\\')) {
+        this.pos += 2;
+        rows.push(currentRow);
+        cellSpans.push(currentSpanRow);
+        currentRow = [];
+        currentSpanRow = [];
+        continue;
+      }
     }
 
     if (currentRow.length > 0) {
       rows.push(currentRow);
+      cellSpans.push(currentSpanRow);
     }
-    return rows.length > 0 ? rows : [[{ kind: 'text', text: ' ', italic: false }]];
+    if (rows.length === 0) {
+      return { rows: [[{ kind: 'text', text: ' ', italic: false }]], cellSpans: [] };
+    }
+    return { rows, cellSpans };
   }
 }
 
@@ -452,7 +496,13 @@ type LayoutBox = {
   width: number;
   ascent: number;
   descent: number;
-  render: (x: number, baselineY: number, glyphs: MathGlyph[], paths: string[]) => void;
+  render: (
+    x: number,
+    baselineY: number,
+    glyphs: MathGlyph[],
+    paths: string[],
+    slots?: MathEditSlot[],
+  ) => void;
 };
 
 const MIN_FONT_SIZE = 9;
@@ -475,7 +525,13 @@ function estimateGlyphWidth(text: string, fontSize: number, italic: boolean): nu
   return w;
 }
 
-function makeTextBox(text: string, fontSize: number, italic: boolean, bold = false): LayoutBox {
+function makeTextBox(
+  text: string,
+  fontSize: number,
+  italic: boolean,
+  bold = false,
+  span?: MathSourceSpan,
+): LayoutBox {
   const width = estimateGlyphWidth(text, fontSize, italic);
   const ascent = fontSize * 0.78;
   const descent = fontSize * 0.24;
@@ -491,7 +547,10 @@ function makeTextBox(text: string, fontSize: number, italic: boolean, bold = fal
         y: baselineY - fontSize * 0.86,
         fontSize,
         italic,
+        width,
+        height: ascent + descent,
         ...(bold ? { bold: true } : {}),
+        ...(span ? { span } : {}),
       });
     },
   };
@@ -511,7 +570,7 @@ function layoutNode(node: MathNode, fontSize: number): LayoutBox {
 
   switch (node.kind) {
     case 'text':
-      return makeTextBox(node.text, fs, node.italic, node.bold);
+      return makeTextBox(node.text, fs, node.italic, node.bold, node.span);
 
     case 'space':
       return {
@@ -537,11 +596,11 @@ function layoutNode(node: MathNode, fontSize: number): LayoutBox {
         width,
         ascent,
         descent,
-        render: (x, baselineY, glyphs, paths) => {
+        render: (x, baselineY, glyphs, paths, slots) => {
           let cursor = x;
           for (let i = 0; i < boxes.length; i += 1) {
             if (i > 0) cursor += gap;
-            boxes[i].render(cursor, baselineY, glyphs, paths);
+            boxes[i].render(cursor, baselineY, glyphs, paths, slots);
             cursor += boxes[i].width;
           }
         },
@@ -896,7 +955,7 @@ function layoutNode(node: MathNode, fontSize: number): LayoutBox {
         width,
         ascent,
         descent,
-        render: (x, baselineY, glyphs, paths) => {
+        render: (x, baselineY, glyphs, paths, slots) => {
           const top = baselineY - ascent;
           const bot = baselineY + descent;
           const leftChar = node.style === 'pmatrix' ? '(' : node.style === 'vmatrix' ? '|' : '[';
@@ -908,15 +967,27 @@ function layoutNode(node: MathNode, fontSize: number): LayoutBox {
           let rowTop = top;
           for (let r = 0; r < numRows; r += 1) {
             const rowBaseY = rowTop + rowAscents[r];
+            const rowHeight = rowAscents[r] + rowDescents[r];
             let colX = x + bracketW + padX;
             for (let c = 0; c < numCols; c += 1) {
               const box = cellBoxes[r][c];
               if (box) {
-                box.render(colX + (colWidths[c] - box.width) / 2, rowBaseY, glyphs, paths);
+                box.render(colX + (colWidths[c] - box.width) / 2, rowBaseY, glyphs, paths, slots);
+              }
+              const cellSpan = node.cellSpans?.[r]?.[c];
+              if (cellSpan && slots) {
+                slots.push({
+                  span: cellSpan,
+                  x: colX - 4,
+                  y: rowTop - 2,
+                  width: colWidths[c] + 8,
+                  height: rowHeight + 4,
+                  label: `(${r + 1},${c + 1})`,
+                });
               }
               colX += colWidths[c] + colGap;
             }
-            rowTop += rowAscents[r] + rowDescents[r] + rowGap;
+            rowTop += rowHeight + rowGap;
           }
         },
       };
@@ -964,31 +1035,180 @@ export function layoutMathExpression(
   latex: string,
   baseFontSize = 22,
 ): MathLayoutResult {
-  const trimmed = latex.trim();
-  if (!trimmed) {
+  if (!latex.trim()) {
     return {
       width: baseFontSize,
       height: baseFontSize * 1.2,
       baseline: baseFontSize * 0.9,
       glyphs: [],
+      slots: [],
       paths: [],
       vectorPathsSvg: '',
     };
   }
 
-  const ast = new LatexParser(trimmed).parse();
+  const ast = new LatexParser(latex).parse();
   const rootBox = layoutNode(ast, baseFontSize);
   const glyphs: MathGlyph[] = [];
+  const slots: MathEditSlot[] = [];
   const paths: string[] = [];
 
-  rootBox.render(0, rootBox.ascent, glyphs, paths);
+  rootBox.render(0, rootBox.ascent, glyphs, paths, slots);
 
   return {
     width: Math.max(12, Math.ceil(rootBox.width)),
     height: Math.max(16, Math.ceil(rootBox.ascent + rootBox.descent)),
     baseline: rootBox.ascent,
     glyphs,
+    slots,
     paths,
     vectorPathsSvg: paths.join(' '),
+  };
+}
+
+/**
+ * Find the best editable slot (matrix cell first, then glyph) at `(localX, localY)`.
+ */
+export function hitTestMathSlot(
+  layout: MathLayoutResult,
+  localX: number,
+  localY: number,
+): MathEditSlot | null {
+  const pad = 8;
+  for (const slot of layout.slots) {
+    if (
+      localX >= slot.x - pad &&
+      localX <= slot.x + slot.width + pad &&
+      localY >= slot.y - pad &&
+      localY <= slot.y + slot.height + pad
+    ) {
+      return slot;
+    }
+  }
+  if (layout.slots.length > 0) {
+    let bestSlot: MathEditSlot | null = null;
+    let bestDistSq = 40 * 40;
+    for (const slot of layout.slots) {
+      const cx = slot.x + slot.width / 2;
+      const cy = slot.y + slot.height / 2;
+      const d2 = (localX - cx) * (localX - cx) + (localY - cy) * (localY - cy);
+      if (d2 < bestDistSq) {
+        bestDistSq = d2;
+        bestSlot = slot;
+      }
+    }
+    if (bestSlot) return bestSlot;
+  }
+
+  const glyph = hitTestMathGlyph(layout, localX, localY);
+  if (!glyph?.span) return null;
+  return {
+    span: glyph.span,
+    x: glyph.x,
+    y: glyph.y,
+    width: glyph.width ?? glyph.fontSize * 0.6,
+    height: glyph.height ?? glyph.fontSize * 1.02,
+  };
+}
+
+/**
+ * Return all editable slots in source order (matrix cells when present, otherwise glyphs).
+ */
+export function getEditableMathSlots(layout: MathLayoutResult): readonly MathEditSlot[] {
+  if (layout.slots.length > 0) {
+    return layout.slots.slice().sort((a, b) => a.span.start - b.span.start);
+  }
+  return getEditableMathSpans(layout).map((g) => ({
+    span: g.span!,
+    x: g.x,
+    y: g.y,
+    width: g.width ?? g.fontSize * 0.6,
+    height: g.height ?? g.fontSize * 1.02,
+  }));
+}
+
+/**
+ * Find the rendered glyph (with source span) closest to `(localX, localY)` in
+ * layout-local coordinates.
+ */
+export function hitTestMathGlyph(
+  layout: MathLayoutResult,
+  localX: number,
+  localY: number,
+): MathGlyph | null {
+  const candidates = layout.glyphs.filter((g) => g.span !== undefined);
+  if (candidates.length === 0) return null;
+
+  const pad = 8;
+  for (const glyph of candidates) {
+    const w = glyph.width ?? glyph.fontSize * 0.6;
+    const h = glyph.height ?? glyph.fontSize * 1.02;
+    if (
+      localX >= glyph.x - pad &&
+      localX <= glyph.x + w + pad &&
+      localY >= glyph.y - pad &&
+      localY <= glyph.y + h + pad
+    ) {
+      return glyph;
+    }
+  }
+
+  let best: MathGlyph | null = null;
+  let bestDistSq = 36 * 36;
+  for (const glyph of candidates) {
+    const w = glyph.width ?? glyph.fontSize * 0.6;
+    const h = glyph.height ?? glyph.fontSize * 1.02;
+    const cx = glyph.x + w / 2;
+    const cy = glyph.y + h / 2;
+    const dx = localX - cx;
+    const dy = localY - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestDistSq) {
+      bestDistSq = d2;
+      best = glyph;
+    }
+  }
+  return best;
+}
+
+/**
+ * Return all editable glyphs in source order (for Next/Prev stepping).
+ */
+export function getEditableMathSpans(layout: MathLayoutResult): readonly MathGlyph[] {
+  return layout.glyphs
+    .filter((g) => g.span !== undefined)
+    .slice()
+    .sort((a, b) => a.span!.start - b.span!.start);
+}
+
+/**
+ * Replace `span` inside `latex` with `replacement`, automatically wrapping in
+ * `{...}` when a bare `^` or `_` script is replaced by multi-character text.
+ */
+export function applyMathSpanEdit(
+  latex: string,
+  span: MathSourceSpan,
+  replacement: string,
+): { latex: string; span: MathSourceSpan } {
+  const prevChar = span.start > 0 ? latex[span.start - 1] : '';
+  const needsBraces =
+    (prevChar === '^' || prevChar === '_') &&
+    replacement.length > 1 &&
+    !replacement.startsWith('{') &&
+    !replacement.startsWith('\\');
+
+  if (needsBraces) {
+    const wrapped = `{${replacement}}`;
+    const nextLatex = latex.slice(0, span.start) + wrapped + latex.slice(span.end);
+    return {
+      latex: nextLatex,
+      span: { start: span.start + 1, end: span.start + 1 + replacement.length },
+    };
+  }
+
+  const nextLatex = latex.slice(0, span.start) + replacement + latex.slice(span.end);
+  return {
+    latex: nextLatex,
+    span: { start: span.start, end: span.start + replacement.length },
   };
 }

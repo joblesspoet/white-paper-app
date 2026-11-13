@@ -103,7 +103,7 @@ import {
   type InkStroke,
   type InputPointerKind,
 } from '../canvas/ink';
-import { layoutMathExpression } from '../canvas/math-layout';
+import { layoutMathExpression, type MathSourceSpan } from '../canvas/math-layout';
 import {
   classifyInkStroke,
   recognizedShapeToObject,
@@ -201,6 +201,10 @@ type CanvasViewportProps = {
   editingObjectId?: string | null;
   /** Table cell currently open in the in-place cell editor; hidden in the table overlay. */
   editingTableCell?: { objectId: string; row: number; col: number } | null;
+  /** True while a math formula is being edited inline on the canvas. */
+  editingMath?: boolean;
+  /** Currently highlighted LaTeX source span while editing a math formula inline. */
+  editingMathSpan?: { objectId: string; span: MathSourceSpan } | null;
   /** Absolute viewport the editor asks for, for example to clear the keyboard. */
   viewportRequest?: ViewportRequest | null;
   /** Active Geometry Box instrument for magnetic pen edge snapping. */
@@ -219,8 +223,8 @@ type CanvasViewportProps = {
   onObjectEdit?: (id: string, point?: Point) => void;
   /** Real rendered text height, used to correct the object's estimated height. */
   onObjectMeasure?: (id: string, height: number) => void;
-  /** A touch on the canvas while an object is being edited: commit the edit. */
-  onCanvasTouch?: () => void;
+  /** A touch on the canvas while an object is being edited: commit or switch slot. */
+  onCanvasTouch?: (point?: Point) => void;
 };
 
 export function CanvasViewport({
@@ -245,6 +249,8 @@ export function CanvasViewport({
   selectedObjectIds = [],
   editingObjectId = null,
   editingTableCell = null,
+  editingMath = false,
+  editingMathSpan = null,
   viewportRequest = null,
   activeInstrument = null,
   stylusOnlyDrawing = false,
@@ -297,7 +303,7 @@ export function CanvasViewport({
   const [viewport, setViewport] = useState<Viewport>(startViewport);
   const lastViewportReport = useRef(0);
 
-  const editing = editingObjectId !== null;
+  const editing = editingObjectId !== null || editingMath;
   const objects = document.objects;
   const selectedObjects = objects.filter((object) => selectedObjectIds.includes(object.id));
 
@@ -600,9 +606,18 @@ export function CanvasViewport({
     onCommand({ type: 'object.insert', object: { ...draft, id } });
   }, [onCommand]);
 
-  const touchCanvas = useCallback(() => { onCanvasTouch?.(); }, [onCanvasTouch]);
+  const touchCanvas = useCallback((point?: Point) => { onCanvasTouch?.(point); }, [onCanvasTouch]);
   const selectObjects = useCallback((ids: string[]) => { onSelectionChange?.(ids); }, [onSelectionChange]);
   const editObject = useCallback((id: string, point?: Point) => { onObjectEdit?.(id, point); }, [onObjectEdit]);
+  const editIfMath = useCallback(
+    (id: string, point?: Point) => {
+      const obj = document.objects.find((o) => o.id === id);
+      if (obj && isMathObject(obj)) {
+        onObjectEdit?.(id, point);
+      }
+    },
+    [document.objects, onObjectEdit],
+  );
   const createObject = useCallback((type: 'text' | 'sticky', point: Point) => {
     onObjectCreate?.(type, point);
   }, [onObjectCreate]);
@@ -795,9 +810,9 @@ export function CanvasViewport({
     });
 
   /**
-   * Select mode owns touch, move, resize, rotate, and pan with one gesture so a
-   * tap cannot race a drag. Pressing empty canvas and holding starts a marquee;
-   * the long-press gesture below switches this pan into marquee mode.
+   * Select mode owns touch, move, resize, rotate, and marquee with one gesture so a
+   * tap cannot race a drag. Dragging on empty canvas immediately draws a marquee
+   * selection box; two-finger pinch/pan moves and zooms the viewport.
    */
   const selectGesture = Gesture.Pan()
     .enabled(activeTool === 'select')
@@ -853,7 +868,7 @@ export function CanvasViewport({
         return;
       }
 
-      gestureMode.value = 'pan';
+      gestureMode.value = 'marquee';
       if (selectedObjectIds.length > 0) runOnJS(selectObjects)([]);
       if (selectedInkIds.length > 0 && onInkSelectionChange) runOnJS(onInkSelectionChange)([]);
     })
@@ -909,6 +924,10 @@ export function CanvasViewport({
           width: Math.abs(marqueeEndX.value - marqueeStartX.value),
           height: Math.abs(marqueeEndY.value - marqueeStartY.value),
         };
+        marqueeStartX.value = 0;
+        marqueeStartY.value = 0;
+        marqueeEndX.value = 0;
+        marqueeEndY.value = 0;
         if (rect.width >= 2 || rect.height >= 2) runOnJS(selectInMarquee)(rect);
         return;
       }
@@ -930,23 +949,20 @@ export function CanvasViewport({
       }
     });
 
-  /** Long-press on empty canvas turns the active pan into a marquee drag. */
+  /** Long-press on an unmoved MathObject opens inline slot editing. */
   const marqueeGesture = Gesture.LongPress()
     .enabled(activeTool === 'select')
     .numberOfPointers(1)
     .minDuration(MARQUEE_HOLD_MS)
     .maxDistance(8)
     .onStart(() => {
-      if (gestureMode.value !== 'pan') return;
-      gestureMode.value = 'marquee';
-      marqueeStartX.value = touchStartCanvasX.value;
-      marqueeStartY.value = touchStartCanvasY.value;
-      marqueeEndX.value = touchStartCanvasX.value;
-      marqueeEndY.value = touchStartCanvasY.value;
-      offsetX.value = startX.value;
-      offsetY.value = startY.value;
-      // Undo any sub-threshold pan that landed before the hold completed.
-      runOnJS(commitViewport)(startX.value, startY.value, scale.value);
+      if (gestureMode.value === 'move' && !dragMoved.value && draggingObjectId.value !== '') {
+        const hitId = draggingObjectId.value;
+        const hitPoint = { x: touchStartCanvasX.value, y: touchStartCanvasY.value };
+        gestureMode.value = '';
+        draggingObjectId.value = '';
+        runOnJS(editIfMath)(hitId, hitPoint);
+      }
     });
 
   const objectTap = Gesture.Tap()
@@ -959,8 +975,14 @@ export function CanvasViewport({
       runOnJS(createObject)(activeTool as 'text' | 'sticky', point);
     });
 
-  /** While editing text, a canvas tap commits the edit instead of drawing. */
-  const dismissTap = Gesture.Tap().onEnd(() => { runOnJS(touchCanvas)(); });
+  /** While editing text, a canvas tap commits the edit (or switches math slot). */
+  const dismissTap = Gesture.Tap().onEnd((event) => {
+    const point = screenToCanvas(
+      { x: event.x, y: event.y },
+      { x: offsetX.value, y: offsetY.value, scale: scale.value },
+    );
+    runOnJS(touchCanvas)(point);
+  });
 
   /**
    * Pinch is also the two-finger pan: the focal point moves with the fingers,
@@ -1106,7 +1128,12 @@ export function CanvasViewport({
               <TableObjectView key={object.id} object={object} dark={dark} />
             ))}
             {document.objects.filter(isMathObject).map((object) => (
-              <MathObjectView key={object.id} object={object} dark={dark} />
+              <MathObjectView
+                key={object.id}
+                object={object}
+                dark={dark}
+                activeSpan={editingMathSpan?.objectId === object.id ? editingMathSpan.span : null}
+              />
             ))}
             {renderedLaserStrokes.map((stroke) => {
               const alpha = laserStrokeOpacity(stroke, laserNowMs);
@@ -1271,9 +1298,11 @@ const InkStrokeView = memo(function InkStrokeView({
 const MathObjectView = memo(function MathObjectView({
   object,
   dark,
+  activeSpan = null,
 }: {
   object: MathObject;
   dark: boolean;
+  activeSpan?: MathSourceSpan | null;
 }) {
   const color = textColorValue(object.colorKey, dark);
   const layout = useMemo(
@@ -1335,6 +1364,49 @@ const MathObjectView = memo(function MathObjectView({
           />
         </Group>
       ) : null}
+      {activeSpan
+        ? (() => {
+            const matchedSlot = layout.slots.find(
+              (slot) =>
+                slot.span.start === activeSpan.start && slot.span.end === activeSpan.end,
+            );
+            if (matchedSlot) {
+              return (
+                <RoundedRect
+                  key="hl-slot"
+                  x={originX + matchedSlot.x}
+                  y={originY + matchedSlot.y}
+                  width={matchedSlot.width}
+                  height={matchedSlot.height}
+                  r={5}
+                  color="rgba(37, 99, 235, 0.2)"
+                />
+              );
+            }
+            return layout.glyphs.map((glyph, idx) => {
+              if (
+                !glyph.span ||
+                glyph.span.end <= activeSpan.start ||
+                glyph.span.start >= activeSpan.end
+              ) {
+                return null;
+              }
+              const gw = glyph.width ?? glyph.fontSize * 0.6;
+              const gh = glyph.height ?? glyph.fontSize * 1.02;
+              return (
+                <RoundedRect
+                  key={`hl-${idx}`}
+                  x={originX + glyph.x - 3}
+                  y={originY + glyph.y - 2}
+                  width={gw + 6}
+                  height={gh + 4}
+                  r={5}
+                  color="rgba(37, 99, 235, 0.2)"
+                />
+              );
+            });
+          })()
+        : null}
       {glyphParagraphs.map((entry, idx) => (
         <Paragraph
           key={`${idx}-${entry.glyph.text}`}
