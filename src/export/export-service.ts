@@ -599,17 +599,7 @@ async function renderRegionBase64(
     await yieldToEventLoop();
   }
 
-  // 1. Freehand ink strokes
-  for (let index = 0; index < strokes.length; index += 1) {
-    drawStroke(canvas, strokes[index], input.dark);
-    completed += 1;
-    if (completed % RENDER_BATCH_SIZE === 0) {
-      input.onProgress?.(0.05 + 0.75 * progressFraction(completed, totalSteps), 'Rendering ink strokes…');
-      await yieldToEventLoop();
-    }
-  }
-
-  // 2. Images (load decoded bitmaps asynchronously so UI stays responsive)
+  // 1. Images (load decoded bitmaps asynchronously so UI stays responsive)
   for (let index = 0; index < images.length; index += 1) {
     const obj = images[index];
     const skImage = await loadSkiaImage(obj.storagePath);
@@ -619,7 +609,7 @@ async function renderRegionBase64(
     await yieldToEventLoop();
   }
 
-  // 3. Shapes and connectors
+  // 2. Shapes and connectors
   for (let index = 0; index < geometrics.length; index += 1) {
     drawGeometric(canvas, geometrics[index], input.dark);
     completed += 1;
@@ -629,12 +619,22 @@ async function renderRegionBase64(
     }
   }
 
-  // 3.5 Tables
+  // 2.5 Tables
   for (let index = 0; index < tables.length; index += 1) {
     drawTable(canvas, tables[index], input.dark);
     completed += 1;
     if (completed % RENDER_BATCH_SIZE === 0) {
       input.onProgress?.(0.05 + 0.75 * progressFraction(completed, totalSteps), 'Rendering tables…');
+      await yieldToEventLoop();
+    }
+  }
+
+  // 3. Freehand ink strokes (drawn above images/PDF pages so pen & highlighter annotate on top)
+  for (let index = 0; index < strokes.length; index += 1) {
+    drawStroke(canvas, strokes[index], input.dark);
+    completed += 1;
+    if (completed % RENDER_BATCH_SIZE === 0) {
+      input.onProgress?.(0.05 + 0.75 * progressFraction(completed, totalSteps), 'Rendering ink strokes…');
       await yieldToEventLoop();
     }
   }

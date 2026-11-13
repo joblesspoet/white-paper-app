@@ -1118,6 +1118,24 @@ export function CanvasViewport({
                 color={layer.isMargin ? patternTheme.accent : patternTheme.foreground}
               />
             ))}
+            {document.objects.filter(isImageObject).map((object) => (
+              <ImageObjectView key={object.id} object={object} dark={dark} />
+            ))}
+            {document.objects.filter(isGeometricObject).map((object) => (
+              <GeometricObjectView key={object.id} object={object} dark={dark} />
+            ))}
+            {document.objects.filter(isTableObject).map((object) => (
+              <TableObjectView key={object.id} object={object} dark={dark} />
+            ))}
+            {document.objects.filter(isMathObject).map((object) => (
+              <MathObjectView
+                key={object.id}
+                object={object}
+                dark={dark}
+                activeSpan={editingMathSpan?.objectId === object.id ? editingMathSpan.span : null}
+              />
+            ))}
+            {draftObject && <GeometricObjectView object={draftObject} dark={dark} />}
             {renderedStrokes.map((stroke) => (
               <InkStrokeView
                 key={stroke.id}
@@ -1138,24 +1156,6 @@ export function CanvasViewport({
                 strokeWidth={1.5}
               />
             )}
-            {draftObject && <GeometricObjectView object={draftObject} dark={dark} />}
-            {document.objects.filter(isImageObject).map((object) => (
-              <ImageObjectView key={object.id} object={object} dark={dark} />
-            ))}
-            {document.objects.filter(isGeometricObject).map((object) => (
-              <GeometricObjectView key={object.id} object={object} dark={dark} />
-            ))}
-            {document.objects.filter(isTableObject).map((object) => (
-              <TableObjectView key={object.id} object={object} dark={dark} />
-            ))}
-            {document.objects.filter(isMathObject).map((object) => (
-              <MathObjectView
-                key={object.id}
-                object={object}
-                dark={dark}
-                activeSpan={editingMathSpan?.objectId === object.id ? editingMathSpan.span : null}
-              />
-            ))}
             {renderedLaserStrokes.map((stroke) => {
               const alpha = laserStrokeOpacity(stroke, laserNowMs);
               if (alpha <= 0) return null;
