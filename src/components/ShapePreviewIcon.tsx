@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import Svg, { Path } from 'react-native-svg';
 import { buildShapeRenderPrimitives, type ShapeKind } from '../canvas/shapes';
 
@@ -12,8 +13,15 @@ type ShapePreviewIconProps = {
  * exact same `buildShapeRenderPrimitives` builder as the live Skia canvas and
  * offscreen export renderer.
  */
-export function ShapePreviewIcon({ kind, size = 22, color }: ShapePreviewIconProps) {
-  const primitives = buildShapeRenderPrimitives(kind, 3, 3, 18, 18, 'tlbr', false);
+export const ShapePreviewIcon = memo(function ShapePreviewIcon({
+  kind,
+  size = 22,
+  color,
+}: ShapePreviewIconProps) {
+  const primitives = useMemo(
+    () => buildShapeRenderPrimitives(kind, 3, 3, 18, 18, 'tlbr', false),
+    [kind],
+  );
 
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" accessibilityElementsHidden>
@@ -43,4 +51,4 @@ export function ShapePreviewIcon({ kind, size = 22, color }: ShapePreviewIconPro
       ) : null}
     </Svg>
   );
-}
+});

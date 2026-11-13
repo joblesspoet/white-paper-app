@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Canvas, Circle, DashPathEffect, Group, Line as SkiaLine, Path, RoundedRect, vec } from '@shopify/react-native-skia';
 import {
@@ -20,7 +20,8 @@ import {
 } from '../canvas/geometry-box';
 import { polylinePathData } from '../canvas/shapes';
 import { canvasToScreen, type Point, type Viewport } from '../canvas/viewport';
-import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { type ThemeColors } from '../theme';
+import { styles } from './GeometryBoxOverlay.styles';
 
 type GeometryBoxOverlayProps = {
   instrument: GeometryInstrumentState;
@@ -44,7 +45,7 @@ const INSTRUMENT_TABS: ReadonlyArray<{ kind: InstrumentKind; label: string }> = 
 
 const TEAL_BORDER = '#0D9488';
 
-export function GeometryBoxOverlay({
+export const GeometryBoxOverlay = memo(function GeometryBoxOverlay({
   instrument,
   viewport,
   dark,
@@ -402,40 +403,23 @@ export function GeometryBoxOverlay({
         ]}
       >
         <View style={styles.tabRow}>
-          {INSTRUMENT_TABS.map((tab) => {
-            const active = instrument.kind === tab.kind;
-            return (
-              <Pressable
-                key={tab.kind}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                onPress={() => onSwitchInstrument(tab.kind)}
-                style={[
-                  styles.tabChip,
-                  {
-                    backgroundColor: active ? TEAL_BORDER : theme.background,
-                    borderColor: active ? TEAL_BORDER : theme.border,
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.tabText,
-                    { color: active ? '#FFFFFF' : theme.foreground },
-                  ]}
-                >
-                  {tab.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {INSTRUMENT_TABS.map((tab) => (
+            <InstrumentTab
+              key={tab.kind}
+              kind={tab.kind}
+              label={tab.label}
+              active={instrument.kind === tab.kind}
+              theme={theme}
+              onSelect={onSwitchInstrument}
+            />
+          ))}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Close geometry box"
             onPress={onClose}
             style={[styles.closeChip, { borderColor: theme.border }]}
           >
-            <Text style={{ fontSize: 16, fontWeight: '700', color: theme.foreground }}>×</Text>
+            <Text style={[styles.closeIconText, { color: theme.foreground }]}>×</Text>
           </Pressable>
         </View>
 
@@ -540,9 +524,9 @@ export function GeometryBoxOverlay({
       </View>
     </View>
   );
-}
+});
 
-function RulerSkia({
+const RulerSkia = memo(function RulerSkia({
   ruler,
   viewport,
   fillBg,
@@ -592,9 +576,9 @@ function RulerSkia({
       <Path path={ticksPath} color={tickColor} style="stroke" strokeWidth={1} />
     </Group>
   );
-}
+});
 
-function ProtractorSkia({
+const ProtractorSkia = memo(function ProtractorSkia({
   protractor,
   viewport,
   fillBg,
@@ -660,9 +644,9 @@ function ProtractorSkia({
       <Path path={arcScreen} color={TEAL_BORDER} style="stroke" strokeWidth={2} />
     </>
   );
-}
+});
 
-function CompassSkia({
+const CompassSkia = memo(function CompassSkia({
   compass,
   viewport,
   fillBg,
@@ -705,9 +689,9 @@ function CompassSkia({
       ) : null}
     </>
   );
-}
+});
 
-function SetSquareSkia({
+const SetSquareSkia = memo(function SetSquareSkia({
   setSquare,
   viewport,
   fillBg,
@@ -743,92 +727,46 @@ function SetSquareSkia({
       <Path path={innerSvg} color={tickColor} style="stroke" strokeWidth={1} strokeJoin="round" />
     </>
   );
-}
+});
 
-const styles = StyleSheet.create({
-  handle: {
-    position: 'absolute',
-    width: touchTarget,
-    height: touchTarget,
-    borderRadius: touchTarget / 2,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  handleIcon: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  hudBar: {
-    position: 'absolute',
-    top: spacing.sm,
-    alignSelf: 'center',
-    borderWidth: 1,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    gap: spacing.xs,
-    maxWidth: '94%',
-  },
-  tabRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  tabChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-  },
-  tabText: {
-    ...typography.caption,
-    fontWeight: '600',
-  },
-  closeChip: {
-    width: 32,
-    height: 32,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 'auto',
-  },
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    flexWrap: 'wrap',
-  },
-  readout: {
-    ...typography.caption,
-    fontWeight: '600',
-  },
-  inlineActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  smallBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-  },
-  smallBtnText: {
-    ...typography.caption,
-    fontWeight: '600',
-  },
-  primaryBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.sm,
-  },
-  primaryBtnText: {
-    ...typography.caption,
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
+const InstrumentTab = memo(function InstrumentTab({
+  kind,
+  label,
+  active,
+  theme,
+  onSelect,
+}: {
+  kind: InstrumentKind;
+  label: string;
+  active: boolean;
+  theme: ThemeColors;
+  onSelect: (kind: InstrumentKind) => void;
+}) {
+  const handlePress = useCallback(() => {
+    onSelect(kind);
+  }, [kind, onSelect]);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      onPress={handlePress}
+      style={[
+        styles.tabChip,
+        {
+          backgroundColor: active ? TEAL_BORDER : theme.background,
+          borderColor: active ? TEAL_BORDER : theme.border,
+        },
+      ]}
+    >
+      <Text
+        style={[
+          styles.tabText,
+          { color: active ? '#FFFFFF' : theme.foreground },
+        ]}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import {
   Modal,
   Pressable,
@@ -13,20 +13,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   MAX_TABLE_COLUMNS,
   MAX_TABLE_ROWS,
-  SHAPE_CATEGORIES,
   STICKY_COLORS,
   STICKY_TEXT_COLOR,
   TABLE_PRESETS,
   TEXT_COLORS,
-  shapesByCategory,
-  type ShapeCategory,
   type ShapeKind,
 } from '../canvas/document';
 import type { InstrumentKind } from '../canvas/geometry-box';
 import { type ConnectorStyle } from '../canvas/shapes';
-import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { spacing, type ThemeColors } from '../theme';
+import { styles } from './QuickCreationSheet.styles';
 import { ColorPicker } from './ColorPicker';
-import { ShapePreviewIcon } from './ShapePreviewIcon';
+import { ShapeCatalogPicker } from './ShapeCatalogPicker';
 import {
   CalculatorIcon,
   ConnectorIcon,
@@ -85,7 +83,6 @@ export function QuickCreationSheet({
   const [customPickerTarget, setCustomPickerTarget] = useState<'sticky' | 'text' | null>(null);
   /** Draft colour while the custom picker is open; applied when it is confirmed. */
   const [customColor, setCustomColor] = useState<string>(theme.primary);
-  const [shapeCategory, setShapeCategory] = useState<ShapeCategory>('basic');
   const [customRows, setCustomRows] = useState(3);
   const [customCols, setCustomCols] = useState(3);
 
@@ -98,10 +95,14 @@ export function QuickCreationSheet({
   const maxSheetHeight = Math.min(windowHeight * 0.8, 560);
 
   /** Every insert path closes the sheet before the canvas is touched. */
-  const insert = (request: InsertToolRequest) => {
+  const insert = useCallback((request: InsertToolRequest) => {
     onSelectInsert(request);
     onClose();
-  };
+  }, [onClose, onSelectInsert]);
+
+  const handleSelectShape = useCallback((shape: ShapeKind) => {
+    insert({ type: 'shape', shape });
+  }, [insert]);
 
   /** Seed the picker with the row's default so it opens on a usable colour. */
   const openCustomPicker = (target: 'sticky' | 'text') => {
@@ -287,62 +288,11 @@ export function QuickCreationSheet({
                     },
                   }}
                 >
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.categoryRow}
-                  >
-                    {SHAPE_CATEGORIES.map((cat) => {
-                      const active = shapeCategory === cat.id;
-                      return (
-                        <Pressable
-                          key={cat.id}
-                          accessibilityRole="tab"
-                          accessibilityState={{ selected: active }}
-                          onPress={() => setShapeCategory(cat.id)}
-                          style={[
-                            styles.categoryChip,
-                            {
-                              backgroundColor: active ? theme.primary : theme.background,
-                              borderColor: active ? theme.primary : theme.border,
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.categoryChipText,
-                              { color: active ? '#FFFFFF' : theme.foreground },
-                            ]}
-                          >
-                            {cat.label}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
-                  <View style={styles.shapeGrid}>
-                    {shapesByCategory(shapeCategory).map((entry) => (
-                      <Pressable
-                        key={entry.kind}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Draw ${entry.label}`}
-                        onPress={() => insert({ type: 'shape', shape: entry.kind })}
-                        style={({ pressed }) => [
-                          styles.shapeGridTile,
-                          { backgroundColor: theme.background, borderColor: theme.border },
-                          pressed && styles.pressed,
-                        ]}
-                      >
-                        <ShapePreviewIcon kind={entry.kind} size={22} color={theme.primary} />
-                        <Text
-                          style={[styles.shapeGridLabel, { color: theme.foreground }]}
-                          numberOfLines={1}
-                        >
-                          {entry.label}
-                        </Text>
-                      </Pressable>
-                    ))}
-                  </View>
+                  <ShapeCatalogPicker
+                    theme={theme}
+                    showLabels
+                    onSelectShape={handleSelectShape}
+                  />
                 </Section>
 
                 {/* ---------------------------------------------- Tables */}
@@ -708,150 +658,3 @@ function Swatch({
     </Pressable>
   );
 }
-
-const styles = StyleSheet.create({
-  layer: { flex: 1, justifyContent: 'flex-end' },
-  sheet: {
-    width: '100%',
-    maxWidth: 520,
-    alignSelf: 'center',
-    borderTopLeftRadius: radii.lg,
-    borderTopRightRadius: radii.lg,
-    borderTopWidth: 1,
-    borderLeftWidth: 1,
-    borderRightWidth: 1,
-  },
-  handleWrap: { alignItems: 'center', paddingVertical: spacing.sm },
-  handle: { width: 36, height: 4, borderRadius: 2 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
-  },
-  headerText: { flex: 1, gap: 2 },
-  title: { ...typography.subtitle, fontWeight: '700' },
-  subtitle: { ...typography.caption, opacity: 0.7 },
-  closeButton: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: spacing.sm },
-  closeText: { ...typography.bodyStrong },
-  content: { paddingHorizontal: spacing.md, paddingBottom: spacing.md, gap: spacing.md },
-  customSection: { gap: spacing.sm, paddingVertical: spacing.xs },
-  customHint: { ...typography.caption, fontSize: 11, opacity: 0.7 },
-  section: { gap: spacing.sm },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sectionLabel: {
-    ...typography.caption,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    opacity: 0.7,
-  },
-  sectionAction: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: spacing.xs },
-  sectionActionText: { ...typography.caption, fontWeight: '600' },
-  row: { flexDirection: 'row', gap: spacing.sm },
-  card: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.sm,
-    minHeight: 64,
-  },
-  cardText: { flex: 1, gap: 2 },
-  cardTitle: { ...typography.caption, fontWeight: '600', fontSize: 14 },
-  cardCaption: { ...typography.caption, fontSize: 11 },
-  iconPill: {
-    width: 36,
-    height: 36,
-    borderRadius: radii.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  textPreview: { fontSize: 17, fontWeight: '700' },
-  tile: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-    minHeight: touchTarget + 16,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.xs,
-  },
-  tileLabel: { ...typography.caption, fontSize: 11, fontWeight: '600' },
-  mediaCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.sm,
-    minHeight: 64,
-  },
-  swatchGroup: { gap: 2 },
-  // Wraps rather than clips on the narrowest phones (~320pt), where seven
-  // 44pt targets no longer fit on one line.
-  swatchRow: { flexDirection: 'row', alignItems: 'center', gap: 2, flexWrap: 'wrap' },
-  swatchLabel: { ...typography.caption, fontSize: 11, fontWeight: '600', opacity: 0.7 },
-  // A 44pt tap area wrapping a 26pt chip: the row stays compact without
-  // shrinking the target below the design minimum.
-  swatch: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  swatchChip: { width: 26, height: 26, borderRadius: 999, borderWidth: 1 },
-  swatchAdd: { alignItems: 'center', justifyContent: 'center' },
-  categoryRow: { flexDirection: 'row', gap: 6, paddingBottom: 4 },
-  categoryChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-  },
-  categoryChipText: { ...typography.caption, fontSize: 12, fontWeight: '600' },
-  shapeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  shapeGridTile: {
-    width: '23.2%',
-    minWidth: 68,
-    minHeight: 56,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    borderWidth: 1,
-    borderRadius: radii.sm,
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-  },
-  shapeGridLabel: { ...typography.caption, fontSize: 10, fontWeight: '600', textAlign: 'center' },
-  tablePresetIcon: { fontSize: 20, fontWeight: '700' },
-  customTableRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.xs,
-    flexWrap: 'wrap',
-  },
-  stepperGroup: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  stepperLabel: { ...typography.caption, fontWeight: '600' },
-  stepperBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperBtnText: { fontSize: 16, fontWeight: '700' },
-  insertTableBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radii.sm,
-  },
-  insertTableBtnText: { ...typography.caption, color: '#FFFFFF', fontWeight: '700' },
-  pressed: { opacity: 0.7 },
-});

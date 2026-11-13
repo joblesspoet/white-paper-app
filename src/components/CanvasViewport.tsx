@@ -14,7 +14,7 @@ import {
   useImage,
   vec,
 } from '@shopify/react-native-skia';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View, type TextLayoutEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
@@ -24,6 +24,8 @@ import Animated, {
   useSharedValue,
   type SharedValue,
 } from 'react-native-reanimated';
+
+import { styles } from './CanvasViewport.styles';
 
 import {
   DEFAULT_CONNECTOR_STROKE_WIDTH,
@@ -1261,7 +1263,7 @@ function ImageObjectView({ object, dark }: { object: ImageObject; dark: boolean 
   );
 }
 
-function GeometricObjectView({
+const GeometricObjectView = memo(function GeometricObjectView({
   object,
   dark,
 }: {
@@ -1269,71 +1271,119 @@ function GeometricObjectView({
   dark: boolean;
 }) {
   const color = textColorValue(object.colorKey, dark);
-  const origin = {
-    x: object.x + object.width / 2,
-    y: object.y + object.height / 2,
-  };
-  const transform = object.rotation === 0
-    ? undefined
-    : [{ rotate: (object.rotation * Math.PI) / 180 }];
+  const origin = useMemo(
+    () => ({
+      x: object.x + object.width / 2,
+      y: object.y + object.height / 2,
+    }),
+    [object.height, object.width, object.x, object.y],
+  );
+  const transform = useMemo(
+    () => (object.rotation === 0 ? undefined : [{ rotate: (object.rotation * Math.PI) / 180 }]),
+    [object.rotation],
+  );
 
-  if (object.type === 'connector') {
-    const pts = connectorPolyline(object.style, object.x, object.y, object.width, object.height, object.direction);
+  const connectorPaths = useMemo(() => {
+    if (object.type !== 'connector') return null;
+    const pts = connectorPolyline(
+      object.style,
+      object.x,
+      object.y,
+      object.width,
+      object.height,
+      object.direction,
+    );
     const path = Skia.Path.MakeFromSVGString(polylinePathData(pts)) ?? Skia.Path.Make();
-    const arrowPath = object.style === 'arrow'
-      ? Skia.Path.MakeFromSVGString(arrowHeadPathData(pts, arrowHeadSize(object.strokeWidth)))
-      : null;
+    const arrowPath =
+      object.style === 'arrow'
+        ? Skia.Path.MakeFromSVGString(arrowHeadPathData(pts, arrowHeadSize(object.strokeWidth)))
+        : null;
+    return { path, arrowPath };
+  }, [object]);
+
+  const shapePaths = useMemo(() => {
+    if (object.type !== 'shape') return null;
+    const primitives = buildShapeRenderPrimitives(
+      object.shape,
+      object.x,
+      object.y,
+      object.width,
+      object.height,
+      object.direction,
+      Boolean(object.showMeasurements),
+    );
+    return {
+      fillPath:
+        object.fillKey && primitives.fillPathSvg
+          ? Skia.Path.MakeFromSVGString(primitives.fillPathSvg)
+          : null,
+      solidPath: primitives.solidStrokeSvg
+        ? Skia.Path.MakeFromSVGString(primitives.solidStrokeSvg)
+        : null,
+      dashedPath: primitives.dashedStrokeSvg
+        ? Skia.Path.MakeFromSVGString(primitives.dashedStrokeSvg)
+        : null,
+      arrowPath: primitives.arrowHeadsSvg
+        ? Skia.Path.MakeFromSVGString(primitives.arrowHeadsSvg)
+        : null,
+    };
+  }, [object]);
+
+  if (connectorPaths) {
     return (
       <Group origin={origin} transform={transform}>
-        <Path path={path} color={color} style="stroke" strokeWidth={object.strokeWidth} strokeCap="round" strokeJoin="round" />
-        {arrowPath && <Path path={arrowPath} color={color} style="fill" />}
+        <Path
+          path={connectorPaths.path}
+          color={color}
+          style="stroke"
+          strokeWidth={object.strokeWidth}
+          strokeCap="round"
+          strokeJoin="round"
+        />
+        {connectorPaths.arrowPath ? (
+          <Path path={connectorPaths.arrowPath} color={color} style="fill" />
+        ) : null}
       </Group>
     );
   }
 
-  const primitives = buildShapeRenderPrimitives(
-    object.shape,
-    object.x,
-    object.y,
-    object.width,
-    object.height,
-    object.direction,
-    Boolean(object.showMeasurements),
-  );
-  const fillPath = object.fillKey && primitives.fillPathSvg
-    ? Skia.Path.MakeFromSVGString(primitives.fillPathSvg)
-    : null;
-  const solidPath = primitives.solidStrokeSvg
-    ? Skia.Path.MakeFromSVGString(primitives.solidStrokeSvg)
-    : null;
-  const dashedPath = primitives.dashedStrokeSvg
-    ? Skia.Path.MakeFromSVGString(primitives.dashedStrokeSvg)
-    : null;
-  const arrowPath = primitives.arrowHeadsSvg
-    ? Skia.Path.MakeFromSVGString(primitives.arrowHeadsSvg)
-    : null;
+  if (!shapePaths || object.type !== 'shape') return null;
 
   return (
     <Group origin={origin} transform={transform}>
-      {fillPath && object.fillKey ? (
-        <Path path={fillPath} color={stickyColorValue(object.fillKey)} style="fill" />
+      {shapePaths.fillPath && object.fillKey ? (
+        <Path path={shapePaths.fillPath} color={stickyColorValue(object.fillKey)} style="fill" />
       ) : null}
-      {solidPath ? (
-        <Path path={solidPath} color={color} style="stroke" strokeWidth={object.strokeWidth} strokeCap="round" strokeJoin="round" />
+      {shapePaths.solidPath ? (
+        <Path
+          path={shapePaths.solidPath}
+          color={color}
+          style="stroke"
+          strokeWidth={object.strokeWidth}
+          strokeCap="round"
+          strokeJoin="round"
+        />
       ) : null}
-      {dashedPath ? (
-        <Path path={dashedPath} color={color} style="stroke" strokeWidth={Math.max(1.5, object.strokeWidth * 0.75)} strokeCap="round" strokeJoin="round">
+      {shapePaths.dashedPath ? (
+        <Path
+          path={shapePaths.dashedPath}
+          color={color}
+          style="stroke"
+          strokeWidth={Math.max(1.5, object.strokeWidth * 0.75)}
+          strokeCap="round"
+          strokeJoin="round"
+        >
           <DashPathEffect intervals={[6, 4]} />
         </Path>
       ) : null}
-      {arrowPath ? (
-        <Path path={arrowPath} color={color} style="fill" />
+      {shapePaths.arrowPath ? (
+        <Path path={shapePaths.arrowPath} color={color} style="fill" />
       ) : null}
     </Group>
   );
-}
+});
 
-function TableCellsOverlay({
+const TableCellsOverlay = memo(function TableCellsOverlay({
   object,
   dark,
   editingCell,
@@ -1357,8 +1407,8 @@ function TableCellsOverlay({
     transform: [{ rotate: `${object.rotation}deg` }],
   }), [object]);
 
-  const rowH = tableRowHeight(object);
-  const widths = tableColumnWidths(object);
+  const rowH = useMemo(() => tableRowHeight(object), [object]);
+  const widths = useMemo(() => tableColumnWidths(object), [object]);
 
   return (
     <Animated.View pointerEvents="none" style={[styles.object, frame]}>
@@ -1376,15 +1426,15 @@ function TableCellsOverlay({
           return (
             <View
               key={`${r}-${c}`}
-              style={{
-                position: 'absolute',
-                left: `${relLeftPct}%`,
-                top: `${relTopPct}%`,
-                width: `${relWPct}%`,
-                height: `${relHPct}%`,
-                padding: 4,
-                justifyContent: 'center',
-              }}
+              style={[
+                styles.tableCellOverlay,
+                {
+                  left: `${relLeftPct}%`,
+                  top: `${relTopPct}%`,
+                  width: `${relWPct}%`,
+                  height: `${relHPct}%`,
+                },
+              ]}
             >
               <Text
                 numberOfLines={3}
@@ -1403,13 +1453,13 @@ function TableCellsOverlay({
       )}
     </Animated.View>
   );
-}
+});
 
 function viewportScaleFallback(_object: TableObject): number {
   return 1;
 }
 
-function ShapeMeasurementsOverlay({
+const ShapeMeasurementsOverlay = memo(function ShapeMeasurementsOverlay({
   object,
   dark,
   offsetX,
@@ -1451,23 +1501,24 @@ function ShapeMeasurementsOverlay({
       {primitives.measurementLabels.map((lbl, idx) => (
         <View
           key={idx}
-          style={{
-            position: 'absolute',
-            left: `${(lbl.x / Math.max(1, object.width)) * 100}%`,
-            top: `${(lbl.y / Math.max(1, object.height)) * 100}%`,
-            transform: [{ translateX: -20 }, { translateY: -8 }],
-          }}
+          style={[
+            styles.measurementLabelWrap,
+            {
+              left: `${(lbl.x / Math.max(1, object.width)) * 100}%`,
+              top: `${(lbl.y / Math.max(1, object.height)) * 100}%`,
+            },
+          ]}
         >
-          <Text style={{ color, fontSize: 11, fontWeight: '600', textAlign: 'center', minWidth: 40 }}>
+          <Text style={[styles.measurementLabelText, { color }]}>
             {lbl.text}
           </Text>
         </View>
       ))}
     </Animated.View>
   );
-}
+});
 
-function TableObjectView({
+const TableObjectView = memo(function TableObjectView({
   object,
   dark,
 }: {
@@ -1475,22 +1526,32 @@ function TableObjectView({
   dark: boolean;
 }) {
   const borderColor = textColorValue(object.colorKey, dark);
-  const origin = {
-    x: object.x + object.width / 2,
-    y: object.y + object.height / 2,
-  };
-  const transform = object.rotation === 0
-    ? undefined
-    : [{ rotate: (object.rotation * Math.PI) / 180 }];
-  const rowH = tableRowHeight(object);
-  const widths = tableColumnWidths(object);
+  const origin = useMemo(
+    () => ({
+      x: object.x + object.width / 2,
+      y: object.y + object.height / 2,
+    }),
+    [object.height, object.width, object.x, object.y],
+  );
+  const transform = useMemo(
+    () =>
+      object.rotation === 0
+        ? undefined
+        : [{ rotate: (object.rotation * Math.PI) / 180 }],
+    [object.rotation],
+  );
+  const rowH = useMemo(() => tableRowHeight(object), [object]);
+  const widths = useMemo(() => tableColumnWidths(object), [object]);
 
-  const colLines: number[] = [];
-  let accX = object.x;
-  for (let c = 0; c < object.columns - 1; c += 1) {
-    accX += widths[c];
-    colLines.push(accX);
-  }
+  const colLines = useMemo(() => {
+    const lines: number[] = [];
+    let accX = object.x;
+    for (let c = 0; c < object.columns - 1; c += 1) {
+      accX += widths[c];
+      lines.push(accX);
+    }
+    return lines;
+  }, [object.columns, object.x, widths]);
 
   return (
     <Group origin={origin} transform={transform}>
@@ -1540,7 +1601,7 @@ function TableObjectView({
       />
     </Group>
   );
-}
+});
 
 /**
  * The selection frame and handles live in the canvas group, so they track the
@@ -1623,14 +1684,3 @@ function SelectionOverlay({
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1, overflow: 'hidden' },
-  object: { position: 'absolute', overflow: 'hidden' },
-  hud: { position: 'absolute', top: spacing.sm, right: spacing.sm, alignItems: 'flex-end', gap: spacing.xs },
-  viewBadge: { borderWidth: 1, borderRadius: radii.sm, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, alignItems: 'flex-end' },
-  zoomText: { ...typography.bodyStrong },
-  resetButton: { minHeight: touchTarget, minWidth: touchTarget, borderWidth: 1, borderRadius: radii.sm, paddingHorizontal: spacing.md, alignItems: 'center', justifyContent: 'center' },
-  resetText: { ...typography.caption },
-  pressed: { opacity: 0.6 },
-});

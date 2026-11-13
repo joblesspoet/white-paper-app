@@ -1,19 +1,15 @@
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import {
-  SHAPE_CATALOG,
-  SHAPE_CATEGORIES,
   SHAPE_COLORS,
   SHAPE_FILLS,
   isCustomColor,
-  shapesByCategory,
-  type ShapeCategory,
 } from '../canvas/document';
 import { CONNECTOR_STROKE_WIDTHS, SHAPE_STROKE_WIDTHS, STROKE_WIDTH_LABELS, type ConnectorStyle, type ShapeKind } from '../canvas/shapes';
 import type { ToolOptionsVariant } from '../responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
-import { ShapePreviewIcon } from './ShapePreviewIcon';
+import { ShapeCatalogPicker } from './ShapeCatalogPicker';
 import { PlusIcon } from './icons';
 
 type Props = {
@@ -58,7 +54,6 @@ export function ShapeOptionsSheet({
   const widths = shape ? SHAPE_STROKE_WIDTHS : CONNECTOR_STROKE_WIDTHS;
   const { height: windowHeight } = useWindowDimensions();
   const [customTarget, setCustomTarget] = useState<'fill' | 'stroke' | null>(null);
-  const [category, setCategory] = useState<ShapeCategory>(SHAPE_CATALOG[shapeKind]?.category ?? 'basic');
 
   const customFill = shapeFillKey ? isCustomColor(shapeFillKey) : false;
   const strokeColorKey = shape ? shapeColorKey : connectorColorKey;
@@ -128,37 +123,12 @@ export function ShapeOptionsSheet({
               {shape ? (
                 <>
                   <Text style={[styles.label, { color: theme.foreground }]}>Shape</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-                    {SHAPE_CATEGORIES.map((cat) => (
-                      <Choice
-                        key={cat.id}
-                        label={cat.label}
-                        selected={category === cat.id}
-                        theme={theme}
-                        onPress={() => setCategory(cat.id)}
-                      />
-                    ))}
-                  </ScrollView>
-                  <View style={styles.row}>
-                    {shapesByCategory(category).map((entry) => (
-                      <Pressable
-                        key={entry.kind}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: shapeKind === entry.kind }}
-                        accessibilityLabel={entry.label}
-                        onPress={() => onShapeKind(entry.kind)}
-                        style={[
-                          styles.choice,
-                          {
-                            borderColor: shapeKind === entry.kind ? theme.primary : theme.border,
-                            backgroundColor: shapeKind === entry.kind ? theme.muted : theme.background,
-                          },
-                        ]}
-                      >
-                        <ShapePreviewIcon kind={entry.kind} size={18} color={theme.foreground} />
-                      </Pressable>
-                    ))}
-                  </View>
+                  <ShapeCatalogPicker
+                    theme={theme}
+                    selectedShape={shapeKind}
+                    showLabels={false}
+                    onSelectShape={onShapeKind}
+                  />
                   {onShowMeasurements ? (
                     <View style={styles.row}>
                       <Choice

@@ -904,6 +904,43 @@ export default function BoardEditorScreen() {
     }
   }, [activeTool, commitEditing, lastInkingTool, preferences.haptics]);
 
+  const handleSwitchInstrument = useCallback((kind: InstrumentKind) => {
+    setActiveInstrument((prev) =>
+      createDefaultInstrument(kind, {
+        x: prev?.x ?? 0,
+        y: prev?.y ?? 0,
+      }),
+    );
+  }, []);
+
+  const handleCommitGeometryStroke = useCallback(
+    (points: readonly { x: number; y: number }[]) => {
+      if (points.length === 0) return;
+      let stroke = createInkStroke({
+        id: `geo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        tool: 'pen',
+        point: points[0],
+        color,
+        width: strokeWidth,
+        opacity: 1,
+      });
+      for (let i = 1; i < points.length; i += 1) {
+        stroke = { ...stroke, points: [...stroke.points, points[i]] };
+      }
+      dispatch({ type: 'command', command: { type: 'ink.add', stroke } });
+    },
+    [color, strokeWidth],
+  );
+
+  const handleCloseGeometryBox = useCallback(() => {
+    setActiveInstrument(null);
+  }, []);
+
+  const handleCanvasTouch = useCallback(() => {
+    commitEditing();
+    commitTableCell();
+  }, [commitEditing, commitTableCell]);
+
   const handleSelectInsert = useCallback((request: InsertToolRequest) => {
     if (request.type === 'sticky') {
       if (request.colorKey) setStickyColorKey(request.colorKey);
@@ -1167,10 +1204,7 @@ export default function BoardEditorScreen() {
                 onSelectionChange={setSelectedObjectIds}
                 onObjectEdit={startEditingExisting}
                 onObjectMeasure={measureObject}
-                onCanvasTouch={() => {
-                  commitEditing();
-                  commitTableCell();
-                }}
+                onCanvasTouch={handleCanvasTouch}
               />
               {activeInstrument ? (
                 <GeometryBoxOverlay
@@ -1180,30 +1214,9 @@ export default function BoardEditorScreen() {
                   theme={theme}
                   penColor={color}
                   onChangeInstrument={setActiveInstrument}
-                  onSwitchInstrument={(kind: InstrumentKind) => {
-                    setActiveInstrument(
-                      createDefaultInstrument(kind, {
-                        x: activeInstrument.x,
-                        y: activeInstrument.y,
-                      }),
-                    );
-                  }}
-                  onCommitStroke={(points) => {
-                    if (points.length === 0) return;
-                    let stroke = createInkStroke({
-                      id: `geo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                      tool: 'pen',
-                      point: points[0],
-                      color,
-                      width: strokeWidth,
-                      opacity: 1,
-                    });
-                    for (let i = 1; i < points.length; i += 1) {
-                      stroke = { ...stroke, points: [...stroke.points, points[i]] };
-                    }
-                    dispatch({ type: 'command', command: { type: 'ink.add', stroke } });
-                  }}
-                  onClose={() => setActiveInstrument(null)}
+                  onSwitchInstrument={handleSwitchInstrument}
+                  onCommitStroke={handleCommitGeometryStroke}
+                  onClose={handleCloseGeometryBox}
                 />
               ) : null}
               {editingTableCell ? (() => {
@@ -1379,7 +1392,7 @@ export default function BoardEditorScreen() {
                       onPress={() => handleTableAction(selectedObject.id, 'add-row')}
                       style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
                     >
-                      <Text style={{ color: theme.foreground, fontSize: 12, fontWeight: '700' }}>+R</Text>
+                      <Text style={[styles.railTextAction, { color: theme.foreground }]}>+R</Text>
                     </Pressable>
                     <Pressable
                       accessibilityRole="button"
@@ -1392,7 +1405,7 @@ export default function BoardEditorScreen() {
                         pressed && styles.pressed,
                       ]}
                     >
-                      <Text style={{ color: theme.foreground, fontSize: 12, fontWeight: '700' }}>+C</Text>
+                      <Text style={[styles.railTextAction, { color: theme.foreground }]}>+C</Text>
                     </Pressable>
                   </>
                 )}
@@ -2059,5 +2072,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     zIndex: 30,
+  },
+  railTextAction: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
