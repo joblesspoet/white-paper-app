@@ -65,6 +65,7 @@ class FlowCanvasRecorderModule : Module() {
   private var targetWidth: Int = 1280
   private var targetHeight: Int = 720
   private var activityRef: WeakReference<Activity>? = null
+  private var cachedSurfaceViewRef: WeakReference<SurfaceView>? = null
 
   private val isRecording = AtomicBoolean(false)
   private val isPaused = AtomicBoolean(false)
@@ -195,8 +196,8 @@ class FlowCanvasRecorderModule : Module() {
           inputSurface = surface
           audioRecord = aRecord
           frameBitmap = Bitmap.createBitmap(
-            srcRectPx.width(),
-            srcRectPx.height(),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) targetWidth else srcRectPx.width(),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) targetHeight else srcRectPx.height(),
             Bitmap.Config.ARGB_8888,
           )
         }
@@ -396,17 +397,22 @@ class FlowCanvasRecorderModule : Module() {
     return null
   }
 
-  private fun scheduleNextFrame(handler: Handler) {
+  private fun scheduleNextFrame(handler: Handler, delayMs: Long = FRAME_INTERVAL_MS) {
     if (!isRecording.get()) return
     handler.postDelayed(
       {
         if (!isRecording.get()) return@postDelayed
-        if (!isPaused.get() && frameInFlight.compareAndSet(false, true)) {
-          captureVideoFrame(handler)
+        if (isPaused.get()) {
+          scheduleNextFrame(handler, FRAME_INTERVAL_MS)
+          return@postDelayed
         }
-        scheduleNextFrame(handler)
+        if (frameInFlight.compareAndSet(false, true)) {
+          captureVideoFrame(handler)
+        } else {
+          scheduleNextFrame(handler, FRAME_INTERVAL_MS)
+        }
       },
-      FRAME_INTERVAL_MS,
+      delayMs,
     )
   }
 
@@ -471,18 +477,37 @@ class FlowCanvasRecorderModule : Module() {
     }
   }
 
+  private fun getActiveCameraSurfaceView(root: View): SurfaceView? {
+    val cached = cachedSurfaceViewRef?.get()
+    if (cached != null &&
+      cached.isAttachedToWindow &&
+      cached.visibility == View.VISIBLE &&
+      cached.width > 0 &&
+      cached.height > 0 &&
+      cached.holder?.surface?.isValid == true
+    ) {
+      return cached
+    }
+    val found = findCameraSurfaceView(root)
+    cachedSurfaceViewRef = if (found != null) WeakReference(found) else null
+    return found
+  }
+
   private fun captureVideoFrame(handler: Handler) {
     val activity = activityRef?.get()
     val window = activity?.window
     val bitmap = frameBitmap
     if (window == null || activity.isFinishing || bitmap == null || bitmap.isRecycled) {
       frameInFlight.set(false)
+      scheduleNextFrame(handler)
       return
     }
 
+    val frameStartMs = android.os.SystemClock.uptimeMillis()
+
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       try {
-        val surfaceView = findCameraSurfaceView(window.decorView)
+        val surfaceView = getActiveCameraSurfaceView(window.decorView)
         var svRect: Rect? = null
         var svBitmap: Bitmap? = null
         val mirrorHorizontally = (surfaceView?.scaleX ?: 1f) < 0f
@@ -513,6 +538,7 @@ class FlowCanvasRecorderModule : Module() {
           { copyResult ->
             if (copyResult != PixelCopy.SUCCESS || !isRecording.get() || isPaused.get()) {
               frameInFlight.set(false)
+              scheduleNextFrame(handler)
               return@request
             }
 
@@ -538,6 +564,8 @@ class FlowCanvasRecorderModule : Module() {
                       }
                     } finally {
                       frameInFlight.set(false)
+                      val elapsed = android.os.SystemClock.uptimeMillis() - frameStartMs
+                      scheduleNextFrame(handler, (FRAME_INTERVAL_MS - elapsed).coerceAtLeast(16L))
                     }
                   },
                   handler,
@@ -547,6 +575,7 @@ class FlowCanvasRecorderModule : Module() {
                   drawBitmapToEncoder(bitmap, null, null, false, 0f)
                 } finally {
                   frameInFlight.set(false)
+                  scheduleNextFrame(handler)
                 }
               }
             } else {
@@ -554,6 +583,8 @@ class FlowCanvasRecorderModule : Module() {
                 drawBitmapToEncoder(bitmap, null, null, false, 0f)
               } finally {
                 frameInFlight.set(false)
+                val elapsed = android.os.SystemClock.uptimeMillis() - frameStartMs
+                scheduleNextFrame(handler, (FRAME_INTERVAL_MS - elapsed).coerceAtLeast(16L))
               }
             }
           },
@@ -561,6 +592,7 @@ class FlowCanvasRecorderModule : Module() {
         )
       } catch (_: Throwable) {
         frameInFlight.set(false)
+        scheduleNextFrame(handler)
       }
     } else {
       try {
@@ -574,6 +606,7 @@ class FlowCanvasRecorderModule : Module() {
       } catch (_: Throwable) {
       } finally {
         frameInFlight.set(false)
+        scheduleNextFrame(handler)
       }
     }
   }
@@ -832,12 +865,13 @@ class FlowCanvasRecorderModule : Module() {
     } catch (_: Throwable) {
     }
     cameraBitmap = null
+    cachedSurfaceViewRef = null
     activityRef = null
     outputFile = null
   }
 
   companion object {
-    private const val TARGET_FPS = 24
+    private const val TARGET_FPS = 16
     private const val FRAME_INTERVAL_MS = 1000L / TARGET_FPS
     private const val AUDIO_SAMPLE_RATE = 44_100
     private const val AUDIO_BITRATE = 128_000

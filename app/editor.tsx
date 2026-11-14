@@ -2491,9 +2491,15 @@ function mathSpanAtPoint(
                 <TextInput
                   multiline
                   autoFocus
+                  returnKeyType="done"
+                  submitBehavior="blurAndSubmit"
                   accessibilityLabel={editingTextObject.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
                   value={editingTextObject.text}
                   onChangeText={(text) => updateDraft({ text })}
+                  onSubmitEditing={() => {
+                    commitEditing();
+                    Keyboard.dismiss();
+                  }}
                   onBlur={commitEditing}
                   placeholder={editingTextObject.type === 'sticky' ? 'Write a note' : 'Type something'}
                   placeholderTextColor={`${overlayTextColor}80`}
