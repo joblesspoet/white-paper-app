@@ -8,12 +8,12 @@ export const lessonReplayModalStyles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.56)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: spacing.md,
+    paddingHorizontal: spacing.sm,
   },
   dialog: {
     width: '100%',
     maxWidth: 720,
-    maxHeight: '94%',
+    maxHeight: '96%',
     borderRadius: radii.lg,
     borderWidth: 1,
     overflow: 'hidden',
@@ -63,6 +63,29 @@ export const lessonReplayModalStyles = StyleSheet.create({
   },
   stageCompact: {
     height: 156,
+  },
+  videoFill: {
+    width: '100%',
+    height: '100%',
+  },
+  modeSwitch: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    padding: 2,
+    gap: 2,
+  },
+  modeChip: {
+    minHeight: 32,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.sm - 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modeChipText: {
+    ...typography.caption,
+    fontWeight: '700',
   },
   pageBadge: {
     position: 'absolute',

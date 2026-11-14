@@ -174,6 +174,7 @@ import {
 import {
   pauseNativeCapture,
   resumeNativeCapture,
+  saveVideoToGallery,
   startNativeCapture,
   stopNativeCapture,
 } from '../src/recorder/native-recorder';
@@ -1296,14 +1297,15 @@ function mathSpanAtPoint(
       recorderSessionRef.current = started;
       setRecorderStatus('recording');
       setRecorderElapsedMs(0);
-      const aspect =
-        canvasRect.width > 0 && canvasRect.height > 0
-          ? canvasRect.width / canvasRect.height
-          : 16 / 9;
+      const hasCanvasRect = canvasRect.width > 0 && canvasRect.height > 0;
+      const aspect = hasCanvasRect
+        ? canvasRect.width / canvasRect.height
+        : 16 / 9;
       void startNativeCapture({
         quality: started.quality,
         includeMic: started.includeMic,
         aspectRatio: aspect,
+        cropRect: hasCanvasRect ? canvasRect : undefined,
       });
       return;
     }
@@ -1311,7 +1313,7 @@ function mathSpanAtPoint(
       setRecorderCountdown((c) => c - 1);
     }, 1000);
     return () => clearTimeout(timer);
-  }, [canvasRect.height, canvasRect.width, recorderCountdown, recorderStatus]);
+  }, [canvasRect, recorderCountdown, recorderStatus]);
 
   // Update MM:SS elapsed display while recording.
   useEffect(() => {
@@ -1411,6 +1413,16 @@ function mathSpanAtPoint(
 
   const handleSaveReplayLesson = useCallback(
     async (lesson: LessonRecordingPackage) => {
+      if (lesson.videoUri) {
+        const galleryResult = await saveVideoToGallery(lesson.videoUri);
+        if (galleryResult.saved) {
+          setReplayAlreadySaved(true);
+          setReplayNotice('Video saved to your device Gallery.');
+          return;
+        }
+        setReplayNotice(galleryResult.message ?? 'Could not save video to Gallery.');
+        return;
+      }
       await saveLessonPackage(lesson);
       setReplayAlreadySaved(true);
       setReplayNotice('Saved to your in-app Saved Lessons library.');
@@ -2444,8 +2456,13 @@ function mathSpanAtPoint(
                 countdownRemaining={recorderCountdown}
                 quality={recorderQuality}
                 includeMic={recorderMic}
-                savedCount={savedLessons.length}
                 theme={theme}
+                isTablet={tablet}
+                bounds={{
+                  width: canvasRect.width > 0 ? canvasRect.width : width,
+                  height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
+                }}
+                bottomExclusion={tablet ? 0 : ACTION_ISLAND_HEIGHT}
                 onSelectQuality={setRecorderQuality}
                 onToggleMic={() => setRecorderMic((v) => !v)}
                 onStart={() => {
@@ -2456,7 +2473,6 @@ function mathSpanAtPoint(
                 onStop={() => {
                   void handleStopRecording();
                 }}
-                onOpenSavedLessons={() => setSavedLessonsVisible(true)}
                 onClose={() => setRecorderBarVisible(false)}
               />
               <FaceCamBubble

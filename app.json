@@ -69,7 +69,8 @@
           "recordAudioAndroid": true
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      "expo-video"
     ],
     "scheme": "flowcanvas"
   }

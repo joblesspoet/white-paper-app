@@ -13,6 +13,13 @@ import { requireOptionalNativeModule } from 'expo';
 
 import { resolutionForQuality, type VideoQuality } from './lesson-recorder';
 
+export type CaptureCropRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 type NativeScreenRecorderModule = {
   isSupported?: () => boolean;
   startRecording: (options: {
@@ -20,11 +27,13 @@ type NativeScreenRecorderModule = {
     height: number;
     bitrate: number;
     includeMic: boolean;
+    cropRect?: CaptureCropRect;
     outputPath?: string;
   }) => Promise<{ outputPath?: string } | void>;
   pauseRecording?: () => Promise<void>;
   resumeRecording?: () => Promise<void>;
   stopRecording: () => Promise<{ videoUri?: string | null; audioUri?: string | null } | string | null>;
+  saveVideoToGallery?: (videoUri: string) => Promise<{ saved?: boolean; uri?: string } | void>;
 };
 
 type ExpoAudioRecorderInstance = {
@@ -130,6 +139,7 @@ export async function startNativeCapture(params: {
   quality: VideoQuality;
   includeMic: boolean;
   aspectRatio?: number;
+  cropRect?: CaptureCropRect;
 }): Promise<NativeRecordingStartResult> {
   activeScreenCapture = false;
   activeAudioRecorder = null;
@@ -143,6 +153,7 @@ export async function startNativeCapture(params: {
         height: res.height,
         bitrate: res.bitrate,
         includeMic: params.includeMic,
+        cropRect: params.cropRect,
       });
       activeScreenCapture = true;
       return { nativeActive: true, audioActive: params.includeMic };
@@ -252,4 +263,22 @@ export async function stopNativeCapture(): Promise<NativeRecordingStopResult> {
   }
 
   return { nativeAvailable, videoUri, audioUri };
+}
+
+export async function saveVideoToGallery(
+  videoUri: string,
+): Promise<{ saved: boolean; message?: string }> {
+  const mod = loadNativeRecorderModule();
+  if (!mod?.saveVideoToGallery) {
+    return { saved: false, message: 'Gallery export is unavailable in this build.' };
+  }
+  try {
+    await mod.saveVideoToGallery(videoUri);
+    return { saved: true };
+  } catch (error) {
+    return {
+      saved: false,
+      message: error instanceof Error ? error.message : 'Could not save video to gallery.',
+    };
+  }
 }

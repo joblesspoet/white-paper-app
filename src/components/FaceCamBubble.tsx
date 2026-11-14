@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import {
@@ -26,6 +26,8 @@ type OptionalCameraViewProps = {
   style?: object;
   facing?: 'front' | 'back';
   mirror?: boolean;
+  active?: boolean;
+  onMountError?: (event: { message?: string }) => void;
 };
 
 let cachedCameraChecked = false;
@@ -77,6 +79,11 @@ export const FaceCamBubble = memo(function FaceCamBubble({
   const [permissionStatus, setPermissionStatus] = useState<FaceCamPermissionStatus>('unknown');
   const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
   const [canAskAgain, setCanAskAgain] = useState(true);
+  const [cameraMountError, setCameraMountError] = useState<string | null>(null);
+  const [pillSize, setPillSize] = useState<{ width: number; height: number }>({
+    width: 286,
+    height: 44,
+  });
 
   const sizePt = faceCamSizePt(sizePreset);
   const [pos, setPos] = useState(() =>
@@ -94,12 +101,17 @@ export const FaceCamBubble = memo(function FaceCamBubble({
   useEffect(() => {
     if (!visible) {
       setControlsVisible(false);
+      setCameraMountError(null);
       return;
     }
     if (permissionStatus === 'unknown') {
       void requestPermission();
     }
   }, [permissionStatus, requestPermission, visible]);
+
+  useEffect(() => {
+    setCameraMountError(null);
+  }, [facing]);
 
   useEffect(() => {
     setPos(cornerPosition(corner, bounds.width, bounds.height, sizePt, bottomExclusion));
@@ -138,29 +150,16 @@ export const FaceCamBubble = memo(function FaceCamBubble({
     void openAppSettings();
   }, []);
 
-  const panGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .runOnJS(true)
-        .onStart(() => {
-          dragStartRef.current = pos;
-        })
-        .onUpdate((event) => {
-          setPos(
-            clampFaceCamPosition(
-              {
-                x: dragStartRef.current.x + event.translationX,
-                y: dragStartRef.current.y + event.translationY,
-              },
-              bounds.width,
-              bounds.height,
-              sizePt,
-              bottomExclusion,
-            ),
-          );
-        })
-        .onEnd((event) => {
-          const snapped = snapFaceCamToNearestCorner(
+  const bubbleGesture = useMemo(() => {
+    const panGesture = Gesture.Pan()
+      .minDistance(8)
+      .runOnJS(true)
+      .onStart(() => {
+        dragStartRef.current = pos;
+      })
+      .onUpdate((event) => {
+        setPos(
+          clampFaceCamPosition(
             {
               x: dragStartRef.current.x + event.translationX,
               y: dragStartRef.current.y + event.translationY,
@@ -169,12 +168,35 @@ export const FaceCamBubble = memo(function FaceCamBubble({
             bounds.height,
             sizePt,
             bottomExclusion,
-          );
-          setCorner(snapped.corner);
-          setPos(snapped.position);
-        }),
-    [bottomExclusion, bounds.height, bounds.width, pos, sizePt],
-  );
+          ),
+        );
+      })
+      .onEnd((event) => {
+        const snapped = snapFaceCamToNearestCorner(
+          {
+            x: dragStartRef.current.x + event.translationX,
+            y: dragStartRef.current.y + event.translationY,
+          },
+          bounds.width,
+          bounds.height,
+          sizePt,
+          bottomExclusion,
+        );
+        setCorner(snapped.corner);
+        setPos(snapped.position);
+      });
+
+    const tapGesture = Gesture.Tap()
+      .maxDistance(8)
+      .runOnJS(true)
+      .onEnd((_, success) => {
+        if (success) {
+          handleToggleControls();
+        }
+      });
+
+    return Gesture.Race(panGesture, tapGesture);
+  }, [bottomExclusion, bounds.height, bounds.width, handleToggleControls, pos, sizePt]);
 
   if (!visible) return null;
 
@@ -253,145 +275,204 @@ export const FaceCamBubble = memo(function FaceCamBubble({
   const borderRadius = faceCamBorderRadius(shape, sizePt);
   const ringColor = faceCamRingColor(isRecording, theme.primary);
   const CameraView = getOptionalCameraView();
+  const canRenderCamera = Boolean(CameraView) && permissionStatus === 'granted' && !cameraMountError;
+
+  const pillMaxWidth = Math.min(316, Math.max(180, bounds.width - 16));
+  const usableBottom = Math.max(80, bounds.height - bottomExclusion);
+  const measuredW = Math.min(pillSize.width, pillMaxWidth);
+  const measuredH = pillSize.height;
+  const spaceAbove = pos.y - 16;
+  const spaceBelow = usableBottom - (pos.y + sizePt) - 16;
+
+  let pillLeft: number;
+  let pillTop: number;
+  if (spaceAbove >= measuredH || spaceBelow >= measuredH) {
+    const placeAbove =
+      spaceAbove >= measuredH && (pos.y + sizePt / 2 > usableBottom / 2 || spaceBelow < measuredH);
+    pillTop = placeAbove
+      ? Math.max(8, pos.y - measuredH - 8)
+      : Math.min(Math.max(8, usableBottom - measuredH - 8), pos.y + sizePt + 8);
+    pillLeft = Math.max(
+      8,
+      Math.min(pos.x + sizePt / 2 - measuredW / 2, bounds.width - measuredW - 8),
+    );
+  } else {
+    const placeLeftOfBubble = pos.x + sizePt / 2 > bounds.width / 2;
+    pillLeft = placeLeftOfBubble
+      ? Math.max(8, pos.x - measuredW - 8)
+      : Math.min(Math.max(8, bounds.width - measuredW - 8), pos.x + sizePt + 8);
+    pillTop = Math.max(
+      8,
+      Math.min(pos.y + sizePt / 2 - measuredH / 2, usableBottom - measuredH - 8),
+    );
+  }
 
   return (
-    <GestureDetector gesture={panGesture}>
-      <View
-        style={[
-          styles.bubbleContainer,
-          {
-            left: pos.x,
-            top: pos.y,
-            width: sizePt,
-            height: sizePt,
-            borderRadius,
-            borderWidth: FACECAM_RING_WIDTH,
-            borderColor: ringColor,
-            backgroundColor: theme.surface,
-          },
-        ]}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Face-Cam bubble"
-          accessibilityHint="Drag to snap to corners, or tap to show camera controls"
-          onPress={handleToggleControls}
-          style={[styles.pressableFill, { borderRadius: Math.max(0, borderRadius - 2) }]}
+    <>
+      <GestureDetector gesture={bubbleGesture}>
+        <View
+          style={[
+            styles.bubbleContainer,
+            {
+              left: pos.x,
+              top: pos.y,
+              width: sizePt,
+              height: sizePt,
+              borderRadius,
+              borderWidth: FACECAM_RING_WIDTH,
+              borderColor: ringColor,
+              backgroundColor: theme.surface,
+            },
+          ]}
         >
-          {CameraView ? (
-            <CameraView
-              style={[
-                styles.cameraFill,
-                mirrored && facing === 'front' ? { transform: [{ scaleX: -1 }] } : undefined,
-              ]}
-              facing={facing}
-              mirror={mirrored}
-            />
-          ) : (
-            <View
-              style={[
-                styles.fallbackPreview,
-                { backgroundColor: theme.muted },
-                mirrored && facing === 'front' ? { transform: [{ scaleX: -1 }] } : undefined,
-              ]}
-            >
+          <View style={[styles.pressableFill, { borderRadius: Math.max(0, borderRadius - 2) }]}>
+            {canRenderCamera && CameraView ? (
+              <CameraView
+                key={`cam-${facing}-${permissionStatus}`}
+                style={[
+                  styles.cameraFill,
+                  Platform.OS === 'ios' && mirrored && facing === 'front'
+                    ? { transform: [{ scaleX: -1 }] }
+                    : undefined,
+                ]}
+                facing={facing}
+                mirror={mirrored}
+                active={visible && permissionStatus === 'granted'}
+                onMountError={(event) => {
+                  setCameraMountError(event?.message ?? 'Camera unavailable');
+                }}
+              />
+            ) : (
               <View
                 style={[
-                  styles.fallbackBadge,
-                  { backgroundColor: theme.surface, borderColor: theme.border },
+                  styles.fallbackPreview,
+                  { backgroundColor: theme.muted },
+                  mirrored && facing === 'front' ? { transform: [{ scaleX: -1 }] } : undefined,
                 ]}
               >
-                <Text style={[styles.fallbackLabel, { color: theme.foreground }]}>
-                  {facing === 'front' ? 'Front Cam' : 'Back Cam'}
+                <View
+                  style={[
+                    styles.fallbackBadge,
+                    { backgroundColor: theme.surface, borderColor: theme.border },
+                  ]}
+                >
+                  <Text style={[styles.fallbackLabel, { color: theme.foreground }]}>
+                    {permissionStatus === 'unknown'
+                      ? 'Starting…'
+                      : facing === 'front'
+                        ? 'Front Cam'
+                        : 'Back Cam'}
+                  </Text>
+                </View>
+                <Text style={[styles.fallbackSubLabel, { color: theme.foreground }]} numberOfLines={2}>
+                  {cameraMountError ? cameraMountError : `${sizePt}pt${mirrored ? ' • Mirror' : ''}`}
                 </Text>
               </View>
-              <Text style={[styles.fallbackSubLabel, { color: theme.foreground }]}>
-                {sizePt}pt {mirrored ? '• Mirror' : ''}
-              </Text>
-            </View>
-          )}
+            )}
 
-          {isRecording && <View style={styles.recDot} />}
+            {isRecording && <View style={styles.recDot} />}
 
-          {controlsVisible && (
-            <View style={styles.controlsOverlay}>
-              <View style={styles.controlsRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Flip camera"
-                  onPress={handleFlipCamera}
-                  style={[
-                    styles.controlButton,
-                    { backgroundColor: theme.surface, borderColor: theme.border },
-                  ]}
-                >
-                  <Text style={[styles.controlText, { color: theme.foreground }]}>
-                    {facing === 'front' ? 'Back' : 'Front'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Resize Face-Cam"
-                  onPress={handleCycleSize}
-                  style={[
-                    styles.controlButton,
-                    { backgroundColor: theme.surface, borderColor: theme.border },
-                  ]}
-                >
-                  <Text style={[styles.controlText, { color: theme.foreground }]}>{sizePt}pt</Text>
-                </Pressable>
-              </View>
-              <View style={styles.controlsRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Toggle Face-Cam shape"
-                  onPress={handleToggleShape}
-                  style={[
-                    styles.controlButton,
-                    { backgroundColor: theme.surface, borderColor: theme.border },
-                  ]}
-                >
-                  <Text style={[styles.controlText, { color: theme.foreground }]}>
-                    {shape === 'circle' ? 'Card' : 'Circle'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Toggle camera mirror"
-                  onPress={handleToggleMirror}
-                  style={[
-                    styles.controlButton,
-                    {
-                      backgroundColor: mirrored ? theme.primary : theme.surface,
-                      borderColor: mirrored ? theme.primary : theme.border,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.controlText,
-                      { color: mirrored ? '#FFFFFF' : theme.foreground },
-                    ]}
-                  >
-                    Mirror
-                  </Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Close Face-Cam"
-                  onPress={handleClose}
-                  style={[
-                    styles.controlButton,
-                    { backgroundColor: theme.surface, borderColor: theme.border },
-                  ]}
-                >
-                  <Text style={[styles.controlText, { color: theme.destructive }]}>Close</Text>
-                </Pressable>
-              </View>
-            </View>
-          )}
-        </Pressable>
-      </View>
-    </GestureDetector>
+            <View
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel="Face-Cam bubble"
+              accessibilityHint="Tap to show or hide camera options, or drag to snap to corners"
+              style={StyleSheet.absoluteFill}
+            />
+          </View>
+        </View>
+      </GestureDetector>
+
+      {controlsVisible && (
+        <View
+          onLayout={(event) => {
+            const { width: w, height: h } = event.nativeEvent.layout;
+            if (Math.abs(w - pillSize.width) > 2 || Math.abs(h - pillSize.height) > 2) {
+              setPillSize({ width: w, height: h });
+            }
+          }}
+          style={[
+            styles.controlsPill,
+            {
+              left: pillLeft,
+              top: pillTop,
+              maxWidth: pillMaxWidth,
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+            },
+          ]}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Flip camera"
+            onPress={handleFlipCamera}
+            style={[
+              styles.controlButton,
+              { backgroundColor: theme.muted, borderColor: theme.border },
+            ]}
+          >
+            <Text style={[styles.controlText, { color: theme.foreground }]}>
+              {facing === 'front' ? 'Back' : 'Front'}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Resize Face-Cam"
+            onPress={handleCycleSize}
+            style={[
+              styles.controlButton,
+              { backgroundColor: theme.muted, borderColor: theme.border },
+            ]}
+          >
+            <Text style={[styles.controlText, { color: theme.foreground }]}>{sizePt}pt</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Toggle Face-Cam shape"
+            onPress={handleToggleShape}
+            style={[
+              styles.controlButton,
+              { backgroundColor: theme.muted, borderColor: theme.border },
+            ]}
+          >
+            <Text style={[styles.controlText, { color: theme.foreground }]}>
+              {shape === 'circle' ? 'Card' : 'Circle'}
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Toggle camera mirror"
+            onPress={handleToggleMirror}
+            style={[
+              styles.controlButton,
+              {
+                backgroundColor: mirrored ? theme.primary : theme.muted,
+                borderColor: mirrored ? theme.primary : theme.border,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.controlText,
+                { color: mirrored ? '#FFFFFF' : theme.foreground },
+              ]}
+            >
+              Mirror
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Turn off Face-Cam"
+            onPress={handleClose}
+            style={[
+              styles.controlButton,
+              { backgroundColor: theme.muted, borderColor: theme.border },
+            ]}
+          >
+            <Text style={[styles.controlText, { color: theme.destructive }]}>Off</Text>
+          </Pressable>
+        </View>
+      )}
+    </>
   );
 });

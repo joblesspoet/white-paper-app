@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import ExpoModulesCore
+import Photos
 import ReplayKit
 
 public class FlowCanvasRecorderModule: Module {
@@ -144,6 +145,53 @@ public class FlowCanvasRecorderModule: Module {
             self.videoInput = nil
             self.audioInput = nil
             promise.resolve(["videoUri": NSNull(), "audioUri": NSNull()])
+          }
+        }
+      }
+    }
+
+    AsyncFunction("saveVideoToGallery") { (videoUri: String, promise: Promise) in
+      let fileURL: URL
+      if let parsed = URL(string: videoUri), parsed.isFileURL {
+        fileURL = parsed
+      } else {
+        fileURL = URL(fileURLWithPath: videoUri)
+      }
+
+      guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        promise.reject("FILE_NOT_FOUND", "Recorded video file could not be found.")
+        return
+      }
+
+      let saveToPhotos = {
+        PHPhotoLibrary.shared().performChanges({
+          PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
+        }) { success, error in
+          if success {
+            promise.resolve(["saved": true, "uri": fileURL.absoluteString])
+          } else {
+            promise.reject(
+              "GALLERY_SAVE_FAILED",
+              error?.localizedDescription ?? "Failed to save video to Photos."
+            )
+          }
+        }
+      }
+
+      if #available(iOS 14, *) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+          if status == .authorized || status == .limited {
+            saveToPhotos()
+          } else {
+            promise.reject("PERMISSION_DENIED", "Photos permission is required to save videos.")
+          }
+        }
+      } else {
+        PHPhotoLibrary.requestAuthorization { status in
+          if status == .authorized {
+            saveToPhotos()
+          } else {
+            promise.reject("PERMISSION_DENIED", "Photos permission is required to save videos.")
           }
         }
       }

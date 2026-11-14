@@ -25,7 +25,21 @@ class FlowCanvasScreenCaptureService : Service() {
     } else {
       startForeground(NOTIFICATION_ID, notification)
     }
+    val callback = onForegroundStarted
+    onForegroundStarted = null
+    callback?.invoke()
     return START_NOT_STICKY
+  }
+
+  override fun onDestroy() {
+    onForegroundStarted = null
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      stopForeground(STOP_FOREGROUND_REMOVE)
+    } else {
+      @Suppress("DEPRECATION")
+      stopForeground(true)
+    }
+    super.onDestroy()
   }
 
   private fun createNotificationChannel() {
@@ -58,5 +72,8 @@ class FlowCanvasScreenCaptureService : Service() {
   companion object {
     private const val CHANNEL_ID = "flowcanvas_lesson_recorder"
     private const val NOTIFICATION_ID = 9402
+
+    @Volatile
+    var onForegroundStarted: (() -> Unit)? = null
   }
 }

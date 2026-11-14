@@ -5,10 +5,6 @@ import { radii, spacing, typography } from '../theme';
 export const lessonRecorderBarStyles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    top: spacing.sm,
-    left: spacing.sm,
-    right: spacing.sm,
-    alignItems: 'center',
     zIndex: 35,
   },
   pill: {
@@ -22,6 +18,30 @@ export const lessonRecorderBarStyles = StyleSheet.create({
     gap: spacing.xs,
     flexWrap: 'wrap',
     justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  pillCompact: {
+    minHeight: 38,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    gap: 4,
+    borderRadius: radii.lg,
+  },
+  dragHandle: {
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dragHandleText: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: -1,
+    opacity: 0.55,
   },
   statusRow: {
     flexDirection: 'row',
@@ -94,5 +114,24 @@ export const lessonRecorderBarStyles = StyleSheet.create({
   micBadgeText: {
     fontSize: 11,
     fontWeight: '600',
+  },
+  optionsDropdown: {
+    marginTop: 6,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: spacing.xs,
+    gap: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  optionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
   },
 });

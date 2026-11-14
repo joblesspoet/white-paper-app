@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import {
   Modal,
   Pressable,
@@ -24,6 +24,79 @@ import { lessonReplayModalStyles as styles } from './LessonReplayModal.styles';
 const PLAYBACK_SPEEDS = [0.5, 1, 1.5, 2] as const;
 const EMPTY_STRING_ARRAY: string[] = [];
 const NOOP = () => {};
+
+type OptionalVideoModule = {
+  VideoView: ComponentType<{
+    player: unknown;
+    style?: object;
+    contentFit?: 'contain' | 'cover' | 'fill';
+    nativeControls?: boolean;
+    surfaceType?: 'textureView' | 'surfaceView';
+    fullscreenOptions?: { enable?: boolean };
+  }>;
+  useVideoPlayer: (source: string, setup?: (player: { loop: boolean }) => void) => unknown;
+};
+
+let cachedVideoChecked = false;
+let cachedVideoModule: OptionalVideoModule | null = null;
+
+function getOptionalExpoVideo(): OptionalVideoModule | null {
+  if (cachedVideoChecked) return cachedVideoModule;
+  cachedVideoChecked = true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('expo-video') as Partial<OptionalVideoModule>;
+    if (mod?.VideoView && mod?.useVideoPlayer) {
+      cachedVideoModule = {
+        VideoView: mod.VideoView,
+        useVideoPlayer: mod.useVideoPlayer,
+      };
+      return cachedVideoModule;
+    }
+  } catch {
+    // expo-video not linked in this build.
+  }
+  cachedVideoModule = null;
+  return null;
+}
+
+const RecordedVideoStage = memo(function RecordedVideoStage({
+  videoUri,
+  expoVideo,
+}: {
+  videoUri: string;
+  expoVideo: OptionalVideoModule;
+}) {
+  const { VideoView, useVideoPlayer } = expoVideo;
+  const player = useVideoPlayer(videoUri, (p) => {
+    p.loop = false;
+  });
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const expoAudio = await import('expo-audio');
+        await expoAudio.setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+        });
+      } catch {
+        // Ignore if expo-audio is unavailable.
+      }
+    })();
+  }, []);
+
+  return (
+    <VideoView
+      player={player}
+      style={styles.videoFill}
+      contentFit="contain"
+      nativeControls={true}
+      surfaceType="textureView"
+      fullscreenOptions={{ enable: true }}
+    />
+  );
+});
 
 export type LessonReplayModalProps = {
   visible: boolean;
@@ -55,8 +128,24 @@ export const LessonReplayModal = memo(function LessonReplayModal({
   onClose,
 }: LessonReplayModalProps) {
   const insets = useSafeAreaInsets();
-  const { height: windowHeight } = useWindowDimensions();
-  const compactHeight = windowHeight < 560;
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isTablet = Math.min(windowWidth, windowHeight) >= 600;
+  const isLandscape = windowWidth > windowHeight;
+  const availableHeight = Math.max(240, windowHeight - insets.top - insets.bottom - 24);
+  const dialogMaxWidth = isTablet ? 820 : Math.min(720, Math.max(300, windowWidth - 20));
+  const stageHeight = isTablet
+    ? Math.min(440, Math.round(availableHeight * 0.54))
+    : isLandscape
+      ? Math.max(176, Math.min(280, Math.round(availableHeight * 0.52)))
+      : Math.max(200, Math.min(340, Math.round((dialogMaxWidth - 4) * 0.62)));
+
+  const expoVideo = getOptionalExpoVideo();
+  const hasNativeVideo = Boolean(lesson?.videoUri && expoVideo);
+  const [viewMode, setViewMode] = useState<'video' | 'timeline'>(() =>
+    hasNativeVideo ? 'video' : 'timeline',
+  );
+  const showingVideo = viewMode === 'video' && Boolean(lesson?.videoUri) && Boolean(expoVideo);
+
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState<(typeof PLAYBACK_SPEEDS)[number]>(1);
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
@@ -71,7 +160,8 @@ export const LessonReplayModal = memo(function LessonReplayModal({
   } | null>(null);
 
   useEffect(() => {
-    const mediaUri = lesson?.audioUri ?? lesson?.videoUri ?? null;
+    const mediaUri =
+      showingVideo ? null : (lesson?.audioUri ?? lesson?.videoUri ?? null);
     if (!visible || !mediaUri) {
       if (audioPlayerRef.current) {
         try {
@@ -114,7 +204,7 @@ export const LessonReplayModal = memo(function LessonReplayModal({
         audioPlayerRef.current = null;
       }
     };
-  }, [lesson?.audioUri, lesson?.videoUri, visible]);
+  }, [lesson?.audioUri, lesson?.videoUri, showingVideo, visible]);
 
   useEffect(() => {
     const player = audioPlayerRef.current;
@@ -132,9 +222,10 @@ export const LessonReplayModal = memo(function LessonReplayModal({
       setCurrentTimeMs(0);
       return;
     }
+    setViewMode(lesson.videoUri && getOptionalExpoVideo() ? 'video' : 'timeline');
     setCurrentTimeMs(0);
     setPlaying(false);
-  }, [lesson, visible]);
+  }, [lesson?.id, lesson?.videoUri, visible]);
 
   useEffect(() => {
     const player = audioPlayerRef.current;
@@ -153,23 +244,22 @@ export const LessonReplayModal = memo(function LessonReplayModal({
   }, [playing]);
 
   useEffect(() => {
-    if (!visible || !playing || !lesson) return;
+    if (!visible || !playing || !lesson || lesson.durationMs <= 0) return;
     lastTickRef.current = Date.now();
     const id = setInterval(() => {
       const now = Date.now();
       const delta = (now - lastTickRef.current) * speed;
       lastTickRef.current = now;
-      setCurrentTimeMs((prev) => {
-        const next = prev + delta;
-        if (next >= lesson.durationMs) {
-          setPlaying(false);
-          return lesson.durationMs;
-        }
-        return next;
-      });
+      setCurrentTimeMs((prev) => Math.min(lesson.durationMs, prev + delta));
     }, 33);
     return () => clearInterval(id);
   }, [lesson, playing, speed, visible]);
+
+  useEffect(() => {
+    if (playing && lesson && currentTimeMs >= lesson.durationMs) {
+      setPlaying(false);
+    }
+  }, [currentTimeMs, lesson, playing]);
 
   const replayed = useMemo(() => {
     if (!lesson) return null;
@@ -233,7 +323,11 @@ export const LessonReplayModal = memo(function LessonReplayModal({
         <View
           style={[
             styles.dialog,
-            { backgroundColor: theme.surface, borderColor: theme.border },
+            {
+              maxWidth: dialogMaxWidth,
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+            },
           ]}
         >
           <View style={[styles.header, { borderBottomColor: theme.border }]}>
@@ -243,9 +337,56 @@ export const LessonReplayModal = memo(function LessonReplayModal({
               </Text>
               <Text style={[styles.subtitle, { color: theme.foreground }]}>
                 {lesson.quality} • {formatDurationMMSS(lesson.durationMs)} •{' '}
-                {lesson.videoUri ? 'Video + Timeline' : '60 FPS Canvas Replay'}
+                {lesson.videoUri ? 'Video + Audio' : '60 FPS Canvas Replay'}
               </Text>
             </View>
+            {hasNativeVideo && (
+              <View
+                style={[
+                  styles.modeSwitch,
+                  { backgroundColor: theme.muted, borderColor: theme.border },
+                ]}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Show recorded video"
+                  accessibilityState={{ selected: showingVideo }}
+                  onPress={() => setViewMode('video')}
+                  style={[
+                    styles.modeChip,
+                    showingVideo && { backgroundColor: theme.primary },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.modeChipText,
+                      { color: showingVideo ? '#FFFFFF' : theme.foreground },
+                    ]}
+                  >
+                    Video
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Show canvas timeline"
+                  accessibilityState={{ selected: !showingVideo }}
+                  onPress={() => setViewMode('timeline')}
+                  style={[
+                    styles.modeChip,
+                    !showingVideo && { backgroundColor: theme.primary },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.modeChipText,
+                      { color: !showingVideo ? '#FFFFFF' : theme.foreground },
+                    ]}
+                  >
+                    Canvas
+                  </Text>
+                </Pressable>
+              </View>
+            )}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Close replay"
@@ -261,15 +402,32 @@ export const LessonReplayModal = memo(function LessonReplayModal({
             showsVerticalScrollIndicator={false}
             bounces={false}
           >
-            <View
-              pointerEvents="none"
-              style={[
-                styles.stage,
-                compactHeight && styles.stageCompact,
-                { backgroundColor: theme.background, borderBottomColor: theme.border },
-              ]}
-            >
-              <CanvasViewport
+            {showingVideo && lesson.videoUri && expoVideo ? (
+              <View
+                style={[
+                  styles.stage,
+                  {
+                    height: stageHeight,
+                    backgroundColor: '#000000',
+                    borderBottomColor: theme.border,
+                  },
+                ]}
+              >
+                <RecordedVideoStage videoUri={lesson.videoUri} expoVideo={expoVideo} />
+              </View>
+            ) : (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.stage,
+                  {
+                    height: stageHeight,
+                    backgroundColor: theme.background,
+                    borderBottomColor: theme.border,
+                  },
+                ]}
+              >
+                <CanvasViewport
                 dark={dark}
                 boardBackground={boardBackground}
                 boardStyle={boardStyle}
@@ -314,19 +472,22 @@ export const LessonReplayModal = memo(function LessonReplayModal({
                 onObjectMeasure={NOOP}
                 onCanvasTouch={NOOP}
               />
-              <View
-                style={[
-                  styles.pageBadge,
-                  { backgroundColor: theme.surface, borderColor: theme.border },
-                ]}
-              >
-                <Text style={[styles.pageBadgeText, { color: theme.foreground }]}>
-                  Page {replayed.pageIndex + 1}
-                </Text>
+                <View
+                  style={[
+                    styles.pageBadge,
+                    { backgroundColor: theme.surface, borderColor: theme.border },
+                  ]}
+                >
+                  <Text style={[styles.pageBadgeText, { color: theme.foreground }]}>
+                    Page {replayed.pageIndex + 1}
+                  </Text>
+                </View>
               </View>
-            </View>
+            )}
 
-            <View style={styles.scrubberSection}>
+            {!showingVideo && (
+              <>
+                <View style={styles.scrubberSection}>
               <View
                 onLayout={handleTrackLayout}
                 onStartShouldSetResponder={() => true}
@@ -392,10 +553,12 @@ export const LessonReplayModal = memo(function LessonReplayModal({
                         {s}×
                       </Text>
                     </Pressable>
-                  );
-                })}
+                    );
+                  })}
+                </View>
               </View>
-            </View>
+              </>
+            )}
 
             {notice && (
               <View
