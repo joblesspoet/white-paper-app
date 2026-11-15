@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
-import { PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { PanResponder, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Canvas, Circle, DashPathEffect, Group, Line as SkiaLine, Path, RoundedRect, vec } from '@shopify/react-native-skia';
 import {
   COMPASS_MAX_RADIUS,
@@ -59,6 +59,14 @@ export const GeometryBoxOverlay = memo(function GeometryBoxOverlay({
   const fillBg = dark ? 'rgba(16, 59, 55, 0.88)' : 'rgba(240, 253, 250, 0.88)';
   const tickColor = dark ? '#99F6E4' : '#134E4A';
   const [compassSweep, setCompassSweep] = useState<{ startDeg: number; currentDeg: number } | null>(null);
+  const { width: windowWidth } = useWindowDimensions();
+  const isCompactScreen = windowWidth < 600;
+  const [hudExpanded, setHudExpanded] = useState(!isCompactScreen);
+  const [angleDrawnFlash, setAngleDrawnFlash] = useState(false);
+
+  const toggleHudExpanded = useCallback(() => {
+    setHudExpanded((prev) => !prev);
+  }, []);
 
   const instrumentRef = useRef(instrument);
   instrumentRef.current = instrument;
@@ -392,27 +400,41 @@ export const GeometryBoxOverlay = memo(function GeometryBoxOverlay({
         </View>
       ) : null}
 
-      {/* Compact Geometry Box HUD Bar */}
-      <View
-        style={[
-          styles.hudBar,
-          {
-            backgroundColor: theme.surface,
-            borderColor: theme.border,
-          },
-        ]}
-      >
-        <View style={styles.tabRow}>
-          {INSTRUMENT_TABS.map((tab) => (
-            <InstrumentTab
-              key={tab.kind}
-              kind={tab.kind}
-              label={tab.label}
-              active={instrument.kind === tab.kind}
-              theme={theme}
-              onSelect={onSwitchInstrument}
-            />
-          ))}
+      {/* Geometry Box HUD Bar (collapsible on phones so it never overlaps the protractor) */}
+      {!hudExpanded ? (
+        <View
+          style={[
+            styles.compactPill,
+            { backgroundColor: theme.surface, borderColor: theme.border },
+          ]}
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Toggle geometry box options"
+            onPress={toggleHudExpanded}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+          >
+            <Text style={[styles.readout, { color: theme.foreground }]}>
+              {angleDrawnFlash ? 'Angle drawn ✓' : readoutText}
+            </Text>
+            <Text style={[styles.tabText, { color: theme.primary }]}>Options ▴</Text>
+          </Pressable>
+          {instrument.kind === 'protractor' && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Draw angle"
+              onPress={() => {
+                const geo = buildProtractorAngleGeometry(instrument);
+                onCommitStroke([geo.ray1End, geo.vertex, geo.ray2End]);
+                onCommitStroke(geo.arcPoints);
+                setAngleDrawnFlash(true);
+                setTimeout(() => setAngleDrawnFlash(false), 1400);
+              }}
+              style={[styles.primaryBtn, { backgroundColor: TEAL_BORDER }]}
+            >
+              <Text style={styles.primaryBtnText}>Draw</Text>
+            </Pressable>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Close geometry box"
@@ -422,106 +444,150 @@ export const GeometryBoxOverlay = memo(function GeometryBoxOverlay({
             <Text style={[styles.closeIconText, { color: theme.foreground }]}>×</Text>
           </Pressable>
         </View>
+      ) : (
+        <View
+          style={[
+            styles.hudBar,
+            {
+              backgroundColor: theme.surface,
+              borderColor: theme.border,
+            },
+          ]}
+        >
+          <View style={styles.tabRow}>
+            {INSTRUMENT_TABS.map((tab) => (
+              <InstrumentTab
+                key={tab.kind}
+                kind={tab.kind}
+                label={tab.label}
+                active={instrument.kind === tab.kind}
+                theme={theme}
+                onSelect={onSwitchInstrument}
+              />
+            ))}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Minimize geometry box options"
+              onPress={toggleHudExpanded}
+              style={[styles.smallBtn, { borderColor: theme.border }]}
+            >
+              <Text style={[styles.smallBtnText, { color: theme.primary }]}>Hide ▾</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close geometry box"
+              onPress={onClose}
+              style={[styles.closeChip, { borderColor: theme.border }]}
+            >
+              <Text style={[styles.closeIconText, { color: theme.foreground }]}>×</Text>
+            </Pressable>
+          </View>
 
-        <View style={styles.actionRow}>
-          <Text style={[styles.readout, { color: theme.foreground }]}>{readoutText}</Text>
+          <View style={styles.actionRow}>
+            <Text style={[styles.readout, { color: theme.foreground }]}>
+              {angleDrawnFlash ? 'Angle drawn ✓' : readoutText}
+            </Text>
 
-          {instrument.kind === 'protractor' ? (
-            <View style={styles.inlineActions}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() =>
-                  onChangeInstrument({
-                    ...instrument,
-                    sweepAngleDeg: Math.min(360, instrument.sweepAngleDeg + 15),
-                  })
-                }
-                style={[styles.smallBtn, { borderColor: theme.border }]}
-              >
-                <Text style={[styles.smallBtnText, { color: theme.foreground }]}>+15°</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() =>
-                  onChangeInstrument({
-                    ...instrument,
-                    sweepAngleDeg: Math.max(15, instrument.sweepAngleDeg - 15),
-                  })
-                }
-                style={[styles.smallBtn, { borderColor: theme.border }]}
-              >
-                <Text style={[styles.smallBtnText, { color: theme.foreground }]}>-15°</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() =>
-                  onChangeInstrument({ ...instrument, fullCircle: !instrument.fullCircle })
-                }
-                style={[styles.smallBtn, { borderColor: theme.border }]}
-              >
-                <Text style={[styles.smallBtnText, { color: theme.foreground }]}>
-                  {instrument.fullCircle ? '180°' : '360°'}
-                </Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  const geo = buildProtractorAngleGeometry(instrument);
-                  onCommitStroke([geo.ray1End, geo.vertex, geo.ray2End]);
-                  onCommitStroke(geo.arcPoints);
-                }}
-                style={[styles.primaryBtn, { backgroundColor: TEAL_BORDER }]}
-              >
-                <Text style={styles.primaryBtnText}>Draw angle</Text>
-              </Pressable>
-            </View>
-          ) : null}
+            {instrument.kind === 'protractor' ? (
+              <View style={styles.inlineActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    onChangeInstrument({
+                      ...instrument,
+                      sweepAngleDeg: Math.min(360, instrument.sweepAngleDeg + 15),
+                    })
+                  }
+                  style={[styles.smallBtn, { borderColor: theme.border }]}
+                >
+                  <Text style={[styles.smallBtnText, { color: theme.foreground }]}>+15°</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    onChangeInstrument({
+                      ...instrument,
+                      sweepAngleDeg: Math.max(15, instrument.sweepAngleDeg - 15),
+                    })
+                  }
+                  style={[styles.smallBtn, { borderColor: theme.border }]}
+                >
+                  <Text style={[styles.smallBtnText, { color: theme.foreground }]}>-15°</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    onChangeInstrument({ ...instrument, fullCircle: !instrument.fullCircle })
+                  }
+                  style={[styles.smallBtn, { borderColor: theme.border }]}
+                >
+                  <Text style={[styles.smallBtnText, { color: theme.foreground }]}>
+                    {instrument.fullCircle ? '180°' : '360°'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    const geo = buildProtractorAngleGeometry(instrument);
+                    onCommitStroke([geo.ray1End, geo.vertex, geo.ray2End]);
+                    onCommitStroke(geo.arcPoints);
+                    setAngleDrawnFlash(true);
+                    setTimeout(() => setAngleDrawnFlash(false), 1400);
+                    if (isCompactScreen) setHudExpanded(false);
+                  }}
+                  style={[styles.primaryBtn, { backgroundColor: TEAL_BORDER }]}
+                >
+                  <Text style={styles.primaryBtnText}>Draw angle</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
-          {instrument.kind === 'compass' ? (
-            <View style={styles.inlineActions}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() =>
-                  onChangeInstrument({
-                    ...instrument,
-                    radius: Math.max(COMPASS_MIN_RADIUS, instrument.radius - 16),
-                  })
-                }
-                style={[styles.smallBtn, { borderColor: theme.border }]}
-              >
-                <Text style={[styles.smallBtnText, { color: theme.foreground }]}>- r</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() =>
-                  onChangeInstrument({
-                    ...instrument,
-                    radius: Math.min(COMPASS_MAX_RADIUS, instrument.radius + 16),
-                  })
-                }
-                style={[styles.smallBtn, { borderColor: theme.border }]}
-              >
-                <Text style={[styles.smallBtnText, { color: theme.foreground }]}>+ r</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  const pts = buildCompassArcPoints(
-                    { x: instrument.x, y: instrument.y },
-                    instrument.radius,
-                    0,
-                    360,
-                  );
-                  onCommitStroke(pts);
-                }}
-                style={[styles.primaryBtn, { backgroundColor: TEAL_BORDER }]}
-              >
-                <Text style={styles.primaryBtnText}>Full circle</Text>
-              </Pressable>
-            </View>
-          ) : null}
+            {instrument.kind === 'compass' ? (
+              <View style={styles.inlineActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    onChangeInstrument({
+                      ...instrument,
+                      radius: Math.max(COMPASS_MIN_RADIUS, instrument.radius - 16),
+                    })
+                  }
+                  style={[styles.smallBtn, { borderColor: theme.border }]}
+                >
+                  <Text style={[styles.smallBtnText, { color: theme.foreground }]}>- r</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    onChangeInstrument({
+                      ...instrument,
+                      radius: Math.min(COMPASS_MAX_RADIUS, instrument.radius + 16),
+                    })
+                  }
+                  style={[styles.smallBtn, { borderColor: theme.border }]}
+                >
+                  <Text style={[styles.smallBtnText, { color: theme.foreground }]}>+ r</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    const pts = buildCompassArcPoints(
+                      { x: instrument.x, y: instrument.y },
+                      instrument.radius,
+                      0,
+                      360,
+                    );
+                    onCommitStroke(pts);
+                  }}
+                  style={[styles.primaryBtn, { backgroundColor: TEAL_BORDER }]}
+                >
+                  <Text style={styles.primaryBtnText}>Full circle</Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
         </View>
-      </View>
+      )}
     </View>
   );
 });

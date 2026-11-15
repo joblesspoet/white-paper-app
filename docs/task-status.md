@@ -1,9 +1,23 @@
 # Task status
 
 ## Current phase
-Session 24 — Phase E: Lesson Recorder & Floating Face-Cam (branch `feat/phase-e-lesson-recorder-facecam`).
+Session 25 — Phase F: Live Classroom Broadcasting (6-Digit Code & QR Join) (branch `feat/phase-f-live-classroom`).
 
 ## Status
+`implemented-unverified` — Phase F (`prompts/25-phase-f-live-classroom.md`) is implemented with `npm run typecheck`, `npm test` (17 suites including `npm run test:live-classroom`), and the iOS Metro bundle check (`npx expo export --platform ios`) passing; multi-device live Supabase Realtime / LiveKit voice testing remain unverified in this environment:
+- **Classroom Protocol, QR & Transports (`src/classroom/protocol.ts`, `src/classroom/qr.ts`, `src/classroom/diff.ts`, `src/classroom/transport.ts`, `src/classroom/classroom-session.ts`, `src/classroom/entitlement.ts`, `src/classroom/audio-adapter.ts`, `supabase/functions/livekit-token/index.ts`):**
+  - Schema-validated envelopes (`snapshot.sync`, `command.broadcast`, `ephemeral.stream` at 30 Hz, `classroom.control`, `student.board.update`), 6-digit code & `flowcanvas://join?code=...` deep-link helpers, and pure-TS Reed-Solomon QR matrix generator.
+  - `SupabaseRealtimeTransport` (zero-dependency Phoenix Channels WebSocket Broadcast + Presence with reconnect) and `LocalLoopbackTransport` for offline multi-peer simulation.
+  - `LiveKitClassroomAudioAdapter` (lazy-loaded for Dev Builds, graceful fallback in Expo Go) + `livekit-token` Supabase Edge Function + `getLiveClassEntitlement` subscription gate hook.
+  - Authoritative teacher `seq` enforcement, rejecting unprivileged `command.broadcast` packets, 1-student-at-a-time voice enforcement, Raise Hand queue, Student Boards Gallery & Showcase, and Lock Class.
+- **UI & Editor Integration (`src/components/LiveClassHostSheet.tsx`, `src/components/ClassroomHud.tsx`, `src/components/JoinClassModal.tsx`, `src/components/ClassroomQrCode.tsx` + separate `.styles.ts` files, `src/components/CanvasViewport.tsx`, `app/index.tsx`, `app/editor.tsx`):**
+  - `Join live class` on Home + `expo-linking` deep-link handler + `Projector / Clean Mirror Mode` + `My Scratchpad` vs `Live Board` toggle + live 30 Hz remote stroke & laser rendering.
+- Verification suite added at `scripts/verify-live-classroom.mts` and wired into `npm test` via `npm run test:live-classroom`.
+- The next task is Session 26 — Phase G: Magnetic Mind-Mapping, Live STEM Graphing & Spatial OCR Explode (`prompts/26-phase-g-interactive-stem-mindmap.md`).
+
+Previous slice (Phase E):
+Session 24 — Phase E: Lesson Recorder & Floating Face-Cam (branch `feat/phase-e-lesson-recorder-facecam`).
+
 `implemented-unverified` — Phase E (`prompts/24-phase-e-lesson-recorder-facecam.md`) is implemented with `npm run typecheck`, `npm test` (16 suites including `npm run test:lesson-recorder`), and the iOS Metro bundle check (`npx expo export --platform ios`) passing; simulator/device camera, microphone, and touch testing remain unverified in this environment:
 - **Floating Face-Cam Bubble (`src/recorder/facecam-model.ts`, `src/recorder/permissions.ts`, `src/recorder/permission-model.ts`, `src/components/FaceCamBubble.tsx`, `src/components/FaceCamBubble.styles.ts`):** draggable front/back camera PiP bubble with magnetic corner snapping, safe-area clamping above `ACTION_ISLAND_HEIGHT`, size presets (`88pt`, `124pt`, `164pt`), Circle vs Rounded `16pt` Card toggle, mirror toggle, `2px` `#0D9488`/`#DC2626` ring, and cross-version iOS/Android permission handling with `Open Settings` guidance.
 - **Lesson Recorder & Deterministic 60 FPS Replay (`src/recorder/lesson-recorder.ts`, `src/recorder/native-recorder.ts`, `src/recorder/lesson-store.ts`, `src/components/LessonRecorderBar.tsx`, `src/components/LessonRecorderBar.styles.ts`, `src/components/LessonReplayModal.tsx`, `src/components/LessonReplayModal.styles.ts`, `src/components/SavedLessonsModal.tsx`, `src/components/SavedLessonsModal.styles.ts`, `app/editor.tsx`):**

@@ -144,6 +144,7 @@ import {
   type LaserColorKey,
 } from '../canvas/laser';
 import type { BoardBackground, BoardStyle } from '../persistence/schema';
+import type { EphemeralLaserPacket, EphemeralStrokePacket } from '../classroom/protocol';
 
 export { canvasToScreen, screenToCanvas } from '../canvas/viewport';
 export type { InkStroke } from '../canvas/ink';
@@ -217,6 +218,11 @@ type CanvasViewportProps = {
   selectedInkIds?: readonly string[];
   compactHud?: boolean;
   hideHud?: boolean;
+  readOnly?: boolean;
+  remoteActiveStroke?: EphemeralStrokePacket | null;
+  remoteLaserStroke?: EphemeralLaserPacket | null;
+  onLiveStrokeSample?: (sample: Omit<EphemeralStrokePacket, 'authorPeerId'>) => void;
+  onLiveLaserSample?: (sample: Omit<EphemeralLaserPacket, 'authorPeerId'>) => void;
   onViewportChange?: (viewport: ViewportState) => void;
   onCommand: (command: DocumentCommand, transient?: boolean) => void;
   onCommitPending: () => void;
@@ -258,6 +264,11 @@ export function CanvasViewport({
   viewportRequest = null,
   compactHud = false,
   hideHud = false,
+  readOnly = false,
+  remoteActiveStroke = null,
+  remoteLaserStroke = null,
+  onLiveStrokeSample,
+  onLiveLaserSample,
   activeInstrument = null,
   stylusOnlyDrawing = false,
   pressureSensitivity = true,
@@ -466,8 +477,16 @@ export function CanvasViewport({
     });
     activeStrokeRef.current = stroke;
     setActiveStroke(stroke);
+    onLiveStrokeSample?.({
+      strokeId: stroke.id,
+      tool,
+      color: stroke.color as any,
+      width: stroke.width,
+      opacity: stroke.opacity,
+      points: stroke.points,
+    });
     if (screenPoint) scheduleHoldSnap(screenPoint);
-  }, [activeInstrument, activeTool, clearHoldSnapTimer, color, opacity, scheduleHoldSnap, viewport.scale, width]);
+  }, [activeInstrument, activeTool, clearHoldSnapTimer, color, onLiveStrokeSample, opacity, scheduleHoldSnap, viewport.scale, width]);
   const addPoint = useCallback((point: InkPoint, minDistance: number, screenPoint?: Point) => {
     const current = activeStrokeRef.current;
     if (!current) return;
@@ -499,8 +518,16 @@ export function CanvasViewport({
     const next = appendInkPoint(current, nextPoint, minDistance);
     activeStrokeRef.current = next;
     setActiveStroke(next);
+    onLiveStrokeSample?.({
+      strokeId: next.id,
+      tool: next.tool,
+      color: next.color as any,
+      width: next.width,
+      opacity: next.opacity,
+      points: next.points,
+    });
     if (screenPoint) scheduleHoldSnap(screenPoint);
-  }, [activeInstrument, scheduleHoldSnap]);
+  }, [activeInstrument, onLiveStrokeSample, scheduleHoldSnap]);
   /**
    * The in-progress stroke lives in React state for rendering and in a ref for
    * the gesture, because a running gesture keeps the callbacks from the render it
@@ -515,8 +542,19 @@ export function CanvasViewport({
     lockedGeometryEdgeRef.current = null;
     setSnapReadout(null);
     setActiveStroke(null);
-    if (stroke) onCommand({ type: 'ink.add', stroke });
-  }, [clearHoldSnapTimer, onCommand]);
+    if (stroke) {
+      onLiveStrokeSample?.({
+        strokeId: stroke.id,
+        tool: stroke.tool,
+        color: stroke.color as any,
+        width: stroke.width,
+        opacity: stroke.opacity,
+        points: stroke.points,
+        isDone: true,
+      });
+      onCommand({ type: 'ink.add', stroke });
+    }
+  }, [clearHoldSnapTimer, onCommand, onLiveStrokeSample]);
 
   const [laserStrokes, setLaserStrokes] = useState<readonly EphemeralLaserStroke[]>([]);
   const [activeLaserStroke, setActiveLaserStroke] = useState<EphemeralLaserStroke | null>(null);
@@ -547,7 +585,13 @@ export function CanvasViewport({
     activeLaserRef.current = stroke;
     setActiveLaserStroke(stroke);
     setLaserNowMs(now);
-  }, [laserColorKey]);
+    onLiveLaserSample?.({
+      id: stroke.id,
+      colorKey: stroke.colorKey,
+      points: stroke.points.map((pt) => ({ x: pt.x, y: pt.y })),
+      active: true,
+    });
+  }, [laserColorKey, onLiveLaserSample]);
 
   const addLaserPoint = useCallback((point: Point, minDistance: number) => {
     const current = activeLaserRef.current;
@@ -555,18 +599,30 @@ export function CanvasViewport({
     const next = appendLaserPoint(current, point, Date.now(), minDistance);
     activeLaserRef.current = next;
     setActiveLaserStroke(next);
-  }, []);
+    onLiveLaserSample?.({
+      id: next.id,
+      colorKey: next.colorKey,
+      points: next.points.map((pt) => ({ x: pt.x, y: pt.y })),
+      active: true,
+    });
+  }, [onLiveLaserSample]);
 
   const finishLaser = useCallback(() => {
     const stroke = activeLaserRef.current;
     activeLaserRef.current = null;
     setActiveLaserStroke(null);
     if (stroke) {
+      onLiveLaserSample?.({
+        id: stroke.id,
+        colorKey: stroke.colorKey,
+        points: stroke.points.map((pt) => ({ x: pt.x, y: pt.y })),
+        active: false,
+      });
       const now = Date.now();
       setLaserNowMs(now);
       setLaserStrokes((prev) => [...pruneExpiredLaserStrokes(prev, now), releaseLaserStroke(stroke, now)]);
     }
-  }, []);
+  }, [onLiveLaserSample]);
   const eraseAt = useCallback((point: Point, currentScale: number) => {
     onCommand(
       { type: 'ink.erase', point, radius: eraserRadiusForScale(eraserRadius, currentScale) },
@@ -1068,8 +1124,10 @@ export function CanvasViewport({
       runOnJS(commitViewport)(offsetX.value, offsetY.value, scale.value);
     });
 
-  const primaryGesture = editing
-    ? dismissTap
+  const primaryGesture = readOnly
+    ? handPanGesture
+    : editing
+      ? dismissTap
     : activeTool === 'pan'
       ? handPanGesture
       : activeTool === 'eraser'
@@ -1095,14 +1153,36 @@ export function CanvasViewport({
   const marqueeY = useDerivedValue(() => Math.min(marqueeStartY.value, marqueeEndY.value));
   const marqueeWidth = useDerivedValue(() => Math.abs(marqueeEndX.value - marqueeStartX.value));
   const marqueeHeight = useDerivedValue(() => Math.abs(marqueeEndY.value - marqueeStartY.value));
-  const renderedStrokes = useMemo(
-    () => (activeStroke ? [...document.strokes, activeStroke] : document.strokes),
-    [document.strokes, activeStroke],
-  );
-  const renderedLaserStrokes = useMemo(
-    () => (activeLaserStroke ? [...laserStrokes, activeLaserStroke] : laserStrokes),
-    [laserStrokes, activeLaserStroke],
-  );
+  const renderedStrokes = useMemo(() => {
+    const list = [...document.strokes];
+    if (remoteActiveStroke && !remoteActiveStroke.isDone && remoteActiveStroke.points.length > 0) {
+      list.push({
+        id: remoteActiveStroke.strokeId,
+        tool: remoteActiveStroke.tool,
+        color: remoteActiveStroke.color,
+        width: remoteActiveStroke.width,
+        opacity: remoteActiveStroke.opacity,
+        points: remoteActiveStroke.points,
+        createdAt: '',
+      });
+    }
+    if (activeStroke) list.push(activeStroke);
+    return list;
+  }, [document.strokes, activeStroke, remoteActiveStroke]);
+  const renderedLaserStrokes = useMemo(() => {
+    const list = [...laserStrokes];
+    if (activeLaserStroke) list.push(activeLaserStroke);
+    if (remoteLaserStroke && remoteLaserStroke.active && remoteLaserStroke.points.length > 0) {
+      const now = Date.now();
+      list.push({
+        id: remoteLaserStroke.id,
+        colorKey: remoteLaserStroke.colorKey,
+        points: remoteLaserStroke.points.map((pt) => ({ ...pt, timestampMs: now })),
+        releasedAtMs: null,
+      });
+    }
+    return list;
+  }, [laserStrokes, activeLaserStroke, remoteLaserStroke]);
   const backgroundLayers = useMemo(() => {
     if (boardStyle === 'blank') return [];
     const safeScale = Math.max(viewport.scale, MIN_ZOOM);
@@ -1627,12 +1707,12 @@ function CanvasObjectView({ object, dark, hidden, offsetX, offsetY, scale, onMea
     height: object.height * scale.value,
     borderRadius: radii.sm * scale.value,
     transform: [{ rotate: `${object.rotation}deg` }],
-  }), [object]);
+  }));
   const text = useAnimatedStyle(() => ({
     fontSize: object.fontSize * scale.value,
     lineHeight: lineHeight * scale.value,
     padding: OBJECT_PADDING * scale.value,
-  }), [object, lineHeight]);
+  }));
 
   if (hidden) return null;
 
@@ -1821,7 +1901,7 @@ const TableCellsOverlay = memo(function TableCellsOverlay({
     width: object.width * scale.value,
     height: object.height * scale.value,
     transform: [{ rotate: `${object.rotation}deg` }],
-  }), [object]);
+  }));
 
   const rowH = useMemo(() => tableRowHeight(object), [object]);
   const widths = useMemo(() => tableColumnWidths(object), [object]);
@@ -1908,7 +1988,7 @@ const ShapeMeasurementsOverlay = memo(function ShapeMeasurementsOverlay({
     width: object.width * scale.value,
     height: object.height * scale.value,
     transform: [{ rotate: `${object.rotation}deg` }],
-  }), [object]);
+  }));
 
   if (!primitives.measurementLabels || primitives.measurementLabels.length === 0) return null;
 

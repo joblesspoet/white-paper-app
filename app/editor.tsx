@@ -1,8 +1,10 @@
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ComponentRef } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   AppState,
+  BackHandler,
   Keyboard,
   Modal,
   Pressable,
@@ -23,6 +25,7 @@ import {
   DEFAULT_STICKY_COLOR,
   DEFAULT_STICKY_FONT_SIZE,
   DEFAULT_TEXT_COLOR,
+  EMPTY_DOCUMENT,
   DEFAULT_TEXT_FONT_SIZE,
   OBJECT_PADDING,
   createDocumentHistory,
@@ -110,6 +113,7 @@ import {
 import { enqueuePersistenceWrite } from '../src/persistence/write-queue';
 import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
 import {
+  BroadcastIcon,
   CalculatorIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -134,7 +138,7 @@ import {
   TrashIcon,
   UndoIcon,
 } from '../src/components/icons';
-import { BOARD_STYLE_OPTIONS, type BoardBackground, type BoardStyle } from '../src/persistence/schema';
+import { BOARD_STYLE_OPTIONS, type BoardBackground, type BoardSettings, type BoardStyle } from '../src/persistence/schema';
 import type { LaserColorKey } from '../src/canvas/laser';
 import { createTimerPinCommand, type TimerState } from '../src/timer/timer-model';
 import { createCalculatorPasteCommand } from '../src/calculator/calculator-engine';
@@ -178,7 +182,7 @@ import {
   startNativeCapture,
   stopNativeCapture,
 } from '../src/recorder/native-recorder';
-import { requestMicrophonePermission } from '../src/recorder/permissions';
+import { openAppSettings, requestMicrophonePermission } from '../src/recorder/permissions';
 import { ImageImportFlow } from '../src/components/ImageImportFlow';
 import { insertMediaAsset, type MediaAssetRecord } from '../src/persistence/repository';
 import { cropMetadata } from '../src/media/asset-store';
@@ -191,6 +195,20 @@ import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
 import { ExportSheet } from '../src/components/ExportSheet';
 import { PageNavigatorPill, PageSorterSheet } from '../src/components/PageNavigator';
+import { ClassroomHud } from '../src/components/ClassroomHud';
+import { LiveClassHostSheet } from '../src/components/LiveClassHostSheet';
+import {
+  ClassroomSession,
+  type ClassroomSessionState,
+} from '../src/classroom/classroom-session';
+import { LiveKitClassroomAudioAdapter } from '../src/classroom/audio-adapter';
+import { diffDocumentsToSerializableCommand } from '../src/classroom/diff';
+import { getLiveClassEntitlement } from '../src/classroom/entitlement';
+import {
+  applySerializableCommand,
+  type EphemeralLaserPacket,
+  type EphemeralStrokePacket,
+} from '../src/classroom/protocol';
 import { PdfImportModal } from '../src/components/PdfImportModal';
 import { EditorInspectorPanel } from '../src/components/EditorInspectorPanel';
 import { MathKeyboardSheet } from '../src/components/MathKeyboardSheet';
@@ -247,7 +265,22 @@ type Editing = { object: CanvasObject; isNew: boolean };
 
 export default function BoardEditorScreen() {
   const router = useRouter();
-  const { boardId } = useLocalSearchParams<{ boardId?: string }>();
+  const navigation = useNavigation();
+  const {
+    boardId,
+    liveRole,
+    roomCode: paramRoomCode,
+    displayName: paramDisplayName,
+    projectorMode: paramProjectorMode,
+  } = useLocalSearchParams<{
+    boardId?: string;
+    liveRole?: string;
+    roomCode?: string;
+    displayName?: string;
+    projectorMode?: string;
+  }>();
+  const isStudentRoute = liveRole === 'student' && Boolean(paramRoomCode);
+  const isProjectorMode = isStudentRoute && paramProjectorMode === '1';
   const { boards, updateTitle, updateSettings, touchBoard } = useBoards();
   const board = boards.find((item) => item.id === boardId);
   const [title, setTitle] = useState(board?.title ?? 'Untitled board');
@@ -357,6 +390,30 @@ export default function BoardEditorScreen() {
   const [objectOptionsVisible, setObjectOptionsVisible] = useState(false);
   const [shapeOptionsVisible, setShapeOptionsVisible] = useState(false);
   const [exportSheetVisible, setExportSheetVisible] = useState(false);
+  const [hostSheetVisible, setHostSheetVisible] = useState(false);
+  const [classroomState, setClassroomState] = useState<ClassroomSessionState | null>(null);
+  const [classroomNotice, setClassroomNotice] = useState<string | null>(null);
+  const [remoteActiveStroke, setRemoteActiveStroke] = useState<EphemeralStrokePacket | null>(null);
+  const [remoteLaserStroke, setRemoteLaserStroke] = useState<EphemeralLaserPacket | null>(null);
+  const [isScratchpadMode, setIsScratchpadMode] = useState(false);
+  const [followTeacherViewport, setFollowTeacherViewport] = useState(true);
+  const [voiceMicEnabled, setVoiceMicEnabled] = useState(false);
+  const [voiceAvailable, setVoiceAvailable] = useState(false);
+  const [liveBoardSettings, setLiveBoardSettings] = useState<BoardSettings | null>(null);
+  const [showcasedName, setShowcasedName] = useState<string | null>(null);
+
+  const classroomSessionRef = useRef<ClassroomSession | null>(null);
+  const audioAdapterRef = useRef<LiveKitClassroomAudioAdapter | null>(null);
+  const startingLiveClassRef = useRef(false);
+  const allowLeaveNavigationRef = useRef(false);
+  const leavingClassroomPromptRef = useRef(false);
+  const applyingRemoteCommandRef = useRef(false);
+  const prevBroadcastDocRef = useRef<CanvasDocument>(document);
+  const studentLiveDocRef = useRef<CanvasDocument>(EMPTY_DOCUMENT);
+  const studentScratchpadDocRef = useRef<CanvasDocument>(EMPTY_DOCUMENT);
+  const isScratchpadModeRef = useRef(false);
+  const followTeacherViewportRef = useRef(true);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [imageFlowOpen, setImageFlowOpen] = useState(false);
   const [imageFlowId, setImageFlowId] = useState<string | null>(null);
@@ -694,6 +751,16 @@ export default function BoardEditorScreen() {
         Date.now(),
       );
     }
+    const liveState = classroomSessionRef.current?.getState();
+    if (liveState?.active && liveState.role === 'teacher') {
+      classroomSessionRef.current?.updateHostViewport(next);
+      if (liveState.roomInfo?.followTeacherViewport) {
+        void classroomSessionRef.current?.sendEphemeral({
+          pageId: activePageIdRef.current || 'page-1',
+          viewport: next,
+        });
+      }
+    }
     const now = Date.now();
     if (now - viewportFlushedAt.current >= VIEWPORT_RENDER_INTERVAL) {
       viewportFlushedAt.current = now;
@@ -710,6 +777,15 @@ export default function BoardEditorScreen() {
   }, [scheduleViewportSave]);
 
   const requestViewport = useCallback((next: Viewport) => {
+    if (
+      !next ||
+      !Number.isFinite(next.x) ||
+      !Number.isFinite(next.y) ||
+      !Number.isFinite(next.scale) ||
+      next.scale <= 0
+    ) {
+      return;
+    }
     viewportLive.current = next;
     setViewport(next);
     setViewportRequest((current) => ({ key: (current?.key ?? 0) + 1, viewport: next }));
@@ -741,6 +817,444 @@ export default function BoardEditorScreen() {
   }, []);
   const commitPending = useCallback(() => dispatch({ type: 'commit' }), []);
   const closeObjectOptions = useCallback(() => setObjectOptionsVisible(false), []);
+
+  // ---------------------------------------------------------------- Live Classroom
+
+  const showClassroomNotice = useCallback((message: string) => {
+    setClassroomNotice(message);
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = setTimeout(() => {
+      setClassroomNotice(null);
+    }, 3500);
+  }, []);
+
+  const routerRef = useRef(router);
+  routerRef.current = router;
+
+  const ensureClassroomSession = useCallback(() => {
+    if (classroomSessionRef.current) return classroomSessionRef.current;
+    const session = new ClassroomSession();
+    const audio = new LiveKitClassroomAudioAdapter();
+    audio.setOnStateChange((st) => {
+      setVoiceAvailable(st.available);
+      setVoiceMicEnabled(st.micEnabled);
+    });
+    audioAdapterRef.current = audio;
+    setVoiceAvailable(audio.getState().available);
+
+    session.setCallbacks({
+      onSnapshot: (snapshot) => {
+        studentLiveDocRef.current = snapshot.document;
+        setLiveBoardSettings(snapshot.boardSettings);
+        setTitle(snapshot.roomInfo.boardTitle || 'Live Class');
+        if (!isScratchpadModeRef.current) {
+          applyingRemoteCommandRef.current = true;
+          dispatch({ type: 'hydrate', document: snapshot.document });
+          prevBroadcastDocRef.current = snapshot.document;
+          if (followTeacherViewportRef.current) {
+            requestViewport(snapshot.viewport);
+          }
+          setTimeout(() => {
+            applyingRemoteCommandRef.current = false;
+          }, 0);
+        }
+      },
+      onRemoteCommand: (pageId, command) => {
+        if (session.getState().role === 'student') {
+          const nextLive = applySerializableCommand(studentLiveDocRef.current, command);
+          studentLiveDocRef.current = nextLive;
+          if (!isScratchpadModeRef.current) {
+            applyingRemoteCommandRef.current = true;
+            dispatch({ type: 'hydrate', document: nextLive });
+            prevBroadcastDocRef.current = nextLive;
+            setTimeout(() => {
+              applyingRemoteCommandRef.current = false;
+            }, 0);
+          }
+          return;
+        }
+        // Teacher receives command from a student who has `can-draw`
+        if (pageId === activePageIdRef.current) {
+          const nextDoc = applySerializableCommand(documentRef.current, command);
+          applyingRemoteCommandRef.current = true;
+          dispatch({ type: 'hydrate', document: nextDoc });
+          prevBroadcastDocRef.current = nextDoc;
+          setTimeout(() => {
+            applyingRemoteCommandRef.current = false;
+          }, 0);
+        }
+      },
+      onEphemeral: (eph) => {
+        if (eph.activeStroke) {
+          setRemoteActiveStroke(eph.activeStroke.isDone ? null : eph.activeStroke);
+        }
+        if (eph.laser) {
+          setRemoteLaserStroke(eph.laser.active ? eph.laser : null);
+        }
+        if (eph.geometryInstrument !== undefined && !isScratchpadModeRef.current) {
+          setActiveInstrument(eph.geometryInstrument);
+        }
+        if (eph.viewport && followTeacherViewportRef.current && !isScratchpadModeRef.current) {
+          requestViewport(eph.viewport);
+        }
+      },
+      onShowcase: (showcase) => {
+        if (!showcase.studentPeerId || !showcase.document) {
+          setShowcasedName(null);
+          if (session.getState().role === 'student' && !isScratchpadModeRef.current) {
+            applyingRemoteCommandRef.current = true;
+            dispatch({ type: 'hydrate', document: studentLiveDocRef.current });
+            prevBroadcastDocRef.current = studentLiveDocRef.current;
+            setTimeout(() => {
+              applyingRemoteCommandRef.current = false;
+            }, 0);
+          }
+          return;
+        }
+        setShowcasedName(showcase.studentName ?? 'Student');
+        if (session.getState().role === 'student' && !isScratchpadModeRef.current) {
+          applyingRemoteCommandRef.current = true;
+          dispatch({ type: 'hydrate', document: showcase.document });
+          prevBroadcastDocRef.current = showcase.document;
+          if (showcase.viewport) requestViewport(showcase.viewport);
+          setTimeout(() => {
+            applyingRemoteCommandRef.current = false;
+          }, 0);
+        }
+      },
+      onNotice: (msg) => showClassroomNotice(msg),
+      onKicked: () => {
+        allowLeaveNavigationRef.current = true;
+        void audioAdapterRef.current?.disconnect();
+        Alert.alert('Removed from class', 'The teacher removed you from this live session.');
+        routerRef.current.back();
+      },
+      onClassEnded: () => {
+        allowLeaveNavigationRef.current = true;
+        void audioAdapterRef.current?.disconnect();
+        Alert.alert('Live class ended', 'The teacher ended the live class.');
+        routerRef.current.back();
+      },
+    });
+
+    session.subscribe((nextState) => {
+      setClassroomState(nextState);
+      if (nextState.role === 'student') {
+        void audioAdapterRef.current?.setCanPublish(nextState.myCanSpeak);
+      }
+    });
+
+    classroomSessionRef.current = session;
+    return session;
+  }, [requestViewport, showClassroomNotice]);
+
+  // Auto-join when opened via Student Join route
+  useEffect(() => {
+    if (!isStudentRoute || !paramRoomCode) return;
+    const session = ensureClassroomSession();
+    let cancelled = false;
+    void (async () => {
+      try {
+        await session.joinAsStudent({
+          roomCode: paramRoomCode,
+          displayName: paramDisplayName || (isProjectorMode ? 'Classroom Projector' : 'Student'),
+        });
+        if (cancelled) return;
+        const audio = audioAdapterRef.current;
+        if (audio) {
+          const st = await audio.connect({
+            roomCode: paramRoomCode,
+            peerId: session.getState().peerId,
+            displayName: session.getState().displayName,
+            role: 'student',
+            canPublish: false,
+          });
+          setVoiceAvailable(st.available);
+          setVoiceMicEnabled(st.micEnabled);
+          if (!st.connected && st.reason) {
+            showClassroomNotice(st.reason);
+          }
+        }
+      } catch (error) {
+        if (!cancelled) {
+          Alert.alert(
+            'Unable to join class',
+            error instanceof Error ? error.message : 'Check the 6-digit code and try again.',
+          );
+          allowLeaveNavigationRef.current = true;
+          routerRef.current.back();
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      void audioAdapterRef.current?.disconnect();
+      void session.endOrLeave();
+    };
+  }, [ensureClassroomSession, isProjectorMode, isStudentRoute, paramDisplayName, paramRoomCode]);
+
+  // Resumable foreground reconnect for Live Classroom
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        void classroomSessionRef.current?.resume();
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  const confirmLeaveActiveClassroom = useCallback(
+    (onConfirmLeave: () => void) => {
+      const session = classroomSessionRef.current;
+      const st = session?.getState();
+      if (!session || !st?.active) {
+        onConfirmLeave();
+        return;
+      }
+      if (leavingClassroomPromptRef.current) return;
+      leavingClassroomPromptRef.current = true;
+      const isTeacher = st.role === 'teacher';
+      Alert.alert(
+        isTeacher ? 'End Live Class?' : 'Leave Live Class?',
+        isTeacher
+          ? 'An active live class session is running. Do you want to end it and leave?'
+          : 'You are currently in a live class. Do you want to leave the session?',
+        [
+          {
+            text: 'Stay',
+            style: 'cancel',
+            onPress: () => {
+              leavingClassroomPromptRef.current = false;
+            },
+          },
+          {
+            text: isTeacher ? 'End & Leave' : 'Leave Class',
+            style: 'destructive',
+            onPress: () => {
+              allowLeaveNavigationRef.current = true;
+              leavingClassroomPromptRef.current = false;
+              setHostSheetVisible(false);
+              void audioAdapterRef.current?.disconnect();
+              void session.endOrLeave().finally(() => {
+                onConfirmLeave();
+              });
+            },
+          },
+        ],
+        {
+          cancelable: true,
+          onDismiss: () => {
+            leavingClassroomPromptRef.current = false;
+          },
+        },
+      );
+    },
+    [],
+  );
+
+  // Intercept iOS swipe-back / header navigation back while Live Classroom is active
+  useEffect(() => {
+    const nav = navigation as unknown as {
+      addListener: (
+        event: 'beforeRemove',
+        cb: (e: {
+          preventDefault: () => void;
+          data: { action: Parameters<typeof navigation.dispatch>[0] };
+        }) => void,
+      ) => () => void;
+    };
+    const unsubscribe = nav.addListener('beforeRemove', (event) => {
+      if (allowLeaveNavigationRef.current) return;
+      if (!classroomSessionRef.current?.getState().active) return;
+      event.preventDefault();
+      confirmLeaveActiveClassroom(() => {
+        navigation.dispatch(event.data.action);
+      });
+    });
+    return unsubscribe;
+  }, [confirmLeaveActiveClassroom, navigation]);
+
+  // Intercept Android hardware back press while Live Classroom is active
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (hostSheetVisible) {
+        setHostSheetVisible(false);
+        return true;
+      }
+      if (classroomSessionRef.current?.getState().active) {
+        confirmLeaveActiveClassroom(() => {
+          routerRef.current.back();
+        });
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [confirmLeaveActiveClassroom, hostSheetVisible]);
+
+  // Ensure any active LiveKit + Realtime session is cleaned up if the editor unmounts
+  useEffect(() => {
+    return () => {
+      void audioAdapterRef.current?.disconnect();
+      if (classroomSessionRef.current?.getState().active) {
+        void classroomSessionRef.current.endOrLeave();
+      }
+    };
+  }, []);
+
+  // Broadcast committed local document mutations when hosting or when granted `can-draw`
+  useEffect(() => {
+    const session = classroomSessionRef.current;
+    const prevDoc = prevBroadcastDocRef.current;
+    prevBroadcastDocRef.current = document;
+    if (!session || !classroomState?.active) return;
+    if (applyingRemoteCommandRef.current) return;
+
+    if (classroomState.role === 'student' && isScratchpadMode) {
+      studentScratchpadDocRef.current = document;
+      void session.sendStudentScratchpad(document, viewportLive.current);
+      return;
+    }
+
+    const cmd = diffDocumentsToSerializableCommand(prevDoc, document);
+    if (!cmd) return;
+
+    if (classroomState.role === 'teacher') {
+      const currentPage = pages.find((p) => p.id === activePageId);
+      session.updateHostSnapshot({
+        pageId: activePageId || 'page-1',
+        pageName: currentPage?.name ?? 'Page 1',
+        pageOrderIndex: currentPage?.orderIndex ?? 0,
+        boardSettings: board?.settings ?? DEFAULT_BOARD_SETTINGS,
+        document,
+        viewport: viewportLive.current,
+      });
+      void session.broadcastCommand(activePageId || 'page-1', cmd);
+    } else if (classroomState.myPermission === 'can-draw' && !classroomState.roomInfo?.isLocked) {
+      studentLiveDocRef.current = document;
+      void session.broadcastCommand(activePageId || 'page-1', cmd);
+    }
+  }, [activePageId, board?.settings, classroomState, document, isScratchpadMode, pages]);
+
+  const handleStartOrOpenLiveClass = useCallback(async () => {
+    if (isStudentRoute) return;
+    const session = ensureClassroomSession();
+    if (session.getState().active) {
+      setHostSheetVisible(true);
+      return;
+    }
+    if (startingLiveClassRef.current) {
+      return;
+    }
+    const entitlement = getLiveClassEntitlement();
+    if (!entitlement.canHost) {
+      Alert.alert('Teacher Pro Required', entitlement.reason ?? 'Upgrade to host Live Classes.');
+      return;
+    }
+    startingLiveClassRef.current = true;
+    try {
+      const micPerm = await requestMicrophonePermission();
+      if (!micPerm.granted) {
+        Alert.alert(
+          'Microphone Permission Required',
+          'Allow microphone access before starting a live class so students can hear your voice.',
+          micPerm.canAskAgain
+            ? [{ text: 'OK' }]
+            : [
+                { text: 'Not Now', style: 'cancel' },
+                { text: 'Open Settings', onPress: () => void openAppSettings() },
+              ],
+        );
+        return;
+      }
+
+      const currentPage = pages.find((p) => p.id === activePageId);
+      const roomInfo = await session.startAsTeacher({
+        boardId: boardId ?? 'local-board',
+        boardTitle: title,
+        pageId: activePageId || 'page-1',
+        pageName: currentPage?.name ?? 'Page 1',
+        pageOrderIndex: currentPage?.orderIndex ?? 0,
+        boardSettings: board?.settings ?? DEFAULT_BOARD_SETTINGS,
+        document: documentRef.current,
+        viewport: viewportLive.current,
+        displayName: 'Teacher',
+      });
+      setHostSheetVisible(true);
+
+      const audio = audioAdapterRef.current;
+      if (audio) {
+        void (async () => {
+          const st = await audio.connect({
+            roomCode: roomInfo.roomCode,
+            peerId: session.getState().peerId,
+            displayName: 'Teacher',
+            role: 'teacher',
+            canPublish: true,
+          });
+          setVoiceAvailable(st.available);
+          setVoiceMicEnabled(st.micEnabled);
+          if (st.reason) {
+            showClassroomNotice(st.reason);
+          }
+        })();
+      }
+    } finally {
+      startingLiveClassRef.current = false;
+    }
+  }, [activePageId, board?.settings, boardId, ensureClassroomSession, isStudentRoute, pages, showClassroomNotice, title]);
+
+  const handleToggleScratchpad = useCallback(() => {
+    const next = !isScratchpadModeRef.current;
+    isScratchpadModeRef.current = next;
+    setIsScratchpadMode(next);
+    applyingRemoteCommandRef.current = true;
+    if (next) {
+      dispatch({ type: 'hydrate', document: studentScratchpadDocRef.current });
+      prevBroadcastDocRef.current = studentScratchpadDocRef.current;
+      showClassroomNotice('Switched to My Scratchpad');
+    } else {
+      dispatch({ type: 'hydrate', document: studentLiveDocRef.current });
+      prevBroadcastDocRef.current = studentLiveDocRef.current;
+      showClassroomNotice('Returned to Live Board');
+    }
+    setTimeout(() => {
+      applyingRemoteCommandRef.current = false;
+    }, 0);
+  }, [showClassroomNotice]);
+
+  const handleToggleFollowTeacher = useCallback(() => {
+    const next = !followTeacherViewportRef.current;
+    followTeacherViewportRef.current = next;
+    setFollowTeacherViewport(next);
+  }, []);
+
+  const handleLiveStrokeSample = useCallback(
+    (sample: Omit<EphemeralStrokePacket, 'authorPeerId'>) => {
+      const session = classroomSessionRef.current;
+      if (!session || !classroomState?.active) return;
+      if (classroomState.role === 'student' && isScratchpadModeRef.current) return;
+      void session.sendEphemeral({
+        pageId: activePageIdRef.current || 'page-1',
+        activeStroke: { ...sample, authorPeerId: session.getState().peerId },
+      });
+    },
+    [classroomState?.active, classroomState?.role],
+  );
+
+  const handleLiveLaserSample = useCallback(
+    (sample: Omit<EphemeralLaserPacket, 'authorPeerId'>) => {
+      const session = classroomSessionRef.current;
+      if (!session || !classroomState?.active) return;
+      if (classroomState.role === 'student' && isScratchpadModeRef.current) return;
+      void session.sendEphemeral({
+        pageId: activePageIdRef.current || 'page-1',
+        laser: { ...sample, authorPeerId: session.getState().peerId },
+      });
+    },
+    [classroomState?.active, classroomState?.role],
+  );
 
   /**
    * One commit path for every exit: Done, outside tap, tool change, back, and
@@ -1530,8 +2044,19 @@ function mathSpanAtPoint(
       savedViewport.current = nextViewport;
       setInitialViewport(nextViewport);
       setViewport(nextViewport);
+      const liveState = classroomSessionRef.current?.getState();
+      if (liveState?.active && liveState.role === 'teacher') {
+        void classroomSessionRef.current?.broadcastPageSwitch({
+          pageId: target.id,
+          pageName: target.name,
+          pageOrderIndex: target.orderIndex,
+          boardSettings: board?.settings ?? DEFAULT_BOARD_SETTINGS,
+          document: target.document,
+          viewport: nextViewport,
+        });
+      }
     },
-    [commitEditing, flushPendingSaves, pages],
+    [board?.settings, commitEditing, flushPendingSaves, pages],
   );
 
   const handlePrevPage = useCallback(() => {
@@ -1887,7 +2412,7 @@ function mathSpanAtPoint(
       ? (selectedIsTextual ? 4 : selectedIsMath ? 3 : selectedIsTable ? 4 : selectedIsImage ? 2 : 3)
       : 2;
   const canvasBorder = 1;
-  const actionRail = selectedRect && !editing && canvasRect.width > 0
+  const rawActionRail = selectedRect && !editing && canvasRect.width > 0
     ? selectionActionRail(
       selectedRect,
       selectionActionCount,
@@ -1895,6 +2420,25 @@ function mathSpanAtPoint(
       canvasRect.height - canvasBorder * 2,
     )
     : null;
+  const actionRail = useMemo(() => {
+    if (!rawActionRail || !selectedRect) return rawActionRail;
+    const isRotatedSideways =
+      selectedObject &&
+      Math.abs(Math.sin((selectedObject.rotation * Math.PI) / 180)) > 0.35;
+    if (!isRotatedSideways && rawActionRail.placement !== 'inside') {
+      return rawActionRail;
+    }
+    const maxCanvasH = Math.max(80, canvasRect.height - canvasBorder * 2);
+    const belowY = selectedRect.y + selectedRect.height + 18;
+    const aboveY = selectedRect.y - rawActionRail.height - 18;
+    const nextY =
+      belowY + rawActionRail.height <= maxCanvasH - 8
+        ? belowY
+        : aboveY >= 8
+          ? aboveY
+          : rawActionRail.y;
+    return { ...rawActionRail, y: nextY };
+  }, [canvasRect.height, rawActionRail, selectedObject, selectedRect]);
   const selectionLabel = selectedObjects.length === 1
     ? `${selectedObjects[0].type} selected`
     : `${selectedObjects.length} objects selected`;
@@ -1942,6 +2486,41 @@ function mathSpanAtPoint(
           >
             <GridIcon size={20} color={theme.foreground} />
           </Pressable>
+          {!isStudentRoute && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={classroomState?.active ? 'Live class active' : 'Start live class'}
+              accessibilityState={{ disabled: Boolean(classroomState?.active) }}
+              disabled={Boolean(classroomState?.active)}
+              onPress={() => { commitEditing(); void handleStartOrOpenLiveClass(); }}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                minHeight: 34,
+                paddingHorizontal: 8,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: classroomState?.active ? '#DC2626' : theme.primary,
+                backgroundColor: classroomState?.active ? theme.muted : theme.surface,
+                opacity: classroomState?.active ? 0.65 : 1,
+              }}
+            >
+              <BroadcastIcon
+                size={16}
+                color={classroomState?.active ? '#DC2626' : theme.primary}
+              />
+              <Text
+                style={{
+                  fontSize: 12,
+                  fontWeight: '700',
+                  color: classroomState?.active ? '#DC2626' : theme.primary,
+                }}
+              >
+                Live
+              </Text>
+            </Pressable>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Export and board options"
@@ -1988,9 +2567,15 @@ function mathSpanAtPoint(
             bottomInset={insets.bottom}
             timerVisible={timerVisible}
             calculatorVisible={calculatorVisible}
+            geometryActive={Boolean(activeInstrument)}
             faceCamVisible={faceCamVisible}
             recorderBarVisible={recorderBarVisible}
             onToolPress={pressTool}
+            onToggleGeometryBox={() => {
+              setActiveInstrument((prev) =>
+                prev ? null : createDefaultInstrument('ruler', { x: 0, y: 0 }),
+              );
+            }}
             onOpenMath={() => {
               setEditingMathObject(null);
               setMathSheetVisible(true);
@@ -2027,9 +2612,30 @@ function mathSpanAtPoint(
             <View style={styles.canvasClip}>
               <CanvasViewport
                 dark={dark}
-                boardBackground={board?.settings.background ?? DEFAULT_BOARD_SETTINGS.background}
-                boardStyle={board?.settings.style ?? DEFAULT_BOARD_SETTINGS.style}
+                boardBackground={
+                  liveBoardSettings?.background ??
+                  board?.settings.background ??
+                  DEFAULT_BOARD_SETTINGS.background
+                }
+                boardStyle={
+                  liveBoardSettings?.style ??
+                  board?.settings.style ??
+                  DEFAULT_BOARD_SETTINGS.style
+                }
                 initialViewport={initialViewport}
+                readOnly={
+                  Boolean(showcasedName) ||
+                  (classroomState?.active &&
+                    classroomState.role === 'student' &&
+                    !isScratchpadMode &&
+                    (isProjectorMode ||
+                      classroomState.myPermission !== 'can-draw' ||
+                      classroomState.roomInfo?.isLocked))
+                }
+                remoteActiveStroke={remoteActiveStroke}
+                remoteLaserStroke={remoteLaserStroke}
+                onLiveStrokeSample={handleLiveStrokeSample}
+                onLiveLaserSample={handleLiveLaserSample}
                 activeTool={activeTool}
                 color={color}
                 width={strokeWidth}
@@ -2071,7 +2677,122 @@ function mathSpanAtPoint(
                 onObjectMeasure={measureObject}
                 onCanvasTouch={handleCanvasTouch}
               />
-              {hydrated && pages.length > 0 && !editing && (
+              {classroomState?.active && classroomState.roomInfo && (
+                <ClassroomHud
+                  role={classroomState.role}
+                  status={classroomState.status}
+                  hasSnapshot={classroomState.hasSnapshot}
+                  roomCode={classroomState.roomInfo.roomCode}
+                  studentCount={
+                    classroomState.participants.filter((p) => p.role === 'student').length
+                  }
+                  raisedHandsCount={
+                    classroomState.participants.filter((p) => p.handRaised).length
+                  }
+                  myPermission={classroomState.myPermission}
+                  myHandRaised={classroomState.myHandRaised}
+                  myCanSpeak={classroomState.myCanSpeak}
+                  teacherMuted={classroomState.roomInfo.teacherMuted}
+                  voiceAvailable={voiceAvailable}
+                  micEnabled={voiceMicEnabled}
+                  isScratchpadMode={isScratchpadMode}
+                  projectorMode={isProjectorMode}
+                  followTeacherViewport={followTeacherViewport}
+                  showcasedName={showcasedName}
+                  notice={classroomNotice}
+                  theme={theme}
+                  onOpenHostSheet={() => setHostSheetVisible(true)}
+                  onRequestSync={() => {
+                    void classroomSessionRef.current?.requestSync();
+                  }}
+                  onToggleTeacherMute={() => {
+                    if (!voiceAvailable) {
+                      showClassroomNotice(
+                        audioAdapterRef.current?.getState().reason ??
+                          'Voice requires a dev build with @livekit/react-native.',
+                      );
+                      return;
+                    }
+                    const nextMuted = !classroomState.roomInfo?.teacherMuted;
+                    if (!nextMuted) {
+                      void requestMicrophonePermission().then((micPerm) => {
+                        if (!micPerm.granted) {
+                          Alert.alert(
+                            'Microphone Permission Required',
+                            'Allow microphone access to unmute your voice in the live class.',
+                            micPerm.canAskAgain
+                              ? [{ text: 'OK' }]
+                              : [
+                                  { text: 'Not Now', style: 'cancel' },
+                                  { text: 'Open Settings', onPress: () => void openAppSettings() },
+                                ],
+                          );
+                          return;
+                        }
+                        void classroomSessionRef.current?.setTeacherMuted(false);
+                        void audioAdapterRef.current?.setMicEnabled(true).then((st) => {
+                          setVoiceMicEnabled(st.micEnabled);
+                          if (st.reason && !st.micEnabled) {
+                            showClassroomNotice(st.reason);
+                          }
+                        });
+                      });
+                      return;
+                    }
+                    void classroomSessionRef.current?.setTeacherMuted(true);
+                    void audioAdapterRef.current?.setMicEnabled(false).then((st) => {
+                      setVoiceMicEnabled(st.micEnabled);
+                    });
+                  }}
+                  onToggleRaiseHand={() => {
+                    if (classroomState.myHandRaised) {
+                      void classroomSessionRef.current?.lowerHand();
+                    } else {
+                      void classroomSessionRef.current?.raiseHand();
+                    }
+                  }}
+                  onToggleScratchpad={handleToggleScratchpad}
+                  onToggleFollowTeacher={handleToggleFollowTeacher}
+                  onToggleStudentMic={() => {
+                    const nextEnabled = !voiceMicEnabled;
+                    if (nextEnabled) {
+                      void requestMicrophonePermission().then((micPerm) => {
+                        if (!micPerm.granted) {
+                          Alert.alert(
+                            'Microphone Permission Required',
+                            'Allow microphone access to speak in the live class.',
+                            micPerm.canAskAgain
+                              ? [{ text: 'OK' }]
+                              : [
+                                  { text: 'Not Now', style: 'cancel' },
+                                  { text: 'Open Settings', onPress: () => void openAppSettings() },
+                                ],
+                          );
+                          return;
+                        }
+                        void audioAdapterRef.current?.setMicEnabled(true).then((st) => {
+                          setVoiceMicEnabled(st.micEnabled);
+                          if (st.reason && !st.micEnabled) {
+                            showClassroomNotice(st.reason);
+                          }
+                        });
+                      });
+                      return;
+                    }
+                    void audioAdapterRef.current?.setMicEnabled(false).then((st) => {
+                      setVoiceMicEnabled(st.micEnabled);
+                    });
+                  }}
+                  onLeaveClass={() => {
+                    allowLeaveNavigationRef.current = true;
+                    void audioAdapterRef.current?.disconnect();
+                    void classroomSessionRef.current?.endOrLeave().then(() => {
+                      router.back();
+                    });
+                  }}
+                />
+              )}
+              {hydrated && pages.length > 0 && !editing && !isProjectorMode && (
                 <View
                   style={{
                     position: 'absolute',
@@ -2988,6 +3709,56 @@ function mathSpanAtPoint(
           onClose={() => { setImageFlowOpen(false); setImageFlowId(null); }}
         />
       )}
+      {hostSheetVisible &&
+        classroomState?.active &&
+        classroomState.role === 'teacher' &&
+        classroomState.roomInfo && (
+        <LiveClassHostSheet
+          visible={hostSheetVisible}
+          centered={tablet}
+          roomInfo={classroomState.roomInfo}
+          status={classroomState.status}
+          participants={classroomState.participants}
+          studentBoards={classroomState.studentBoards}
+          showcasedStudentPeerId={classroomState.showcasedStudentPeerId}
+          theme={theme}
+          onClose={() => setHostSheetVisible(false)}
+          onToggleLock={(locked) => {
+            void classroomSessionRef.current?.setClassLocked(locked);
+          }}
+          onToggleFollowViewport={(follow) => {
+            void classroomSessionRef.current?.setFollowTeacherViewport(follow);
+          }}
+          onToggleDrawPermission={(peerId, currentlyCanDraw) => {
+            if (currentlyCanDraw) {
+              void classroomSessionRef.current?.revokeDrawPermission(peerId);
+            } else {
+              void classroomSessionRef.current?.grantDrawPermission(peerId);
+            }
+          }}
+          onToggleVoicePermission={(peerId, currentlyCanSpeak) => {
+            if (currentlyCanSpeak) {
+              void classroomSessionRef.current?.revokeStudentVoice(peerId);
+            } else {
+              void classroomSessionRef.current?.allowStudentVoice(peerId);
+            }
+          }}
+          onLowerHand={(peerId) => {
+            void classroomSessionRef.current?.lowerStudentHand(peerId);
+          }}
+          onShowcaseStudent={(peerId) => {
+            void classroomSessionRef.current?.showcaseStudentBoard(peerId);
+          }}
+          onKickParticipant={(peerId) => {
+            void classroomSessionRef.current?.kickParticipant(peerId);
+          }}
+          onEndClass={() => {
+            setHostSheetVisible(false);
+            void audioAdapterRef.current?.disconnect();
+            void classroomSessionRef.current?.endOrLeave();
+          }}
+        />
+      )}
       <ExportSheet
         visible={exportSheetVisible}
         theme={theme}
@@ -3210,9 +3981,11 @@ function ToolRail({
   bottomInset,
   timerVisible,
   calculatorVisible,
+  geometryActive,
   faceCamVisible,
   recorderBarVisible,
   onToolPress,
+  onToggleGeometryBox,
   onOpenMath,
   onOpenPdfImport,
   onToggleTimer,
@@ -3226,9 +3999,11 @@ function ToolRail({
   bottomInset: number;
   timerVisible: boolean;
   calculatorVisible: boolean;
+  geometryActive: boolean;
   faceCamVisible: boolean;
   recorderBarVisible: boolean;
   onToolPress: (tool: InkTool) => void;
+  onToggleGeometryBox: () => void;
   onOpenMath: () => void;
   onOpenPdfImport: () => void;
   onToggleTimer: () => void;
@@ -3268,6 +4043,18 @@ function ToolRail({
           );
         })}
         <View style={[styles.railDivider, { backgroundColor: theme.border }]} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Toggle geometry box"
+          accessibilityState={{ selected: geometryActive }}
+          onPress={onToggleGeometryBox}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, geometryActive && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+            <Text style={{ fontSize: 16, color: geometryActive ? theme.primary : theme.foreground }}>📐</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: geometryActive ? theme.primary : theme.foreground }]} numberOfLines={1}>Geo</Text>
+        </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Toggle floating timer"

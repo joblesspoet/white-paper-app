@@ -1,0 +1,246 @@
+import { StyleSheet } from 'react-native';
+
+import { radii, spacing, touchTarget, typography } from '../theme';
+
+export const liveClassHostStyles = StyleSheet.create({
+  scrim: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    justifyContent: 'flex-end',
+  },
+  scrimCentered: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  sheet: {
+    width: '96%',
+    maxWidth: 460,
+    alignSelf: 'center',
+    borderTopLeftRadius: radii.lg,
+    borderTopRightRadius: radii.lg,
+    borderWidth: 1,
+    maxHeight: '92%',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  sheetCentered: {
+    borderRadius: radii.lg,
+    width: '94%',
+    maxWidth: 540,
+    paddingHorizontal: spacing.lg,
+    maxHeight: '88%',
+  },
+  grabber: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    marginBottom: spacing.xs,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  titleWrap: {
+    gap: 2,
+  },
+  title: {
+    ...typography.title,
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  statusLine: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  closeBtn: {
+    minWidth: touchTarget,
+    minHeight: touchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeText: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  inviteCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: spacing.sm + 2,
+    gap: spacing.sm,
+  },
+  inviteInfo: {
+    flex: 1,
+    flexShrink: 1,
+    gap: spacing.xs,
+  },
+  codeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  codeValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    fontVariant: ['tabular-nums'],
+  },
+  inviteActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  smallBtn: {
+    minHeight: 38,
+    paddingHorizontal: spacing.sm + 2,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  smallBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  controlsCard: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.xs,
+    gap: spacing.xs,
+  },
+  switchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 40,
+    gap: spacing.sm,
+  },
+  switchLabel: {
+    flex: 1,
+    flexShrink: 1,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  tabRow: {
+    flexDirection: 'row',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: 3,
+    gap: 4,
+  },
+  tabBtn: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: radii.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  list: {
+    flexGrow: 0,
+  },
+  listContent: {
+    gap: spacing.xs,
+    paddingBottom: spacing.sm,
+  },
+  headerSpacer: {
+    gap: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  emptyList: {
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 13,
+    opacity: 0.72,
+    textAlign: 'center',
+  },
+  participantRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  participantMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  participantName: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  participantSub: {
+    fontSize: 11,
+    opacity: 0.72,
+  },
+  rowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  pillBtn: {
+    minHeight: 34,
+    paddingHorizontal: 8,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pillBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  galleryRow: {
+    gap: spacing.sm,
+  },
+  galleryCard: {
+    flex: 1,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: spacing.sm,
+    gap: spacing.xs,
+  },
+  galleryPreview: {
+    height: 76,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  galleryFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+  },
+  endBtn: {
+    minHeight: touchTarget,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+  },
+  endBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+});

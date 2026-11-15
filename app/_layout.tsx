@@ -3,6 +3,14 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const lk = require('@livekit/react-native') as { registerGlobals?: () => void };
+  lk.registerGlobals?.();
+} catch {
+  // Safe in environments where WebRTC globals are unavailable
+}
+
 import { typography } from '../src/theme';
 import { BoardProvider } from '../src/board-context';
 import { PreferencesProvider, usePreferences } from '../src/settings/preferences-context';

@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -16,6 +17,8 @@ import { AppButton } from '../src/components/AppButton';
 import { BoardCard, BoardSummary } from '../src/components/BoardCard';
 import { BoardIcon, PlusIcon, SettingsIcon } from '../src/components/icons';
 import { ImportBoardModal, type ImportModalState } from '../src/components/ImportBoardModal';
+import { JoinClassModal } from '../src/components/JoinClassModal';
+import { parseClassroomDeepLink } from '../src/classroom/protocol';
 import { importErrorMessage } from '../src/export/backup';
 import { pickBackupFile } from '../src/export/backup-store';
 import { resolveHomeLayout } from '../src/responsive/layout';
@@ -32,6 +35,8 @@ export default function HomeScreen() {
   const { theme, isDark, preferences } = usePreferences();
   const { boards, createBoard, ready, storageError, refreshBoards } = useBoards();
   const [sheetVisible, setSheetVisible] = useState(false);
+  const [joinModalVisible, setJoinModalVisible] = useState(false);
+  const [joinInitialCode, setJoinInitialCode] = useState<string | null>(null);
   const [importState, setImportState] = useState<ImportModalState>({ status: 'closed' });
   const [canvasBackground, setCanvasBackground] = useState<BoardBackground>(preferences.canvasBackground);
   const [canvasStyle, setCanvasStyle] = useState<BoardStyle>(preferences.canvasStyle);
@@ -53,6 +58,38 @@ export default function HomeScreen() {
     }),
     [layout.paddingBottom, layout.paddingLeft, layout.paddingRight, twoPane],
   );
+
+  const handleJoinClass = useCallback(
+    (params: { roomCode: string; displayName: string; projectorMode: boolean }) => {
+      setJoinModalVisible(false);
+      router.push({
+        pathname: '/editor',
+        params: {
+          liveRole: 'student',
+          roomCode: params.roomCode,
+          displayName: params.displayName,
+          projectorMode: params.projectorMode ? '1' : '0',
+        },
+      });
+    },
+    [router],
+  );
+
+  const openJoinModal = useCallback((code?: string | null) => {
+    setJoinInitialCode(code ?? null);
+    setJoinModalVisible(true);
+  }, []);
+
+  useEffect(() => {
+    const handleUrl = (url: string | null) => {
+      if (!url) return;
+      const code = parseClassroomDeepLink(url);
+      if (code) openJoinModal(code);
+    };
+    void Linking.getInitialURL().then(handleUrl);
+    const sub = Linking.addEventListener('url', (event) => handleUrl(event.url));
+    return () => sub.remove();
+  }, [openJoinModal]);
 
   const createBoardNow = useCallback((settings?: { background: BoardBackground; style: BoardStyle; orientation: 'portrait' | 'landscape' }) => {
     const defaultSettings = {
@@ -129,6 +166,18 @@ export default function HomeScreen() {
       </Pressable>
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel="Join live class"
+        onPress={() => openJoinModal()}
+        style={[
+          styles.customizeLink,
+          styles.customizeLinkInline,
+          { marginTop: spacing.md, borderColor: theme.primary, backgroundColor: theme.surface },
+        ]}
+      >
+        <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Join live class</Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
         accessibilityLabel="Import a board"
         onPress={() => { void startImport(); }}
         style={styles.import}
@@ -155,22 +204,44 @@ export default function HomeScreen() {
       >
         <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text>
       </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Join live class"
+        onPress={() => openJoinModal()}
+        style={[
+          styles.customizeLink,
+          styles.customizeLinkInline,
+          { marginTop: spacing.md, borderColor: theme.primary, backgroundColor: theme.surface },
+        ]}
+      >
+        <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Join live class</Text>
+      </Pressable>
     </View>
   ) : (
-    <View>
+    <View style={styles.phoneActionStack}>
       <AppButton
         label="New board"
         accessibilityHint="Creates a blank board and opens it"
         onPress={() => createBoardNow()}
       />
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Customize new board"
-        onPress={openCustomize}
-        style={styles.customizeLink}
-      >
-        <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text>
-      </Pressable>
+      <View style={styles.tabletActionRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Customize new board"
+          onPress={openCustomize}
+          style={[styles.customizeLink, styles.customizeLinkInline, { flex: 1, borderColor: theme.border, backgroundColor: theme.surface }]}
+        >
+          <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Join live class"
+          onPress={() => openJoinModal()}
+          style={[styles.customizeLink, styles.customizeLinkInline, { flex: 1, borderColor: theme.primary, backgroundColor: theme.surface }]}
+        >
+          <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Join live class</Text>
+        </Pressable>
+      </View>
     </View>
   );
 
@@ -275,6 +346,14 @@ export default function HomeScreen() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Join live class"
+              onPress={() => openJoinModal()}
+              style={[styles.customizeLink, styles.customizeLinkInline, { borderColor: theme.primary, backgroundColor: theme.surface }]}
+            >
+              <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Join live class</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
               accessibilityLabel="Import a board"
               onPress={() => { void startImport(); }}
               style={[styles.customizeLink, styles.customizeLinkInline, { borderColor: theme.border, backgroundColor: theme.surface }]}
@@ -369,6 +448,14 @@ export default function HomeScreen() {
           void refreshBoards();
           router.push({ pathname: '/editor', params: { boardId } });
         }}
+      />
+
+      <JoinClassModal
+        visible={joinModalVisible}
+        initialCode={joinInitialCode}
+        theme={theme}
+        onClose={() => setJoinModalVisible(false)}
+        onJoin={handleJoinClass}
       />
     </SafeAreaView>
   );

@@ -39,6 +39,9 @@ export const homeStyles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
   },
+  phoneActionStack: {
+    gap: spacing.md,
+  },
   tabletPrimaryWrap: {
     minWidth: 200,
   },
