@@ -34,6 +34,8 @@ type ExportSheetProps = {
   selectedIds: readonly string[];
   pages?: readonly ExportPageInput[];
   defaultFormat?: ExportFileFormat;
+  hasRevealedTapes?: boolean;
+  onResetAllTapes?: () => void;
   onClose: () => void;
 };
 
@@ -56,6 +58,8 @@ export function ExportSheet({
   selectedIds,
   pages,
   defaultFormat = 'png',
+  hasRevealedTapes = false,
+  onResetAllTapes,
   onClose,
 }: ExportSheetProps) {
   const insets = useSafeAreaInsets();
@@ -68,11 +72,16 @@ export function ExportSheet({
 
   const [format, setFormat] = useState<ExportFileFormat>(defaultFormat);
   const [scope, setScope] = useState<ExportScope>('visible');
+  const [includePrivate, setIncludePrivate] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState('');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const hasPrivateObjects =
+    document.objects.some((o) => o.isPrivate === true) ||
+    Boolean(pages?.some((p) => p.document.objects.some((o) => o.isPrivate === true)));
 
   useEffect(() => {
     if (!visible) {
@@ -81,6 +90,7 @@ export function ExportSheet({
       setProgressLabel('');
       setStatusMessage(null);
       setErrorMessage(null);
+      setIncludePrivate(false);
       return;
     }
     setFormat(defaultFormat);
@@ -132,6 +142,7 @@ export function ExportSheet({
         scope: effectiveScope,
         selectedIds,
         pages,
+        includePrivate,
         onProgress: (fraction, label) => {
           setProgress(fraction);
           setProgressLabel(label);
@@ -173,7 +184,7 @@ export function ExportSheet({
         await deleteExportFile(exportedUri);
       }
     }
-  }, [boardTitle, busy, canvasSize, dark, document, format, pages, scope, selectedIds, settings, viewport]);
+  }, [boardTitle, busy, canvasSize, dark, document, format, includePrivate, pages, scope, selectedIds, settings, viewport]);
 
   const showScopePicker = format !== 'backup';
 
@@ -224,6 +235,31 @@ export function ExportSheet({
           </View>
 
           <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+            {hasRevealedTapes && onResetAllTapes && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Reset all tapes"
+                disabled={busy}
+                onPress={() => {
+                  onResetAllTapes();
+                  onClose();
+                }}
+                style={[
+                  styles.formatRow,
+                  { borderColor: theme.primary, backgroundColor: theme.muted },
+                ]}
+              >
+                <View style={styles.formatText}>
+                  <Text style={[typography.bodyStrong, { color: theme.primary }]}>
+                    Reset all tapes
+                  </Text>
+                  <Text style={[typography.caption, { color: theme.foreground, opacity: 0.7 }]}>
+                    Re-cover all revealed answers on this page
+                  </Text>
+                </View>
+              </Pressable>
+            )}
+
             {showScopePicker && (
               <View style={styles.section}>
                 <Text style={[styles.sectionLabel, { color: theme.foreground }]}>Region</Text>
@@ -330,6 +366,41 @@ export function ExportSheet({
                 })}
               </View>
             </View>
+
+            {showScopePicker && hasPrivateObjects && (
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: includePrivate }}
+                disabled={busy}
+                onPress={() => setIncludePrivate((prev) => !prev)}
+                style={[
+                  styles.formatRow,
+                  {
+                    borderColor: includePrivate ? theme.primary : theme.border,
+                    backgroundColor: includePrivate ? theme.muted : theme.surface,
+                  },
+                ]}
+              >
+                <View style={styles.formatText}>
+                  <Text style={[typography.bodyStrong, { color: theme.foreground }]}>
+                    Include presenter notes
+                  </Text>
+                  <Text style={[typography.caption, { color: theme.foreground, opacity: 0.7 }]}>
+                    Hidden from exports by default
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.radioOuter,
+                    {
+                      borderRadius: 6,
+                      borderColor: includePrivate ? theme.primary : theme.border,
+                      backgroundColor: includePrivate ? theme.primary : 'transparent',
+                    },
+                  ]}
+                />
+              </Pressable>
+            )}
 
             {busy && (
               <View style={[styles.progressBox, { borderColor: theme.border, backgroundColor: theme.muted }]}>

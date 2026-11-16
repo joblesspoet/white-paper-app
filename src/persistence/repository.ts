@@ -25,6 +25,7 @@ import {
   documentsEqual,
   normalizeColumnRatios,
 } from '../canvas/document.ts';
+import { normalizeWaveformPeaks } from '../audio/voice-pin-model.ts';
 import { isValidPortSide, type ConnectorBinding } from '../canvas/connectors.ts';
 import type { ChartKind, ChartSeries } from '../canvas/chart-generator.ts';
 import type { InkStroke } from '../canvas/ink.ts';
@@ -903,6 +904,7 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
     height: value.height as number,
     rotation: value.rotation as number,
     ...(value.locked === true ? { locked: true } : {}),
+    ...(value.isPrivate === true ? { isPrivate: true } : {}),
   };
   const text = value.text;
   const fontSize = value.fontSize;
@@ -1144,6 +1146,47 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
       colorKey,
       ...(typeof value.sourceTableId === 'string' && value.sourceTableId.length > 0
         ? { sourceTableId: value.sourceTableId }
+        : {}),
+    };
+  }
+
+  if (value.type === 'reveal-tape') {
+    if (typeof colorKey !== 'string' || typeof value.isRevealed !== 'boolean') {
+      return null;
+    }
+    return {
+      ...base,
+      type: 'reveal-tape',
+      colorKey,
+      isRevealed: value.isRevealed,
+      ...(typeof value.label === 'string' && value.label.length > 0 ? { label: value.label } : {}),
+    };
+  }
+
+  if (value.type === 'voice-pin') {
+    if (
+      typeof value.audioAssetId !== 'string' ||
+      value.audioAssetId.length === 0 ||
+      typeof value.storagePath !== 'string' ||
+      value.storagePath.length === 0 ||
+      !isFiniteNumber(value.durationMs) ||
+      typeof colorKey !== 'string'
+    ) {
+      return null;
+    }
+    const rawPeaks = Array.isArray(value.waveformPeaks)
+      ? value.waveformPeaks.filter((p): p is number => isFiniteNumber(p))
+      : [];
+    return {
+      ...base,
+      type: 'voice-pin',
+      audioAssetId: value.audioAssetId,
+      storagePath: value.storagePath,
+      durationMs: Math.max(1, Math.round(value.durationMs)),
+      waveformPeaks: normalizeWaveformPeaks(rawPeaks),
+      colorKey,
+      ...(typeof value.transcript === 'string' && value.transcript.length > 0
+        ? { transcript: value.transcript }
         : {}),
     };
   }

@@ -89,6 +89,26 @@ export async function requestCameraPermission(): Promise<PermissionCheckResult> 
   }
 }
 
+export async function checkMicrophonePermission(): Promise<PermissionCheckResult> {
+  if (Platform.OS === 'web') {
+    return classifyPermissionOutcome('microphone', false, false);
+  }
+  try {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      return classifyPermissionOutcome('microphone', granted, true);
+    }
+    const audioMod = getOptionalAudioModule();
+    if (audioMod?.getRecordingPermissionsAsync) {
+      const res = await audioMod.getRecordingPermissionsAsync();
+      return classifyPermissionOutcome('microphone', res.granted, res.canAskAgain ?? true);
+    }
+    return { granted: true, canAskAgain: true, status: 'granted' };
+  } catch {
+    return classifyPermissionOutcome('microphone', false, true);
+  }
+}
+
 export async function requestMicrophonePermission(): Promise<PermissionCheckResult> {
   if (Platform.OS === 'web') {
     return classifyPermissionOutcome('microphone', false, false);

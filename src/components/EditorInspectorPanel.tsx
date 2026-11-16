@@ -67,6 +67,12 @@ type EditorInspectorPanelProps = {
   onUpdateTangentX?: (x0: number, transient?: boolean) => void;
   onTogglePlotTangent?: () => void;
   onCommitPlotChanges?: () => void;
+  canCoverWithTape?: boolean;
+  playingPinId?: string | null;
+  onCoverWithTape?: () => void;
+  onToggleRevealTape?: (id: string) => void;
+  onTogglePlayVoicePin?: (id: string) => void;
+  onTogglePrivate?: () => void;
 };
 
 const SHAPES: ReadonlyArray<{ kind: ShapeKind; label: string; Icon: typeof RectangleIcon }> = [
@@ -101,6 +107,10 @@ function objectTypeLabel(type: CanvasObject['type']): string {
       return 'Function Graph';
     case 'chart':
       return 'Chart';
+    case 'reveal-tape':
+      return 'Reveal Tape';
+    case 'voice-pin':
+      return 'Voice Pin';
   }
 }
 
@@ -128,6 +138,12 @@ export function EditorInspectorPanel({
   onUpdateTangentX,
   onTogglePlotTangent,
   onCommitPlotChanges,
+  canCoverWithTape = false,
+  playingPinId = null,
+  onCoverWithTape,
+  onToggleRevealTape,
+  onTogglePlayVoicePin,
+  onTogglePrivate,
 }: EditorInspectorPanelProps) {
   const [customPickerTarget, setCustomPickerTarget] = useState<'color' | 'fill' | null>(null);
 
@@ -1048,6 +1064,88 @@ export function EditorInspectorPanel({
           onTogglePlotTangent={onTogglePlotTangent}
           onCommitPlotChanges={onCommitPlotChanges}
         />
+
+        {(onTogglePrivate || canCoverWithTape || singleObject?.type === 'reveal-tape' || singleObject?.type === 'voice-pin') && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: theme.foreground }]}>
+              Active Recall & Presenter
+            </Text>
+            <View style={styles.chipRow}>
+              {canCoverWithTape && onCoverWithTape && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Cover with tape"
+                  onPress={onCoverWithTape}
+                  style={[
+                    styles.chip,
+                    { borderColor: theme.border, backgroundColor: theme.surface },
+                  ]}
+                >
+                  <Text style={[styles.chipLabel, { color: theme.foreground }]}>
+                    Cover with tape
+                  </Text>
+                </Pressable>
+              )}
+              {singleObject?.type === 'reveal-tape' && onToggleRevealTape && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={singleObject.isRevealed ? 'Hide reveal tape' : 'Reveal answer'}
+                  onPress={() => onToggleRevealTape(singleObject.id)}
+                  style={[
+                    styles.chip,
+                    { borderColor: theme.primary, backgroundColor: theme.muted },
+                  ]}
+                >
+                  <Text style={[styles.chipLabel, { color: theme.primary }]}>
+                    {singleObject.isRevealed ? 'Hide tape' : 'Reveal answer'}
+                  </Text>
+                </Pressable>
+              )}
+              {singleObject?.type === 'voice-pin' && onTogglePlayVoicePin && (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={playingPinId === singleObject.id ? 'Stop voice pin' : 'Play voice pin'}
+                  onPress={() => onTogglePlayVoicePin(singleObject.id)}
+                  style={[
+                    styles.chip,
+                    { borderColor: theme.primary, backgroundColor: theme.muted },
+                  ]}
+                >
+                  <Text style={[styles.chipLabel, { color: theme.primary }]}>
+                    {playingPinId === singleObject.id ? 'Stop audio' : 'Play audio'}
+                  </Text>
+                </Pressable>
+              )}
+              {onTogglePrivate && selectedObjects.length > 0 && (() => {
+                const allPrivate = selectedObjects.every((o) => o.isPrivate === true);
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Presenter-only (Private)"
+                    accessibilityState={{ selected: allPrivate }}
+                    onPress={onTogglePrivate}
+                    style={[
+                      styles.chip,
+                      {
+                        borderColor: allPrivate ? theme.primary : theme.border,
+                        backgroundColor: allPrivate ? theme.muted : theme.surface,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipLabel,
+                        { color: allPrivate ? theme.primary : theme.foreground },
+                      ]}
+                    >
+                      {allPrivate ? 'Presenter-only ✓' : 'Presenter-only (Private)'}
+                    </Text>
+                  </Pressable>
+                );
+              })()}
+            </View>
+          </View>
+        )}
 
         {singleObject ? (
           <>

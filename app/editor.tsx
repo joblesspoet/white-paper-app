@@ -189,8 +189,16 @@ import { cropMetadata } from '../src/media/asset-store';
 import type { ImageObject, StickyObject } from '../src/canvas/document';
 import { QuickBranchHandles } from '../src/components/QuickBranchHandles';
 import { PhoneStemSelectionBar } from '../src/components/PhoneStemSelectionBar';
+import { PhoneRecallSelectionBar } from '../src/components/PhoneRecallSelectionBar';
+import { StageCurtainOverlay } from '../src/components/StageCurtainOverlay';
+import { VoicePinBar } from '../src/components/VoicePinBar';
+import { PollOverlayModal } from '../src/components/PollOverlayModal';
+import { FlashcardStudyModal } from '../src/components/FlashcardStudyModal';
 import { useMagneticMindMap } from '../src/hooks/useMagneticMindMap';
 import { useStemGraphing } from '../src/hooks/useStemGraphing';
+import { useRevealAndCurtain } from '../src/hooks/useRevealAndCurtain';
+import { useVoicePins } from '../src/hooks/useVoicePins';
+import { useClassroomPoll } from '../src/hooks/useClassroomPoll';
 import { InkingQuickTray } from '../src/components/InkingQuickTray';
 import { QuickCreationSheet, type InsertToolRequest } from '../src/components/QuickCreationSheet';
 import { ActionIsland, ACTION_ISLAND_HEIGHT } from '../src/components/ActionIsland';
@@ -449,6 +457,7 @@ export default function BoardEditorScreen() {
   const activePageIdRef = useRef<string | null>(null);
   const [pageSorterVisible, setPageSorterVisible] = useState(false);
   const [pdfImportVisible, setPdfImportVisible] = useState(false);
+  const [flashcardsVisible, setFlashcardsVisible] = useState(false);
 
   const insertMediaAssetRow = useCallback(async (asset: MediaAssetRecord) => {
     if (!boardId) return;
@@ -1814,71 +1823,6 @@ function mathSpanAtPoint(
     commitInlineMath();
   }, [commitEditing, commitInlineMath, commitTableCell, document, editingMathInline]);
 
-  const handleSelectInsert = useCallback((request: InsertToolRequest) => {
-    if (request.type === 'sticky') {
-      if (request.colorKey) setStickyColorKey(request.colorKey);
-      pressTool('sticky');
-    } else if (request.type === 'text') {
-      if (request.colorKey) setTextColorKey(request.colorKey);
-      pressTool('text');
-    } else if (request.type === 'shape') {
-      setShapeKind(request.shape);
-      pressTool('shape');
-    } else if (request.type === 'connector') {
-      setConnectorStyle(request.style);
-      pressTool('connector');
-    } else if (request.type === 'table') {
-      const center = screenToCanvas(
-        {
-          x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
-          y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
-        },
-        viewport,
-      );
-      const table = createTableObject({
-        id: `table-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        point: center,
-        rows: request.rows,
-        columns: request.columns,
-      });
-      dispatch({ type: 'command', command: { type: 'object.insert', object: table } });
-      setSelectedObjectIds([table.id]);
-      setActiveTool('select');
-    } else if (request.type === 'geometry') {
-      const center = screenToCanvas(
-        {
-          x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
-          y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
-        },
-        viewport,
-      );
-      setActiveInstrument(createDefaultInstrument(request.instrument, center));
-      if (activeTool === 'select') {
-        setActiveTool('pen');
-      }
-    } else if (request.type === 'math') {
-      setEditingMathObject(null);
-      setMathSheetVisible(true);
-    } else if (request.type === 'image') {
-      if (!boardId) return;
-      setImageFlowId(`${boardId}-${Date.now()}`);
-      setImageFlowOpen(true);
-    } else if (request.type === 'pdf') {
-      if (!boardId) return;
-      setPdfImportVisible(true);
-    } else if (request.type === 'timer') {
-      setTimerVisible(true);
-    } else if (request.type === 'calculator') {
-      setCalculatorVisible(true);
-    } else if (request.type === 'facecam') {
-      setFaceCamVisible((prev) => !prev);
-    } else if (request.type === 'recorder') {
-      setRecorderBarVisible(true);
-    } else if (request.type === 'saved-lessons') {
-      setSavedLessonsVisible(true);
-    }
-  }, [activeTool, boardId, canvasRect.height, canvasRect.width, pressTool, viewport, width, windowHeight]);
-
   const refreshSavedLessons = useCallback(async () => {
     const list = await listSavedLessons();
     setSavedLessons(list);
@@ -2538,6 +2482,162 @@ function mathSpanAtPoint(
     setSelectedIds: setSelectedObjectIds,
   });
 
+  const getViewportCenterPoint = useCallback(() => {
+    return screenToCanvas(
+      {
+        x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
+        y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
+      },
+      viewport,
+    );
+  }, [canvasRect.height, canvasRect.width, viewport, width, windowHeight]);
+
+  const {
+    stageOverlayVisible,
+    stageOverlayMode,
+    setStageOverlayMode,
+    hidePrivatePreview,
+    canCoverWithTape,
+    hasRevealedTapes,
+    hasPrivateObjects,
+    handleToggleRevealTape,
+    handleInsertRevealTapeAt,
+    handleCoverSelectionWithTape,
+    handleResetAllTapes,
+    handleToggleSelectedPrivate,
+    handleOpenStageOverlay,
+    handleCloseStageOverlay,
+    handleToggleHidePrivatePreview,
+  } = useRevealAndCurtain({
+    document,
+    selectedObjects,
+    haptics: preferences.haptics,
+    isReadOnly: isCanvasReadOnly,
+    dispatchCommand: runCommand,
+    dispatchBatchCommands: runBatchCommands,
+    setSelectedIds: setSelectedObjectIds,
+  });
+
+  const {
+    isRecording: voicePinRecording,
+    recordingMs: voicePinRecordingMs,
+    livePeaks: voicePinLivePeaks,
+    playingPinId: playingVoicePinId,
+    errorMessage: voicePinError,
+    permissionBlocked: voicePinPermissionBlocked,
+    handleStartVoicePinAt,
+    handleStopVoicePinRecording,
+    handleCancelVoicePinRecording,
+    handleTogglePlayById: handleTogglePlayVoicePinById,
+    handleStopPlayback: handleStopVoicePinPlayback,
+    handleOpenSettings: handleOpenVoicePinSettings,
+    handleDismissError: handleDismissVoicePinError,
+  } = useVoicePins({
+    boardId: boardId ?? 'local-board',
+    document,
+    haptics: preferences.haptics,
+    isReadOnly: isCanvasReadOnly,
+    getViewportCenterPoint,
+    dispatchCommand: runCommand,
+    setSelectedIds: setSelectedObjectIds,
+  });
+
+  const {
+    pollModalVisible,
+    activePoll,
+    handleOpenPollModal,
+    handleClosePollModal,
+    handleStartPoll,
+    handleVote: handleVoteInPoll,
+    handleClosePoll,
+    handleClearPoll,
+    handleInsertChartOnBoard: handleInsertPollChartOnBoard,
+  } = useClassroomPoll({
+    classroomSession: classroomSessionRef.current,
+    classroomState,
+    getViewportCenterPoint,
+    dispatchCommand: runCommand,
+    setSelectedIds: setSelectedObjectIds,
+  });
+
+  const handlePlaceRevealTapeAt = useCallback(
+    (point: Point, rect?: { x: number; y: number; width: number; height: number }) => {
+      handleInsertRevealTapeAt(point, rect);
+      setActiveTool('select');
+    },
+    [handleInsertRevealTapeAt],
+  );
+
+  const handleSelectInsert = useCallback((request: InsertToolRequest) => {
+    if (request.type === 'sticky') {
+      if (request.colorKey) setStickyColorKey(request.colorKey);
+      pressTool('sticky');
+    } else if (request.type === 'text') {
+      if (request.colorKey) setTextColorKey(request.colorKey);
+      pressTool('text');
+    } else if (request.type === 'shape') {
+      setShapeKind(request.shape);
+      pressTool('shape');
+    } else if (request.type === 'connector') {
+      setConnectorStyle(request.style);
+      pressTool('connector');
+    } else if (request.type === 'table') {
+      const center = getViewportCenterPoint();
+      const table = createTableObject({
+        id: `table-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        point: center,
+        rows: request.rows,
+        columns: request.columns,
+      });
+      dispatch({ type: 'command', command: { type: 'object.insert', object: table } });
+      setSelectedObjectIds([table.id]);
+      setActiveTool('select');
+    } else if (request.type === 'geometry') {
+      const center = getViewportCenterPoint();
+      setActiveInstrument(createDefaultInstrument(request.instrument, center));
+      if (activeTool === 'select') {
+        setActiveTool('pen');
+      }
+    } else if (request.type === 'math') {
+      setEditingMathObject(null);
+      setMathSheetVisible(true);
+    } else if (request.type === 'image') {
+      if (!boardId) return;
+      setImageFlowId(`${boardId}-${Date.now()}`);
+      setImageFlowOpen(true);
+    } else if (request.type === 'pdf') {
+      if (!boardId) return;
+      setPdfImportVisible(true);
+    } else if (request.type === 'timer') {
+      setTimerVisible(true);
+    } else if (request.type === 'calculator') {
+      setCalculatorVisible(true);
+    } else if (request.type === 'facecam') {
+      setFaceCamVisible((prev) => !prev);
+    } else if (request.type === 'recorder') {
+      setRecorderBarVisible(true);
+    } else if (request.type === 'saved-lessons') {
+      setSavedLessonsVisible(true);
+    } else if (request.type === 'reveal-tape') {
+      pressTool('reveal-tape');
+    } else if (request.type === 'voice-pin') {
+      void handleStartVoicePinAt();
+    } else if (request.type === 'curtain') {
+      handleOpenStageOverlay('curtain');
+    } else if (request.type === 'spotlight') {
+      handleOpenStageOverlay('spotlight');
+    } else if (request.type === 'flashcards') {
+      setFlashcardsVisible(true);
+    }
+  }, [
+    activeTool,
+    boardId,
+    getViewportCenterPoint,
+    handleOpenStageOverlay,
+    handleStartVoicePinAt,
+    pressTool,
+  ]);
+
   const selectedBounds = selectionBounds(selectedObjects);
   const selectedRect = selectedBounds && !editing ? canvasRectToScreen(selectedBounds, viewport) : null;
   // Only text and sticky notes have editable text. Shapes and connectors
@@ -2634,6 +2734,34 @@ function mathSpanAtPoint(
         <View style={styles.actions}>
           <Pressable accessibilityRole="button" accessibilityLabel="Undo" accessibilityHint={canUndo ? (undoLabel ? `Undo ${undoLabel}` : 'Reverts the last change') : 'Nothing to undo'} accessibilityState={{ disabled: !canUndo }} disabled={!canUndo} onPress={undo} style={[styles.action, !canUndo && styles.actionDisabled]}><UndoIcon size={22} color={theme.foreground} /></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Redo" accessibilityHint={canRedo ? (redoLabel ? `Redo ${redoLabel}` : 'Reapplies the last undone change') : 'Nothing to redo'} accessibilityState={{ disabled: !canRedo }} disabled={!canRedo} onPress={redo} style={[styles.action, !canRedo && styles.actionDisabled]}><RedoIcon size={22} color={theme.foreground} /></Pressable>
+          {(hasPrivateObjects || hidePrivatePreview) && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={hidePrivatePreview ? 'Show presenter notes' : 'Hide presenter notes'}
+              accessibilityState={{ selected: hidePrivatePreview }}
+              onPress={handleToggleHidePrivatePreview}
+              style={{
+                minHeight: 34,
+                paddingHorizontal: 8,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: hidePrivatePreview ? theme.primary : theme.border,
+                backgroundColor: hidePrivatePreview ? theme.muted : theme.surface,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: 11,
+                  fontWeight: '700',
+                  color: hidePrivatePreview ? theme.primary : theme.foreground,
+                }}
+              >
+                {hidePrivatePreview ? 'Notes Off' : 'Presenter'}
+              </Text>
+            </Pressable>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Board background style"
@@ -2770,6 +2898,12 @@ function mathSpanAtPoint(
             onToggleFaceCam={() => setFaceCamVisible((v) => !v)}
             onToggleRecorder={() => setRecorderBarVisible((v) => !v)}
             onOpenSavedLessons={() => setSavedLessonsVisible(true)}
+            stageOverlayVisible={stageOverlayVisible}
+            stageOverlayMode={stageOverlayMode}
+            voicePinRecording={voicePinRecording}
+            onStartVoicePin={() => void handleStartVoicePinAt()}
+            onOpenStageOverlay={handleOpenStageOverlay}
+            onOpenFlashcards={() => setFlashcardsVisible(true)}
           />
         )}
         {!hydrated ? (
@@ -2857,6 +2991,23 @@ function mathSpanAtPoint(
                 onObjectEdit={startEditingExisting}
                 onObjectMeasure={measureObject}
                 onCanvasTouch={handleCanvasTouch}
+                hidePrivatePreview={hidePrivatePreview}
+                playingVoicePinId={playingVoicePinId}
+                onToggleRevealTape={handleToggleRevealTape}
+                onToggleVoicePinPlay={handleTogglePlayVoicePinById}
+                onInsertRevealTapeAt={handlePlaceRevealTapeAt}
+                onStartVoicePinAt={(pt) => {
+                  void handleStartVoicePinAt(pt);
+                  setActiveTool('select');
+                }}
+              />
+              <StageCurtainOverlay
+                visible={stageOverlayVisible}
+                mode={stageOverlayMode}
+                bounds={canvasRect}
+                theme={theme}
+                onChangeMode={setStageOverlayMode}
+                onClose={handleCloseStageOverlay}
               />
               {classroomState?.active && classroomState.roomInfo && (
                 <ClassroomHud
@@ -2881,7 +3032,9 @@ function mathSpanAtPoint(
                   followTeacherViewport={followTeacherViewport}
                   showcasedName={showcasedName}
                   notice={classroomNotice}
+                  hasActivePoll={Boolean(activePoll)}
                   theme={theme}
+                  onOpenPoll={handleOpenPollModal}
                   onOpenHostSheet={() => {
                     // Don't let the HUD open the sheet until the classroom
                     // transport has finished connecting.
@@ -3597,22 +3750,77 @@ function mathSpanAtPoint(
             )}
 
             {!tablet && !editing && selectedObjects.length > 0 && (
-              <PhoneStemSelectionBar
-                theme={theme}
-                bottomOffset={ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom}
-                canTidySelection={canTidySelection}
-                canPlotMath={Boolean(plottableMath)}
-                canChartTable={Boolean(numericTable)}
-                selectedFunctionPlot={selectedFunctionPlot}
-                onTidyLayout={handleTidyLayout}
-                onPlotMath={handlePlotMathObject}
-                onGenerateChart={handleGenerateChart}
-                onComputeTableStats={handleComputeTableStats}
-                onUpdatePlotParam={handleUpdatePlotParam}
-                onUpdateTangentX={handleUpdateTangentX}
-                onTogglePlotTangent={handleTogglePlotTangent}
-                onCommitPlotChanges={handleCommitPlotChanges}
-              />
+              <>
+                <PhoneStemSelectionBar
+                  theme={theme}
+                  bottomOffset={ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom}
+                  canTidySelection={canTidySelection}
+                  canPlotMath={Boolean(plottableMath)}
+                  canChartTable={Boolean(numericTable)}
+                  selectedFunctionPlot={selectedFunctionPlot}
+                  onTidyLayout={handleTidyLayout}
+                  onPlotMath={handlePlotMathObject}
+                  onGenerateChart={handleGenerateChart}
+                  onComputeTableStats={handleComputeTableStats}
+                  onUpdatePlotParam={handleUpdatePlotParam}
+                  onUpdateTangentX={handleUpdateTangentX}
+                  onTogglePlotTangent={handleTogglePlotTangent}
+                  onCommitPlotChanges={handleCommitPlotChanges}
+                />
+                <PhoneRecallSelectionBar
+                  theme={theme}
+                  bottomOffset={
+                    ACTION_ISLAND_HEIGHT +
+                    spacing.sm +
+                    islandBottom +
+                    (canTidySelection || plottableMath || numericTable || selectedFunctionPlot ? 56 : 0)
+                  }
+                  selectedObjects={selectedObjects}
+                  canCoverWithTape={canCoverWithTape}
+                  playingPinId={playingVoicePinId}
+                  onCoverWithTape={handleCoverSelectionWithTape}
+                  onToggleRevealTape={handleToggleRevealTape}
+                  onTogglePlayVoicePin={handleTogglePlayVoicePinById}
+                  onTogglePrivate={handleToggleSelectedPrivate}
+                />
+              </>
+            )}
+            <VoicePinBar
+              isRecording={voicePinRecording}
+              recordingMs={voicePinRecordingMs}
+              livePeaks={voicePinLivePeaks}
+              playingPinId={playingVoicePinId}
+              errorMessage={voicePinError}
+              permissionBlocked={voicePinPermissionBlocked}
+              bottomOffset={ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom}
+              theme={theme}
+              onStopRecording={handleStopVoicePinRecording}
+              onCancelRecording={handleCancelVoicePinRecording}
+              onStopPlayback={handleStopVoicePinPlayback}
+              onOpenSettings={handleOpenVoicePinSettings}
+              onDismissError={handleDismissVoicePinError}
+            />
+
+            {activeTool === 'reveal-tape' && !editing && (
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  top: spacing.md + 52,
+                  alignSelf: 'center',
+                  backgroundColor: theme.surface,
+                  borderColor: theme.primary,
+                  borderWidth: 1,
+                  borderRadius: 999,
+                  paddingHorizontal: spacing.md,
+                  paddingVertical: spacing.xs,
+                  zIndex: 16,
+                }}
+              >
+                <Text style={{ ...typography.caption, fontWeight: '600', color: theme.primary }}>
+                  Tap or drag on the board to place Reveal Tape
+                </Text>
+              </View>
             )}
 
             {editingTextObject && (
@@ -3691,6 +3899,12 @@ function mathSpanAtPoint(
               onUpdateTangentX={handleUpdateTangentX}
               onTogglePlotTangent={handleTogglePlotTangent}
               onCommitPlotChanges={handleCommitPlotChanges}
+              canCoverWithTape={canCoverWithTape}
+              playingPinId={playingVoicePinId}
+              onCoverWithTape={handleCoverSelectionWithTape}
+              onToggleRevealTape={handleToggleRevealTape}
+              onTogglePlayVoicePin={handleTogglePlayVoicePinById}
+              onTogglePrivate={handleToggleSelectedPrivate}
             />
           )}
       </View>
@@ -4057,7 +4271,28 @@ function mathSpanAtPoint(
         selectedIds={selectedObjectIds}
         pages={exportPages}
         defaultFormat={preferences.exportFormat}
+        hasRevealedTapes={hasRevealedTapes}
+        onResetAllTapes={handleResetAllTapes}
         onClose={() => setExportSheetVisible(false)}
+      />
+      <PollOverlayModal
+        visible={pollModalVisible}
+        role={classroomState?.role ?? 'teacher'}
+        peerId={classroomState?.peerId ?? 'teacher'}
+        activePoll={activePoll}
+        theme={theme}
+        onStartPoll={handleStartPoll}
+        onVote={handleVoteInPoll}
+        onClosePoll={handleClosePoll}
+        onInsertChartOnBoard={handleInsertPollChartOnBoard}
+        onClearPoll={handleClearPoll}
+        onDismiss={handleClosePollModal}
+      />
+      <FlashcardStudyModal
+        visible={flashcardsVisible}
+        document={document}
+        theme={theme}
+        onClose={() => setFlashcardsVisible(false)}
       />
       <PageSorterSheet
         visible={pageSorterVisible}
@@ -4276,6 +4511,12 @@ function ToolRail({
   onToggleFaceCam,
   onToggleRecorder,
   onOpenSavedLessons,
+  stageOverlayVisible,
+  stageOverlayMode,
+  voicePinRecording,
+  onStartVoicePin,
+  onOpenStageOverlay,
+  onOpenFlashcards,
 }: {
   theme: ThemeColors;
   activeTool: InkTool;
@@ -4294,6 +4535,12 @@ function ToolRail({
   onToggleFaceCam: () => void;
   onToggleRecorder: () => void;
   onOpenSavedLessons: () => void;
+  stageOverlayVisible: boolean;
+  stageOverlayMode: 'curtain' | 'spotlight';
+  voicePinRecording: boolean;
+  onStartVoicePin: () => void;
+  onOpenStageOverlay: (mode: 'curtain' | 'spotlight') => void;
+  onOpenFlashcards: () => void;
 }) {
   return (
     <View style={[styles.rail, { borderRightColor: theme.border, backgroundColor: theme.surface }]}>
@@ -4418,6 +4665,66 @@ function ToolRail({
             <Text style={{ fontSize: 14, fontWeight: '700', color: theme.foreground }}>▶</Text>
           </View>
           <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>Lessons</Text>
+        </Pressable>
+        <View style={[styles.railDivider, { backgroundColor: theme.border }]} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Place tap-to-reveal answer tape"
+          accessibilityState={{ selected: activeTool === 'reveal-tape' }}
+          onPress={() => onToolPress('reveal-tape')}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, activeTool === 'reveal-tape' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: activeTool === 'reveal-tape' ? theme.primary : theme.foreground }}>▓</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: activeTool === 'reveal-tape' ? theme.primary : theme.foreground }]} numberOfLines={1}>Tape</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Record spatial voice pin"
+          accessibilityState={{ selected: voicePinRecording }}
+          onPress={onStartVoicePin}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, voicePinRecording && { backgroundColor: '#DC26261F', borderColor: '#DC2626' }]}>
+            <Text style={{ fontSize: 15, color: voicePinRecording ? '#DC2626' : theme.foreground }}>🎤</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: voicePinRecording ? '#DC2626' : theme.foreground }]} numberOfLines={1}>Voice</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open stage curtain shade"
+          accessibilityState={{ selected: stageOverlayVisible && stageOverlayMode === 'curtain' }}
+          onPress={() => onOpenStageOverlay('curtain')}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, stageOverlayVisible && stageOverlayMode === 'curtain' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+            <Text style={{ fontSize: 15, color: stageOverlayVisible && stageOverlayMode === 'curtain' ? theme.primary : theme.foreground }}>▥</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: stageOverlayVisible && stageOverlayMode === 'curtain' ? theme.primary : theme.foreground }]} numberOfLines={1}>Curtain</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open spotlight focus shade"
+          accessibilityState={{ selected: stageOverlayVisible && stageOverlayMode === 'spotlight' }}
+          onPress={() => onOpenStageOverlay('spotlight')}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={[styles.toolIconWrap, stageOverlayVisible && stageOverlayMode === 'spotlight' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
+            <Text style={{ fontSize: 15, color: stageOverlayVisible && stageOverlayMode === 'spotlight' ? theme.primary : theme.foreground }}>◎</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: stageOverlayVisible && stageOverlayMode === 'spotlight' ? theme.primary : theme.foreground }]} numberOfLines={1}>Spot</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Study board flashcards"
+          onPress={onOpenFlashcards}
+          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
+        >
+          <View style={styles.toolIconWrap}>
+            <Text style={{ fontSize: 15, color: theme.foreground }}>🗂</Text>
+          </View>
+          <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>Cards</Text>
         </Pressable>
       </ScrollView>
     </View>

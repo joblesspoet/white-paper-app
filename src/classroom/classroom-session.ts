@@ -11,15 +11,21 @@
  * - `student.board.update` for the Teacher's Student Boards Gallery
  */
 
-import { EMPTY_DOCUMENT, type CanvasDocument } from '../canvas/document.ts';
+import { EMPTY_DOCUMENT, filterPublicDocument, type CanvasDocument } from '../canvas/document.ts';
 import type { GeometryInstrumentState } from '../canvas/geometry-box.ts';
 import { IDENTITY_VIEWPORT, type Viewport } from '../canvas/viewport.ts';
 import { DEFAULT_BOARD_SETTINGS, type BoardSettings } from '../persistence/schema.ts';
+import {
+  closeClassroomPoll,
+  submitPollVote,
+  type ClassroomPoll,
+} from './poll-model.ts';
 import {
   applySerializableCommand,
   buildClassroomDeepLink,
   CLASSROOM_PROTOCOL_VERSION,
   EPHEMERAL_STREAM_INTERVAL_MS,
+  filterPublicSerializableCommand,
   generateRoomCode,
   MAX_CLASSROOM_STUDENTS,
   normalizeRoomCode,
@@ -86,6 +92,7 @@ export type ClassroomSessionCallbacks = {
   onNotice?: (message: string) => void;
   onKicked?: () => void;
   onClassEnded?: () => void;
+  onPollChanged?: (poll: ClassroomPoll | null) => void;
 };
 
 export type ClassroomSessionState = {
@@ -104,6 +111,7 @@ export type ClassroomSessionState = {
   rejectedCommandsCount: number;
   studentBoards: Record<string, StudentBoardSnapshot>;
   showcasedStudentPeerId: string | null;
+  activePoll: ClassroomPoll | null;
 };
 
 function makePeerId(prefix: string): string {
@@ -165,6 +173,7 @@ export class ClassroomSession {
       rejectedCommandsCount: 0,
       studentBoards: {},
       showcasedStudentPeerId: null,
+      activePoll: null,
     };
   }
 
@@ -244,7 +253,7 @@ export class ClassroomSession {
       pageName: params.pageName,
       pageOrderIndex: params.pageOrderIndex,
       boardSettings: params.boardSettings,
-      document: params.document,
+      document: filterPublicDocument(params.document),
       viewport: params.viewport,
     };
 
@@ -263,6 +272,7 @@ export class ClassroomSession {
       rejectedCommandsCount: 0,
       studentBoards: {},
       showcasedStudentPeerId: null,
+      activePoll: null,
     });
 
     this.bindTransport();
@@ -316,6 +326,7 @@ export class ClassroomSession {
       rejectedCommandsCount: 0,
       studentBoards: {},
       showcasedStudentPeerId: null,
+      activePoll: null,
     });
 
     this.bindTransport();
@@ -391,6 +402,7 @@ export class ClassroomSession {
       hasSnapshot: false,
       studentBoards: {},
       showcasedStudentPeerId: null,
+      activePoll: null,
     });
   }
 
@@ -404,7 +416,10 @@ export class ClassroomSession {
     document: CanvasDocument;
     viewport: Viewport;
   }) {
-    this.hostBoardState = snapshot;
+    this.hostBoardState = {
+      ...snapshot,
+      document: filterPublicDocument(snapshot.document),
+    };
   }
 
   updateHostViewport(viewport: Viewport) {
@@ -428,6 +443,7 @@ export class ClassroomSession {
       payload: {
         roomInfo: this.state.roomInfo,
         ...this.hostBoardState,
+        document: filterPublicDocument(this.hostBoardState.document),
       },
     };
     await this.transport.send(envelope);
@@ -443,6 +459,9 @@ export class ClassroomSession {
         return;
       }
     }
+    const publicCommand =
+      this.state.role === 'teacher' ? filterPublicSerializableCommand(command) : command;
+    if (!publicCommand) return;
     const nextSeq = this.state.seq + 1;
     this.updateState({ seq: nextSeq });
     const envelope: ClassroomEnvelope = {
@@ -452,7 +471,7 @@ export class ClassroomSession {
       senderPeerId: this.state.peerId,
       seq: nextSeq,
       sentAt: Date.now(),
-      payload: { pageId, command },
+      payload: { pageId, command: publicCommand },
     };
     await this.transport.send(envelope);
   }
@@ -506,13 +525,59 @@ export class ClassroomSession {
     viewport: Viewport;
   }): Promise<void> {
     if (this.state.role !== 'teacher' || !this.state.roomInfo) return;
-    this.hostBoardState = params;
+    const sanitized = {
+      ...params,
+      document: filterPublicDocument(params.document),
+    };
+    this.hostBoardState = sanitized;
     const nextSeq = this.state.seq + 1;
     this.updateState({ seq: nextSeq });
     await this.sendControl({
       action: 'page.switch',
-      ...params,
+      ...sanitized,
     });
+  }
+
+  // ---------------------------------------------------------------- pop-quiz polls
+
+  async startPoll(poll: ClassroomPoll): Promise<void> {
+    if (this.state.role !== 'teacher' || !this.state.active) return;
+    this.updateState({ activePoll: poll });
+    this.callbacks.onPollChanged?.(poll);
+    await this.sendControl({ action: 'poll.start', poll });
+  }
+
+  async voteInPoll(pollId: string, optionId: string): Promise<void> {
+    if (!this.state.active) return;
+    const current = this.state.activePoll;
+    if (!current || current.id !== pollId) return;
+    const next = submitPollVote(current, this.state.peerId, optionId);
+    if (next !== current) {
+      this.updateState({ activePoll: next });
+      this.callbacks.onPollChanged?.(next);
+    }
+    await this.sendControl({
+      action: 'poll.vote',
+      pollId,
+      peerId: this.state.peerId,
+      optionId,
+    });
+  }
+
+  async closePoll(pollId: string): Promise<void> {
+    if (this.state.role !== 'teacher' || !this.state.active) return;
+    const current = this.state.activePoll;
+    if (!current || current.id !== pollId) return;
+    const closedAt = Date.now();
+    const closed = closeClassroomPoll(current, closedAt);
+    this.updateState({ activePoll: closed });
+    this.callbacks.onPollChanged?.(closed);
+    await this.sendControl({ action: 'poll.close', pollId, closedAt });
+  }
+
+  clearPoll(): void {
+    this.updateState({ activePoll: null });
+    this.callbacks.onPollChanged?.(null);
   }
 
   // ---------------------------------------------------------------- teacher moderation
@@ -1082,6 +1147,33 @@ export class ClassroomSession {
           this.callbacks.onClassEnded?.();
           void this.endOrLeave();
         }
+        return;
+      }
+      case 'poll.start': {
+        this.updateState({ activePoll: action.poll });
+        this.callbacks.onPollChanged?.(action.poll);
+        if (this.state.role === 'student') {
+          this.callbacks.onNotice?.(`Quick Poll: ${action.poll.question}`);
+        }
+        return;
+      }
+      case 'poll.vote': {
+        const current = this.state.activePoll;
+        if (!current || current.id !== action.pollId) return;
+        const next = submitPollVote(current, action.peerId, action.optionId);
+        if (next !== current) {
+          this.updateState({ activePoll: next });
+          this.callbacks.onPollChanged?.(next);
+        }
+        return;
+      }
+      case 'poll.close': {
+        const current = this.state.activePoll;
+        if (!current || current.id !== action.pollId) return;
+        const closed = closeClassroomPoll(current, action.closedAt);
+        this.updateState({ activePoll: closed });
+        this.callbacks.onPollChanged?.(closed);
+        return;
       }
     }
   }

@@ -50,7 +50,12 @@ export type InsertToolRequest =
   | { type: 'calculator' }
   | { type: 'facecam' }
   | { type: 'recorder' }
-  | { type: 'saved-lessons' };
+  | { type: 'saved-lessons' }
+  | { type: 'reveal-tape' }
+  | { type: 'voice-pin' }
+  | { type: 'curtain' }
+  | { type: 'spotlight' }
+  | { type: 'flashcards' };
 
 type QuickCreationSheetProps = {
   theme: ThemeColors;
@@ -537,6 +542,49 @@ export function QuickCreationSheet({
                       label="Lessons"
                       icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>▶</Text>}
                       onPress={() => insert({ type: 'saved-lessons' })}
+                    />
+                  </View>
+                </Section>
+
+                {/* ----------------------------- Active Recall & Presenter */}
+                <Section theme={theme} label="Active Recall & Presenter">
+                  <View style={styles.row}>
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Place tap-to-reveal answer tape"
+                      label="Reveal Tape"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>▓</Text>}
+                      onPress={() => insert({ type: 'reveal-tape' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Record spatial voice pin"
+                      label="Voice Pin"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>🎤</Text>}
+                      onPress={() => insert({ type: 'voice-pin' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open stage curtain shade"
+                      label="Curtain"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>▥</Text>}
+                      onPress={() => insert({ type: 'curtain' })}
+                    />
+                  </View>
+                  <View style={styles.row}>
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Open spotlight focus shade"
+                      label="Spotlight"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>◎</Text>}
+                      onPress={() => insert({ type: 'spotlight' })}
+                    />
+                    <Tile
+                      theme={theme}
+                      accessibilityLabel="Study board flashcards"
+                      label="Flashcards"
+                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>🗂</Text>}
+                      onPress={() => insert({ type: 'flashcards' })}
                     />
                   </View>
                 </Section>

@@ -24,8 +24,10 @@ type ClassroomHudProps = {
   followTeacherViewport: boolean;
   showcasedName: string | null;
   notice: string | null;
+  hasActivePoll?: boolean;
   theme: ThemeColors;
   onOpenHostSheet: () => void;
+  onOpenPoll?: () => void;
   onRequestSync?: () => void;
   onToggleTeacherMute: () => void;
   onToggleRaiseHand: () => void;
@@ -53,8 +55,10 @@ export const ClassroomHud = React.memo(function ClassroomHud({
   followTeacherViewport,
   showcasedName,
   notice,
+  hasActivePoll = false,
   theme,
   onOpenHostSheet,
+  onOpenPoll,
   onRequestSync,
   onToggleTeacherMute,
   onToggleRaiseHand,
@@ -160,6 +164,29 @@ export const ClassroomHud = React.memo(function ClassroomHud({
                 {teacherMuted ? 'Mic Off' : voiceAvailable ? 'Mic Live' : 'Mic'}
               </Text>
             </Pressable>
+            {onOpenPoll && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={hasActivePoll ? 'View live poll results' : 'Start quick poll'}
+                onPress={onOpenPoll}
+                style={[
+                  styles.actionChip,
+                  {
+                    borderColor: hasActivePoll ? theme.primary : theme.border,
+                    backgroundColor: hasActivePoll ? theme.muted : theme.surface,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.actionChipText,
+                    { color: hasActivePoll ? theme.primary : theme.foreground },
+                  ]}
+                >
+                  {hasActivePoll ? 'Poll Live' : 'Poll'}
+                </Text>
+              </Pressable>
+            )}
           </>
         ) : (
           <>
@@ -258,6 +285,22 @@ export const ClassroomHud = React.memo(function ClassroomHud({
                 >
                   {micEnabled ? 'Speaking' : 'Unmute'}
                 </Text>
+              </Pressable>
+            )}
+            {hasActivePoll && onOpenPoll && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open live quick poll"
+                onPress={onOpenPoll}
+                style={[
+                  styles.actionChip,
+                  {
+                    borderColor: theme.primary,
+                    backgroundColor: theme.muted,
+                  },
+                ]}
+              >
+                <Text style={[styles.actionChipText, { color: theme.primary }]}>Vote</Text>
               </Pressable>
             )}
             <Pressable

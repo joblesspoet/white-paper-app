@@ -11,7 +11,12 @@
  * that writes the files and database rows lives in `backup-store.ts`.
  */
 
-import type { CanvasDocument, CanvasObject, ImageObject } from '../canvas/document.ts';
+import type {
+  CanvasDocument,
+  CanvasObject,
+  ImageObject,
+  VoicePinObject,
+} from '../canvas/document.ts';
 import { documentsEqual } from '../canvas/document.ts';
 import type { InkStroke } from '../canvas/ink.ts';
 import type { Viewport } from '../canvas/viewport.ts';
@@ -170,6 +175,11 @@ function mediaMimeForPath(path: string): string {
   if (extension === 'webp') return 'image/webp';
   if (extension === 'gif') return 'image/gif';
   if (extension === 'heic' || extension === 'heif') return `image/${extension}`;
+  if (extension === 'm4a') return 'audio/m4a';
+  if (extension === 'mp4') return 'audio/mp4';
+  if (extension === 'aac') return 'audio/aac';
+  if (extension === 'mp3') return 'audio/mpeg';
+  if (extension === 'wav') return 'audio/wav';
   return 'image/jpeg';
 }
 
@@ -179,6 +189,11 @@ function extensionForMime(mimeType: string): string {
   if (mimeType === 'image/gif') return 'gif';
   if (mimeType === 'image/heic') return 'heic';
   if (mimeType === 'image/heif') return 'heif';
+  if (mimeType === 'audio/m4a' || mimeType === 'audio/x-m4a') return 'm4a';
+  if (mimeType === 'audio/mp4') return 'mp4';
+  if (mimeType === 'audio/aac') return 'aac';
+  if (mimeType === 'audio/mpeg') return 'mp3';
+  if (mimeType === 'audio/wav') return 'wav';
   return 'jpg';
 }
 
@@ -606,6 +621,15 @@ export function planBackupImport(
     const mappedObjects = doc.objects.map((object) => {
       const newId = `${idPrefix}:${object.id}`;
       objectIdMap.set(object.id, newId);
+      if (object.type === 'voice-pin') {
+        const audio = missingPath(object.storagePath);
+        return {
+          ...object,
+          id: newId,
+          audioAssetId: audio.assetId,
+          storagePath: audio.storagePath,
+        } satisfies VoicePinObject;
+      }
       if (object.type !== 'image') return { ...object, id: newId };
       const placed = missingPath(object.storagePath);
       const original = object.storagePath === object.originalStoragePath
@@ -682,10 +706,12 @@ export function backupSummary(backup: BoardBackup): string {
   let objectCount = 0;
   let strokeCount = 0;
   let imageCount = 0;
+  let voicePinCount = 0;
   for (const page of pages) {
     objectCount += page.document.objects.length;
     strokeCount += page.document.strokes.length;
     imageCount += page.document.objects.filter((object) => object.type === 'image').length;
+    voicePinCount += page.document.objects.filter((object) => object.type === 'voice-pin').length;
   }
   const parts: string[] = [];
   if (pages.length > 1) parts.push(`${pages.length} pages`);
@@ -694,6 +720,7 @@ export function backupSummary(backup: BoardBackup): string {
     `${strokeCount} stroke${strokeCount === 1 ? '' : 's'}`,
   );
   if (imageCount > 0) parts.push(`${imageCount} image${imageCount === 1 ? '' : 's'}`);
+  if (voicePinCount > 0) parts.push(`${voicePinCount} voice pin${voicePinCount === 1 ? '' : 's'}`);
   if (backup.media.length > 0) parts.push(`${backup.media.length} media file${backup.media.length === 1 ? '' : 's'}`);
   return parts.join(' · ');
 }

@@ -7,10 +7,12 @@
  */
 
 import {
+  filterPublicDocument,
   type CanvasDocument,
   type CanvasObject,
   type TextColorKey,
 } from '../canvas/document.ts';
+import type { ClassroomPoll } from './poll-model.ts';
 import type { GeometryInstrumentState } from '../canvas/geometry-box.ts';
 import type { InkPoint, InkStroke } from '../canvas/ink.ts';
 import type { LaserColorKey } from '../canvas/laser.ts';
@@ -122,7 +124,10 @@ export type ClassroomControlAction =
       requesterPeerId: string;
       displayName?: string;
       lastSeq: number;
-    };
+    }
+  | { action: 'poll.start'; poll: ClassroomPoll }
+  | { action: 'poll.vote'; pollId: string; peerId: string; optionId: string }
+  | { action: 'poll.close'; pollId: string; closedAt: number };
 
 export type ClassroomEnvelope =
   | {
@@ -234,6 +239,46 @@ export function parseClassroomDeepLink(input: string): string | null {
 
 // ---------------------------------------------------------------- command serialization
 
+export function filterPublicSerializableCommand(
+  cmd: SerializableCanvasCommand,
+): SerializableCanvasCommand | null {
+  switch (cmd.kind) {
+    case 'stroke.add':
+    case 'strokes.erase':
+    case 'object.delete':
+      return cmd;
+    case 'object.create':
+      return cmd.object.isPrivate === true ? null : cmd;
+    case 'object.update':
+      if (cmd.fullObject.isPrivate === true) {
+        return {
+          kind: 'object.delete',
+          objectId: cmd.objectId,
+        };
+      }
+      if (cmd.previousObject?.isPrivate === true) {
+        return {
+          kind: 'object.create',
+          object: cmd.fullObject,
+        };
+      }
+      return cmd;
+    case 'batch': {
+      const filtered: SerializableCanvasCommand[] = [];
+      for (const inner of cmd.commands) {
+        const next = filterPublicSerializableCommand(inner);
+        if (next) filtered.push(next);
+      }
+      if (filtered.length === 0) return null;
+      return filtered.length === 1 ? filtered[0] : { kind: 'batch', commands: filtered };
+    }
+  }
+}
+
+export function filterPublicSnapshotDocument(doc: CanvasDocument): CanvasDocument {
+  return filterPublicDocument(doc);
+}
+
 export function applySerializableCommand(
   doc: CanvasDocument,
   cmd: SerializableCanvasCommand,
@@ -315,6 +360,9 @@ const VALID_CONTROL_ACTIONS = new Set([
   'page.switch',
   'student.showcase',
   'sync.request',
+  'poll.start',
+  'poll.vote',
+  'poll.close',
 ]);
 
 export function parseClassroomEnvelope(raw: unknown): ClassroomEnvelope | null {

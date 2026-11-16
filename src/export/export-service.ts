@@ -29,13 +29,16 @@ import {
   arrowHeadSize,
   buildShapeRenderPrimitives,
   connectorPolyline,
+  filterPublicDocument,
   isChartObject,
   isFunctionPlotObject,
   isGeometricObject,
   isImageObject,
   isMathObject,
+  isRevealTapeObject,
   isTableObject,
   isTextualObject,
+  isVoicePinObject,
   objectFill,
   objectTextColor,
   polylinePathData,
@@ -48,10 +51,13 @@ import {
   type CanvasObject,
   type MathObject,
   type ConnectorObject,
+  type RevealTapeObject,
   type ShapeObject,
   type TableObject,
   type TextualObject,
+  type VoicePinObject,
 } from '../canvas/document';
+import { formatVoiceDuration } from '../audio/voice-pin-model';
 import { drawChartObject, drawFunctionPlotObject } from './stem-export-renderer';
 import {
   buildVariableWidthStrokePath,
@@ -117,6 +123,8 @@ export type ExportInput = {
   scope: ExportScope;
   selectedIds?: readonly string[];
   pages?: readonly ExportPageInput[];
+  /** When false/omitted, `isPrivate` (Presenter-only) objects are stripped from PNG/JPEG/PDF exports. */
+  includePrivate?: boolean;
   onProgress?: ExportProgress;
 };
 
@@ -161,6 +169,11 @@ function mimeForPath(path: string): string {
   if (ext === 'webp') return 'image/webp';
   if (ext === 'gif') return 'image/gif';
   if (ext === 'heic' || ext === 'heif') return `image/${ext}`;
+  if (ext === 'm4a') return 'audio/m4a';
+  if (ext === 'mp4') return 'audio/mp4';
+  if (ext === 'aac') return 'audio/aac';
+  if (ext === 'mp3') return 'audio/mpeg';
+  if (ext === 'wav') return 'audio/wav';
   return 'image/jpeg';
 }
 
@@ -536,6 +549,124 @@ function drawImageObject(
   canvas.restore();
 }
 
+function drawRevealTapeObject(
+  canvas: SkCanvas,
+  tape: RevealTapeObject,
+  dark: boolean,
+): void {
+  const fill = stickyColorValue(tape.colorKey);
+  const textHex = objectTextColor(tape, dark);
+  const cx = tape.x + tape.width / 2;
+  const cy = tape.y + tape.height / 2;
+  canvas.save();
+  if (tape.rotation !== 0) {
+    canvas.rotate(tape.rotation, cx, cy);
+  }
+  const rect = Skia.RRectXY(Skia.XYWHRect(tape.x, tape.y, tape.width, tape.height), 8, 8);
+  const fillPaint = Skia.Paint();
+  fillPaint.setAntiAlias(true);
+  fillPaint.setStyle(PaintStyle.Fill);
+  fillPaint.setColor(Skia.Color(fill));
+  fillPaint.setAlphaf(tape.isRevealed ? 0.24 : 0.96);
+  canvas.drawRRect(rect, fillPaint);
+
+  const borderPaint = Skia.Paint();
+  borderPaint.setAntiAlias(true);
+  borderPaint.setStyle(PaintStyle.Stroke);
+  borderPaint.setStrokeWidth(1.5);
+  borderPaint.setColor(Skia.Color(textHex));
+  borderPaint.setAlphaf(tape.isRevealed ? 0.45 : 0.35);
+  canvas.drawRRect(rect, borderPaint);
+
+  if (!tape.isRevealed && tape.label) {
+    const paragraph = Skia.ParagraphBuilder.Make({ textAlign: TextAlign.Center })
+      .pushStyle({
+        color: Skia.Color(textHex),
+        fontSize: 12,
+        fontStyle: { weight: FontWeight.SemiBold },
+      })
+      .addText(tape.label)
+      .build();
+    paragraph.layout(Math.max(12, tape.width - 12));
+    const pHeight = paragraph.getHeight();
+    paragraph.paint(canvas, tape.x + 6, tape.y + Math.max(4, (tape.height - pHeight) / 2));
+  }
+  canvas.restore();
+}
+
+function drawVoicePinObject(
+  canvas: SkCanvas,
+  pin: VoicePinObject,
+  dark: boolean,
+): void {
+  const accent = textColorValue(pin.colorKey, dark);
+  const theme = dark ? darkColors : colors;
+  const cx = pin.x + pin.width / 2;
+  const cy = pin.y + pin.height / 2;
+  canvas.save();
+  if (pin.rotation !== 0) {
+    canvas.rotate(pin.rotation, cx, cy);
+  }
+  const pill = Skia.RRectXY(
+    Skia.XYWHRect(pin.x, pin.y, pin.width, pin.height),
+    pin.height / 2,
+    pin.height / 2,
+  );
+  const bgPaint = Skia.Paint();
+  bgPaint.setAntiAlias(true);
+  bgPaint.setStyle(PaintStyle.Fill);
+  bgPaint.setColor(Skia.Color(theme.surface));
+  canvas.drawRRect(pill, bgPaint);
+
+  const strokePaint = Skia.Paint();
+  strokePaint.setAntiAlias(true);
+  strokePaint.setStyle(PaintStyle.Stroke);
+  strokePaint.setStrokeWidth(1.5);
+  strokePaint.setColor(Skia.Color(accent));
+  canvas.drawRRect(pill, strokePaint);
+
+  // Play badge circle
+  const badgeRadius = 11;
+  const badgeCx = pin.x + 18;
+  const badgeCy = pin.y + pin.height / 2;
+  const badgePaint = Skia.Paint();
+  badgePaint.setAntiAlias(true);
+  badgePaint.setColor(Skia.Color(accent));
+  canvas.drawCircle(badgeCx, badgeCy, badgeRadius, badgePaint);
+
+  // Waveform bars
+  const barPaint = Skia.Paint();
+  barPaint.setAntiAlias(true);
+  barPaint.setColor(Skia.Color(accent));
+  barPaint.setAlphaf(0.75);
+  const peaks = pin.waveformPeaks;
+  const startX = pin.x + 36;
+  const barAreaWidth = Math.max(24, pin.width - 78);
+  const step = barAreaWidth / Math.max(1, peaks.length);
+  for (let i = 0; i < peaks.length; i += 1) {
+    const barHeight = Math.max(4, Math.min(20, peaks[i] * 20));
+    const bx = startX + i * step;
+    const by = badgeCy - barHeight / 2;
+    canvas.drawRRect(
+      Skia.RRectXY(Skia.XYWHRect(bx, by, Math.max(1.5, step * 0.55), barHeight), 1, 1),
+      barPaint,
+    );
+  }
+
+  const label = formatVoiceDuration(pin.durationMs);
+  const paragraph = Skia.ParagraphBuilder.Make({ textAlign: TextAlign.Right })
+    .pushStyle({
+      color: Skia.Color(theme.foreground),
+      fontSize: 11,
+      fontStyle: { weight: FontWeight.SemiBold },
+    })
+    .addText(label)
+    .build();
+  paragraph.layout(36);
+  paragraph.paint(canvas, pin.x + pin.width - 42, badgeCy - paragraph.getHeight() / 2);
+  canvas.restore();
+}
+
 function resolveRegion(input: ExportInput): ExportRect | null {
   if (input.scope === 'selection') {
     return selectionExportRegion(input.document, input.selectedIds ?? []);
@@ -547,16 +678,20 @@ async function renderRegionBase64(
   input: ExportInput,
   imageFormat: ExportImageFormat,
 ): Promise<{ ok: true; base64: string; pixelWidth: number; pixelHeight: number; isLarge: boolean } | { ok: false; error: string }> {
+  const effectiveDocument = input.includePrivate
+    ? input.document
+    : filterPublicDocument(input.document);
+  const scopedInput: ExportInput = { ...input, document: effectiveDocument };
   const region =
-    input.scope === 'all-pages'
-      ? pageExportRegion(input.document, input.viewport, input.canvasSize)
-      : resolveRegion(input);
+    scopedInput.scope === 'all-pages'
+      ? pageExportRegion(effectiveDocument, scopedInput.viewport, scopedInput.canvasSize)
+      : resolveRegion(scopedInput);
   if (!region) {
     return { ok: false, error: 'Select one or more objects before exporting a selection.' };
   }
 
   const pixelSize = exportPixelSize(region);
-  const large = isLargeExport(input.document, pixelSize);
+  const large = isLargeExport(effectiveDocument, pixelSize);
   const surface = Skia.Surface.MakeOffscreen(pixelSize.width, pixelSize.height);
   if (!surface) {
     return { ok: false, error: 'Could not allocate an offscreen canvas for this export.' };
@@ -586,8 +721,8 @@ async function renderRegionBase64(
   }
 
   const strokes =
-    input.scope === 'visible' || input.scope === 'all-pages' ? input.document.strokes : [];
-  const objects = objectsForScope(input.document, input.scope, input.selectedIds);
+    input.scope === 'visible' || input.scope === 'all-pages' ? effectiveDocument.strokes : [];
+  const objects = objectsForScope(effectiveDocument, input.scope, input.selectedIds);
   const images = objects.filter(isImageObject);
   const geometrics = objects.filter(isGeometricObject);
   const tables = objects.filter(isTableObject);
@@ -595,6 +730,8 @@ async function renderRegionBase64(
   const charts = objects.filter(isChartObject);
   const maths = objects.filter(isMathObject);
   const textuals = objects.filter(isTextualObject);
+  const revealTapes = objects.filter(isRevealTapeObject);
+  const voicePins = objects.filter(isVoicePinObject);
 
   const totalSteps = Math.max(1, strokes.length + objects.length);
   let completed = 0;
@@ -667,6 +804,16 @@ async function renderRegionBase64(
   }
   for (let index = 0; index < charts.length; index += 1) {
     drawChartObject(canvas, charts[index], input.dark);
+    completed += 1;
+  }
+
+  // 7. Reveal Tapes & Spatial Voice Pins
+  for (let index = 0; index < revealTapes.length; index += 1) {
+    drawRevealTapeObject(canvas, revealTapes[index], input.dark);
+    completed += 1;
+  }
+  for (let index = 0; index < voicePins.length; index += 1) {
+    drawVoicePinObject(canvas, voicePins[index], input.dark);
     completed += 1;
   }
 
@@ -850,6 +997,12 @@ export async function exportBoardBackup(input: {
       }
       if (!uniquePaths.has(image.originalStoragePath)) {
         uniquePaths.set(image.originalStoragePath, { width: image.originalWidth, height: image.originalHeight });
+      }
+    }
+    const voicePins = page.document.objects.filter(isVoicePinObject);
+    for (const pin of voicePins) {
+      if (!uniquePaths.has(pin.storagePath)) {
+        uniquePaths.set(pin.storagePath, {});
       }
     }
   }

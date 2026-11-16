@@ -30,6 +30,9 @@ import Animated, {
 import { styles } from './CanvasViewport.styles';
 import { ChartLayer } from './canvas/ChartLayer';
 import { FunctionPlotLayer } from './canvas/FunctionPlotLayer';
+import { PrivateBadgeLayer } from './canvas/PrivateBadgeLayer';
+import { RevealTapeLayer } from './canvas/RevealTapeLayer';
+import { VoicePinLayer } from './canvas/VoicePinLayer';
 import {
   CONNECTOR_SNAP_THRESHOLD_SCREEN,
   findNearestPortSnap,
@@ -50,8 +53,10 @@ import {
   isGeometricObject,
   isImageObject,
   isMathObject,
+  isRevealTapeObject,
   isTableObject,
   isTextualObject,
+  isVoicePinObject,
   objectAtPoint,
   objectFill,
   objectTextColor,
@@ -68,11 +73,13 @@ import {
   type DocumentCommand,
   type ImageObject,
   type MathObject,
+  type RevealTapeObject,
   type ShapeKind,
   type ShapeObject,
   type TableObject,
   type TextualObject,
 } from '../canvas/document';
+import { createRevealTapeObject } from '../canvas/reveal-tape';
 import {
   GEOMETRY_SNAP_SCREEN_DISTANCE,
   projectPointToLockedRulerEdge,
@@ -169,7 +176,9 @@ export type InkTool =
   | 'sticky'
   | 'shape'
   | 'connector'
-  | 'image';
+  | 'image'
+  | 'reveal-tape'
+  | 'voice-pin';
 export type ViewportState = Viewport;
 
 /** Minimum finger travel before a touch on an object counts as a drag, not a tap. */
@@ -228,6 +237,8 @@ type CanvasViewportProps = {
   compactHud?: boolean;
   hideHud?: boolean;
   readOnly?: boolean;
+  hidePrivatePreview?: boolean;
+  playingVoicePinId?: string | null;
   remoteActiveStroke?: EphemeralStrokePacket | null;
   remoteLaserStroke?: EphemeralLaserPacket | null;
   onLiveStrokeSample?: (sample: Omit<EphemeralStrokePacket, 'authorPeerId'>) => void;
@@ -240,6 +251,13 @@ type CanvasViewportProps = {
   onInkSelectionChange?: (ids: string[]) => void;
   onSnapStrokeToShape?: (stroke: InkStroke, shape: ShapeObject | ConnectorObject) => void;
   onObjectEdit?: (id: string, point?: Point) => void;
+  onToggleRevealTape?: (id: string) => void;
+  onToggleVoicePinPlay?: (id: string) => void;
+  onInsertRevealTapeAt?: (
+    point: Point,
+    rect?: { x: number; y: number; width: number; height: number },
+  ) => void;
+  onStartVoicePinAt?: (point: Point) => void;
   /** Real rendered text height, used to correct the object's estimated height. */
   onObjectMeasure?: (id: string, height: number) => void;
   /** A touch on the canvas while an object is being edited: commit or switch slot. */
@@ -274,6 +292,8 @@ export function CanvasViewport({
   compactHud = false,
   hideHud = false,
   readOnly = false,
+  hidePrivatePreview = false,
+  playingVoicePinId = null,
   remoteActiveStroke = null,
   remoteLaserStroke = null,
   onLiveStrokeSample,
@@ -291,6 +311,10 @@ export function CanvasViewport({
   onInkSelectionChange,
   onSnapStrokeToShape,
   onObjectEdit,
+  onToggleRevealTape,
+  onToggleVoicePinPlay,
+  onInsertRevealTapeAt,
+  onStartVoicePinAt,
   onObjectMeasure,
   onCanvasTouch,
 }: CanvasViewportProps) {
@@ -308,6 +332,7 @@ export function CanvasViewport({
   const draggingObjectId = useSharedValue('');
   const dragMoved = useSharedValue(false);
   const tapOpensEditor = useSharedValue('');
+  const tapToggleId = useSharedValue('');
   const collapseSelectionId = useSharedValue('');
   const gestureMode = useSharedValue<'pan' | 'move' | 'resize' | 'rotate' | 'marquee' | ''>('');
   const touchStartCanvasX = useSharedValue(0);
@@ -324,6 +349,9 @@ export function CanvasViewport({
   /** A shape or connector being dragged is previewed locally until release. */
   const [draftObject, setDraftObject] = useState<ShapeObject | ConnectorObject | null>(null);
   const draftObjectRef = useRef<ShapeObject | ConnectorObject | null>(null);
+  const [draftRevealTape, setDraftRevealTape] = useState<RevealTapeObject | null>(null);
+  const draftRevealTapeStartRef = useRef<Point | null>(null);
+  const draftRevealTapeRef = useRef<RevealTapeObject | null>(null);
   const draftStartRef = useRef<Point | null>(null);
   const transformRef = useRef<TransformGesture | null>(null);
   const [viewport, setViewport] = useState<Viewport>(startViewport);
@@ -752,6 +780,121 @@ export function CanvasViewport({
     onCommand({ type: 'object.insert', object: { ...draft, id } });
   }, [onCommand]);
 
+  const beginRevealTape = useCallback((point: Point) => {
+    draftRevealTapeStartRef.current = point;
+    const draft = createRevealTapeObject({
+      id: 'draft-reveal-tape',
+      point,
+      width: 44,
+      height: 28,
+    });
+    draftRevealTapeRef.current = draft;
+    setDraftRevealTape(draft);
+  }, []);
+
+  const updateRevealTape = useCallback((point: Point) => {
+    const start = draftRevealTapeStartRef.current;
+    if (!start) return;
+    const x = Math.min(start.x, point.x);
+    const y = Math.min(start.y, point.y);
+    const width = Math.max(44, Math.abs(point.x - start.x));
+    const height = Math.max(28, Math.abs(point.y - start.y));
+    const draft: RevealTapeObject = {
+      id: 'draft-reveal-tape',
+      type: 'reveal-tape',
+      x,
+      y,
+      width,
+      height,
+      rotation: 0,
+      colorKey: 'butter',
+      label: 'Tap to reveal',
+      isRevealed: false,
+    };
+    draftRevealTapeRef.current = draft;
+    setDraftRevealTape(draft);
+  }, []);
+
+  const finishRevealTape = useCallback(
+    (currentScale: number) => {
+      const start = draftRevealTapeStartRef.current;
+      const draft = draftRevealTapeRef.current;
+      draftRevealTapeStartRef.current = null;
+      draftRevealTapeRef.current = null;
+      setDraftRevealTape(null);
+      if (!start) return;
+      if (
+        !draft ||
+        (draft.width <= 46 && draft.height <= 30) ||
+        Math.hypot(draft.width, draft.height) * currentScale < MIN_SHAPE_SIZE_SCREEN
+      ) {
+        onInsertRevealTapeAt?.(start);
+        return;
+      }
+      onInsertRevealTapeAt?.(
+        { x: draft.x + draft.width / 2, y: draft.y + draft.height / 2 },
+        { x: draft.x, y: draft.y, width: draft.width, height: draft.height },
+      );
+    },
+    [onInsertRevealTapeAt],
+  );
+
+  const visibleObjects = useMemo(
+    () =>
+      hidePrivatePreview
+        ? document.objects.filter((o) => o.isPrivate !== true)
+        : document.objects,
+    [document.objects, hidePrivatePreview],
+  );
+
+  const handleInteractiveTapAt = useCallback(
+    (point: Point) => {
+      if (!readOnly && activeTool === 'select') {
+        const selected = visibleObjects.filter((object) => selectedObjectIds.includes(object.id));
+        if (selected.length === 1) {
+          const rotateOffset = ROTATE_HANDLE_OFFSET_SCREEN / Math.max(viewport.scale, 0.25);
+          const handle = handleAtPoint(
+            selected,
+            point,
+            SELECTION_HANDLE_HIT_SCREEN / Math.max(viewport.scale, 0.25),
+            rotateOffset,
+          );
+          if (handle) return;
+        }
+      }
+      const hit = objectAtPoint(visibleObjects, point);
+      if (!hit) {
+        if (!readOnly && activeTool === 'select' && selectedObjectIds.length > 0) {
+          onSelectionChange?.([]);
+        }
+        return;
+      }
+      if (isRevealTapeObject(hit)) {
+        if (!readOnly && activeTool === 'select') onSelectionChange?.([hit.id]);
+        onToggleRevealTape?.(hit.id);
+        return;
+      }
+      if (isVoicePinObject(hit)) {
+        if (!readOnly && activeTool === 'select') onSelectionChange?.([hit.id]);
+        onToggleVoicePinPlay?.(hit.id);
+        return;
+      }
+      if (!readOnly && activeTool === 'select') {
+        onSelectionChange?.([hit.id]);
+      }
+    },
+    [
+      activeTool,
+      onSelectionChange,
+      onToggleRevealTape,
+      onToggleVoicePinPlay,
+      readOnly,
+      selectedObjectIds,
+      viewport.scale,
+      visibleObjects,
+    ],
+  );
+
   const touchCanvas = useCallback((point?: Point) => { onCanvasTouch?.(point); }, [onCanvasTouch]);
   const selectObjects = useCallback((ids: string[]) => { onSelectionChange?.(ids); }, [onSelectionChange]);
   const editObject = useCallback((id: string, point?: Point) => { onObjectEdit?.(id, point); }, [onObjectEdit]);
@@ -764,9 +907,33 @@ export function CanvasViewport({
     },
     [document.objects, onObjectEdit],
   );
-  const createObject = useCallback((type: 'text' | 'sticky', point: Point) => {
-    onObjectCreate?.(type, point);
-  }, [onObjectCreate]);
+  const toggleInteractiveObject = useCallback(
+    (id: string) => {
+      const obj = visibleObjects.find((o) => o.id === id);
+      if (!obj) return;
+      if (isRevealTapeObject(obj)) {
+        onToggleRevealTape?.(obj.id);
+      } else if (isVoicePinObject(obj)) {
+        onToggleVoicePinPlay?.(obj.id);
+      }
+    },
+    [onToggleRevealTape, onToggleVoicePinPlay, visibleObjects],
+  );
+
+  const createObject = useCallback(
+    (type: 'text' | 'sticky' | 'reveal-tape' | 'voice-pin', point: Point) => {
+      if (type === 'reveal-tape') {
+        onInsertRevealTapeAt?.(point);
+        return;
+      }
+      if (type === 'voice-pin') {
+        onStartVoicePinAt?.(point);
+        return;
+      }
+      onObjectCreate?.(type, point);
+    },
+    [onInsertRevealTapeAt, onObjectCreate, onStartVoicePinAt],
+  );
   const commitPending = useCallback(() => { onCommitPending(); }, [onCommitPending]);
 
   /** Snapshot the selection once so every pointer sample transforms from the same start state. */
@@ -837,9 +1004,9 @@ export function CanvasViewport({
   }, [onCommand]);
 
   const selectInMarquee = useCallback((rect: CanvasRect) => {
-    onSelectionChange?.(objectsInRect(document.objects, rect).map((object) => object.id));
+    onSelectionChange?.(objectsInRect(visibleObjects, rect).map((object) => object.id));
     onInkSelectionChange?.(strokesInRect(document.strokes, rect).map((stroke) => stroke.id));
-  }, [document.objects, document.strokes, onInkSelectionChange, onSelectionChange]);
+  }, [document.strokes, onInkSelectionChange, onSelectionChange, visibleObjects]);
 
   const drawAccepted = useSharedValue(true);
 
@@ -979,10 +1146,20 @@ export function CanvasViewport({
       marqueeEndY.value = point.y;
       dragMoved.value = false;
       tapOpensEditor.value = '';
+      tapToggleId.value = '';
       collapseSelectionId.value = '';
       draggingObjectId.value = '';
 
-      const selected = objects.filter((object) => selectedObjectIds.includes(object.id));
+      if (readOnly) {
+        const hitReadOnly = objectAtPoint(visibleObjects, point);
+        if (hitReadOnly && (isRevealTapeObject(hitReadOnly) || isVoicePinObject(hitReadOnly))) {
+          tapToggleId.value = hitReadOnly.id;
+        }
+        gestureMode.value = 'pan';
+        return;
+      }
+
+      const selected = visibleObjects.filter((object) => selectedObjectIds.includes(object.id));
       const rotateOffset = ROTATE_HANDLE_OFFSET_SCREEN / scale.value;
       const handle = selected.length === 1
         ? handleAtPoint(selected, point, SELECTION_HANDLE_HIT_SCREEN / scale.value, rotateOffset)
@@ -994,17 +1171,16 @@ export function CanvasViewport({
         return;
       }
 
-      const hit = objectAtPoint(objects, point);
+      const hit = objectAtPoint(visibleObjects, point);
       if (hit) {
         const alreadySelected = selectedObjectIds.includes(hit.id);
         draggingObjectId.value = hit.id;
         gestureMode.value = 'move';
         if (!alreadySelected) runOnJS(selectObjects)([hit.id]);
         runOnJS(beginTransform)('move', null, point, alreadySelected ? selectedObjectIds : [hit.id]);
-        // A tap on one member of a multi-selection collapses to that object;
-        // a tap on the only selected text object opens its editor.
-        if (alreadySelected && selectedObjectIds.length > 1) collapseSelectionId.value = hit.id;
-        else if (
+        if (alreadySelected && selectedObjectIds.length > 1) {
+          collapseSelectionId.value = hit.id;
+        } else if (
           alreadySelected &&
           selectedObjectIds.length === 1 &&
           (isTextualObject(hit) || isTableObject(hit) || isMathObject(hit))
@@ -1056,10 +1232,12 @@ export function CanvasViewport({
       const hitId = draggingObjectId.value;
       const moved = dragMoved.value;
       const opensEditor = tapOpensEditor.value;
+      const toggleInteractive = tapToggleId.value;
       const collapseId = collapseSelectionId.value;
       gestureMode.value = '';
       draggingObjectId.value = '';
       tapOpensEditor.value = '';
+      tapToggleId.value = '';
       collapseSelectionId.value = '';
       dragMoved.value = false;
 
@@ -1079,8 +1257,9 @@ export function CanvasViewport({
       }
       if (mode === 'move' || mode === 'resize' || mode === 'rotate') {
         if (mode === 'move' && !moved) {
-          if (collapseId !== '') runOnJS(selectObjects)([collapseId]);
-          else if (opensEditor !== '' && hitId !== '') {
+          if (collapseId !== '') {
+            runOnJS(selectObjects)([collapseId]);
+          } else if (opensEditor !== '' && hitId !== '') {
             runOnJS(editObject)(hitId, {
               x: touchStartCanvasX.value,
               y: touchStartCanvasY.value,
@@ -1112,13 +1291,50 @@ export function CanvasViewport({
     });
 
   const objectTap = Gesture.Tap()
-    .enabled((activeTool === 'text' || activeTool === 'sticky') && !!onObjectCreate)
+    .enabled(
+      (activeTool === 'text' && !!onObjectCreate) ||
+        (activeTool === 'sticky' && !!onObjectCreate) ||
+        (activeTool === 'voice-pin' && !!onStartVoicePinAt),
+    )
     .onEnd((event) => {
       const point = screenToCanvas(
         { x: event.x, y: event.y },
         { x: offsetX.value, y: offsetY.value, scale: scale.value },
       );
-      runOnJS(createObject)(activeTool as 'text' | 'sticky', point);
+      runOnJS(createObject)(activeTool as 'text' | 'sticky' | 'voice-pin', point);
+    });
+
+  const revealTapeGesture = Gesture.Pan()
+    .enabled(activeTool === 'reveal-tape' && !!onInsertRevealTapeAt)
+    .maxPointers(1)
+    .minDistance(0)
+    .onStart((event) => {
+      const point = screenToCanvas(
+        { x: event.x, y: event.y },
+        { x: offsetX.value, y: offsetY.value, scale: scale.value },
+      );
+      runOnJS(beginRevealTape)(point);
+    })
+    .onUpdate((event) => {
+      const point = screenToCanvas(
+        { x: event.x, y: event.y },
+        { x: offsetX.value, y: offsetY.value, scale: scale.value },
+      );
+      runOnJS(updateRevealTape)(point);
+    })
+    .onFinalize(() => {
+      runOnJS(finishRevealTape)(scale.value);
+    });
+
+  const interactiveTap = Gesture.Tap()
+    .enabled((readOnly || activeTool === 'select' || activeTool === 'pan') && !editing)
+    .maxDistance(10)
+    .onEnd((event) => {
+      const point = screenToCanvas(
+        { x: event.x, y: event.y },
+        { x: offsetX.value, y: offsetY.value, scale: scale.value },
+      );
+      runOnJS(handleInteractiveTapAt)(point);
     });
 
   /** While editing text, a canvas tap commits the edit (or switches math slot). */
@@ -1200,12 +1416,14 @@ export function CanvasViewport({
           ? laserGesture
           : activeTool === 'pen' || activeTool === 'highlighter'
             ? drawGesture
-            : activeTool === 'text' || activeTool === 'sticky'
-              ? objectTap
-              : activeTool === 'shape' || activeTool === 'connector'
-                ? shapeGesture
-                : selectGesture;
-  const gesture = Gesture.Simultaneous(primaryGesture, marqueeGesture, pinchGesture);
+            : activeTool === 'reveal-tape'
+              ? revealTapeGesture
+              : activeTool === 'text' || activeTool === 'sticky' || activeTool === 'voice-pin'
+                ? objectTap
+                : activeTool === 'shape' || activeTool === 'connector'
+                  ? shapeGesture
+                  : selectGesture;
+  const gesture = Gesture.Simultaneous(interactiveTap, primaryGesture, marqueeGesture, pinchGesture);
 
   const transform = useDerivedValue(() => [
     { translateX: offsetX.value },
@@ -1285,28 +1503,58 @@ export function CanvasViewport({
                 color={layer.isMargin ? patternTheme.accent : patternTheme.foreground}
               />
             ))}
-            {document.objects.filter(isImageObject).map((object) => (
-              <ImageObjectView key={object.id} object={object} dark={dark} />
+            {visibleObjects.filter(isImageObject).map((object) => (
+              <Group key={object.id} opacity={object.isPrivate ? 0.82 : 1}>
+                <ImageObjectView object={object} dark={dark} />
+                {object.isPrivate && <PrivateBadgeLayer object={object} />}
+              </Group>
             ))}
-            {document.objects.filter(isGeometricObject).map((object) => (
-              <GeometricObjectView key={object.id} object={object} dark={dark} />
+            {visibleObjects.filter(isGeometricObject).map((object) => (
+              <Group key={object.id} opacity={object.isPrivate ? 0.82 : 1}>
+                <GeometricObjectView object={object} dark={dark} />
+                {object.isPrivate && <PrivateBadgeLayer object={object} />}
+              </Group>
             ))}
-            {document.objects.filter(isTableObject).map((object) => (
-              <TableObjectView key={object.id} object={object} dark={dark} />
+            {visibleObjects.filter(isTableObject).map((object) => (
+              <Group key={object.id} opacity={object.isPrivate ? 0.82 : 1}>
+                <TableObjectView object={object} dark={dark} />
+                {object.isPrivate && <PrivateBadgeLayer object={object} />}
+              </Group>
             ))}
-            {document.objects.filter(isMathObject).map((object) => (
-              <MathObjectView
-                key={object.id}
-                object={object}
-                dark={dark}
-                activeSpan={editingMathSpan?.objectId === object.id ? editingMathSpan.span : null}
-              />
+            {visibleObjects.filter(isMathObject).map((object) => (
+              <Group key={object.id} opacity={object.isPrivate ? 0.82 : 1}>
+                <MathObjectView
+                  object={object}
+                  dark={dark}
+                  activeSpan={editingMathSpan?.objectId === object.id ? editingMathSpan.span : null}
+                />
+                {object.isPrivate && <PrivateBadgeLayer object={object} />}
+              </Group>
             ))}
-            {document.objects.filter(isFunctionPlotObject).map((object) => (
-              <FunctionPlotLayer key={object.id} object={object} dark={dark} />
+            {visibleObjects.filter(isFunctionPlotObject).map((object) => (
+              <Group key={object.id} opacity={object.isPrivate ? 0.82 : 1}>
+                <FunctionPlotLayer object={object} dark={dark} />
+                {object.isPrivate && <PrivateBadgeLayer object={object} />}
+              </Group>
             ))}
-            {document.objects.filter(isChartObject).map((object) => (
-              <ChartLayer key={object.id} object={object} dark={dark} />
+            {visibleObjects.filter(isChartObject).map((object) => (
+              <Group key={object.id} opacity={object.isPrivate ? 0.82 : 1}>
+                <ChartLayer object={object} dark={dark} />
+                {object.isPrivate && <PrivateBadgeLayer object={object} />}
+              </Group>
+            ))}
+            {visibleObjects.filter(isVoicePinObject).map((object) => (
+              <Group key={object.id} opacity={object.isPrivate ? 0.82 : 1}>
+                <VoicePinLayer
+                  object={object}
+                  dark={dark}
+                  isPlaying={playingVoicePinId === object.id}
+                />
+                {object.isPrivate && <PrivateBadgeLayer object={object} />}
+              </Group>
+            ))}
+            {visibleObjects.filter((o) => isTextualObject(o) && o.isPrivate).map((object) => (
+              <PrivateBadgeLayer key={`private-badge-${object.id}`} object={object} />
             ))}
             {draftObject && <GeometricObjectView object={draftObject} dark={dark} />}
             {snapPortPoint && (
@@ -1355,7 +1603,7 @@ export function CanvasViewport({
         </Canvas>
       </GestureDetector>
 
-      {document.objects.filter(isTextualObject).map((object) => (
+      {visibleObjects.filter(isTextualObject).map((object) => (
         <CanvasObjectView
           key={object.id}
           object={object}
@@ -1368,7 +1616,7 @@ export function CanvasViewport({
         />
       ))}
 
-      {document.objects.filter(isTableObject).map((object) => (
+      {visibleObjects.filter(isTableObject).map((object) => (
         <TableCellsOverlay
           key={`cells-${object.id}`}
           object={object}
@@ -1380,7 +1628,7 @@ export function CanvasViewport({
         />
       ))}
 
-      {document.objects
+      {visibleObjects
         .filter((o): o is ShapeObject => o.type === 'shape' && Boolean(o.showMeasurements))
         .map((object) => (
           <ShapeMeasurementsOverlay
@@ -1392,6 +1640,28 @@ export function CanvasViewport({
             scale={scale}
           />
         ))}
+
+      {/*
+        Reveal tapes sit above native sticky/text views so they actually mask
+        answers underneath until tapped, and selection frames sit on top of all.
+      */}
+      {(visibleObjects.some(isRevealTapeObject) || draftRevealTape) && (
+        <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
+          <Group transform={transform}>
+            {visibleObjects.filter(isRevealTapeObject).map((object) => (
+              <Group key={object.id} opacity={object.isPrivate ? 0.82 : 1}>
+                <RevealTapeLayer object={object} dark={dark} />
+                {object.isPrivate && <PrivateBadgeLayer object={object} />}
+              </Group>
+            ))}
+            {draftRevealTape && (
+              <Group opacity={0.85}>
+                <RevealTapeLayer object={draftRevealTape} dark={dark} />
+              </Group>
+            )}
+          </Group>
+        </Canvas>
+      )}
 
       {/*
         Text and sticky notes are native views above the drawing canvas, so the
@@ -1799,7 +2069,17 @@ function CanvasObjectView({ object, dark, hidden, offsetX, offsetY, scale, onMea
   return (
     <Animated.View
       pointerEvents="none"
-      style={[styles.object, { backgroundColor: fill ?? 'transparent' }, frame]}
+      style={[
+        styles.object,
+        { backgroundColor: fill ?? 'transparent' },
+        object.isPrivate && {
+          opacity: 0.82,
+          borderWidth: 1.5,
+          borderStyle: 'dashed',
+          borderColor: '#0D9488',
+        },
+        frame,
+      ]}
     >
       <Animated.Text
         onTextLayout={handleTextLayout}

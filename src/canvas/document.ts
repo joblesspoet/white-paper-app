@@ -263,6 +263,13 @@ export type ObjectStylePatch = {
   /** Table style options. */
   hasHeaderRow?: boolean;
   fillHeader?: boolean;
+  /** Reveal-tape toggle & label. */
+  isRevealed?: boolean;
+  label?: string;
+  /** Presenter-only visibility flag. */
+  isPrivate?: boolean;
+  /** Optional transcript on VoicePinObject. */
+  transcript?: string;
 };
 
 type CanvasObjectBase = {
@@ -281,6 +288,8 @@ type CanvasObjectBase = {
   fontSize?: number;
   /** When true, normal single-finger Select gestures skip this object (e.g. PDF worksheet backgrounds). */
   locked?: boolean;
+  /** When true, visible to teacher/presenter only; stripped from Live Classroom broadcasts & default exports. */
+  isPrivate?: boolean;
 };
 
 export type TextObject = CanvasObjectBase & {
@@ -382,6 +391,23 @@ export type MathObject = CanvasObjectBase & MathObjectBase;
 export type FunctionPlotObject = CanvasObjectBase & FunctionPlotObjectBase;
 export type ChartObject = CanvasObjectBase & ChartObjectBase;
 
+export type RevealTapeObject = CanvasObjectBase & {
+  type: 'reveal-tape';
+  colorKey: string;
+  label?: string;
+  isRevealed: boolean;
+};
+
+export type VoicePinObject = CanvasObjectBase & {
+  type: 'voice-pin';
+  audioAssetId: string;
+  storagePath: string;
+  durationMs: number;
+  waveformPeaks: readonly number[];
+  transcript?: string;
+  colorKey: string;
+};
+
 export type CanvasObject =
   | TextObject
   | StickyObject
@@ -391,7 +417,9 @@ export type CanvasObject =
   | TableObject
   | MathObject
   | FunctionPlotObject
-  | ChartObject;
+  | ChartObject
+  | RevealTapeObject
+  | VoicePinObject;
 export type CanvasObjectType = CanvasObject['type'];
 export type TextualObject = TextObject | StickyObject;
 export type GeometricObject = ShapeObject | ConnectorObject;
@@ -687,6 +715,24 @@ export function isChartObject(object: CanvasObject): object is ChartObject {
   return object.type === 'chart';
 }
 
+/** Tap-to-Reveal answer tape masking answers or formula steps. */
+export function isRevealTapeObject(object: CanvasObject): object is RevealTapeObject {
+  'worklet';
+  return object.type === 'reveal-tape';
+}
+
+/** Spatial Voice-Pin audio feedback sticker. */
+export function isVoicePinObject(object: CanvasObject): object is VoicePinObject {
+  'worklet';
+  return object.type === 'voice-pin';
+}
+
+/** True when an object is marked Presenter-only (Private). */
+export function isObjectPrivate(object: CanvasObject): boolean {
+  'worklet';
+  return object.isPrivate === true;
+}
+
 export function createFunctionPlotObject(input: {
   id: string;
   point: Point;
@@ -872,6 +918,28 @@ export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): 
     if (colorKey === object.colorKey) return object;
     return { ...object, colorKey };
   }
+  if (object.type === 'reveal-tape') {
+    const isRevealed = patch.isRevealed ?? object.isRevealed;
+    const label = patch.label !== undefined ? patch.label : object.label;
+    if (colorKey === object.colorKey && isRevealed === object.isRevealed && label === object.label) {
+      return object;
+    }
+    return {
+      ...object,
+      colorKey,
+      isRevealed,
+      ...(label !== undefined ? { label } : {}),
+    };
+  }
+  if (object.type === 'voice-pin') {
+    const transcript = patch.transcript !== undefined ? patch.transcript : object.transcript;
+    if (colorKey === object.colorKey && transcript === object.transcript) return object;
+    return {
+      ...object,
+      colorKey,
+      ...(transcript !== undefined ? { transcript } : {}),
+    };
+  }
   const style = patch.style ?? object.style;
   const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
   if (colorKey === object.colorKey && style === object.style && strokeWidth === object.strokeWidth) return object;
@@ -974,6 +1042,15 @@ export function duplicateObject(
     delete copy.endBinding;
     return copy;
   }
+  if (object.type === 'voice-pin') {
+    return {
+      ...object,
+      id,
+      x: object.x + offset,
+      y: object.y + offset,
+      waveformPeaks: [...object.waveformPeaks],
+    };
+  }
   return { ...object, id, x: object.x + offset, y: object.y + offset };
 }
 
@@ -981,7 +1058,9 @@ export function duplicateObject(
 
 /** Shape fill colour, or undefined for an outline-only shape. */
 export function objectFill(object: CanvasObject): string | undefined {
-  if (object.type === 'sticky') return stickyColorValue(object.colorKey);
+  if (object.type === 'sticky' || object.type === 'reveal-tape') {
+    return stickyColorValue(object.colorKey);
+  }
   if (object.type === 'shape' && object.fillKey) return stickyColorValue(object.fillKey);
   return undefined;
 }
@@ -989,7 +1068,7 @@ export function objectFill(object: CanvasObject): string | undefined {
 /** Text or shape-stroke colour, resolved against the current theme. */
 export function objectTextColor(object: CanvasObject, dark: boolean): string {
   if (object.type === 'image') return dark ? '#E6F4F1' : '#134E4A';
-  if (object.type === 'sticky') {
+  if (object.type === 'sticky' || object.type === 'reveal-tape') {
     if (isHexColor(object.colorKey)) {
       return readableTextColor(object.colorKey, [STICKY_TEXT_COLOR, '#FFFFFF']);
     }
@@ -1103,6 +1182,13 @@ export function objectAtPoint(
 ): CanvasObject | null {
   'worklet';
   const includeLocked = options?.includeLocked === true;
+  // Reveal tapes sit above native sticky/text views so tapping anywhere on a
+  // tape hits the tape first instead of the masked object underneath.
+  for (let index = objects.length - 1; index >= 0; index -= 1) {
+    const object = objects[index];
+    if (!includeLocked && object.locked) continue;
+    if (isRevealTapeObject(object) && objectContainsPoint(object, point)) return object;
+  }
   for (let index = objects.length - 1; index >= 0; index -= 1) {
     const object = objects[index];
     if (!includeLocked && object.locked) continue;
@@ -1111,7 +1197,9 @@ export function objectAtPoint(
   for (let index = objects.length - 1; index >= 0; index -= 1) {
     const object = objects[index];
     if (!includeLocked && object.locked) continue;
-    if (!isTextualObject(object) && objectContainsPoint(object, point)) return object;
+    if (!isRevealTapeObject(object) && !isTextualObject(object) && objectContainsPoint(object, point)) {
+      return object;
+    }
   }
   return null;
 }
@@ -1204,6 +1292,20 @@ export function findObject(document: CanvasDocument, id: string): CanvasObject |
   return document.objects.find((object) => object.id === id) ?? null;
 }
 
+/**
+ * Strip `isPrivate` (Presenter-only) objects from a document before sending
+ * snapshots to Live Classroom students or rendering public exports.
+ */
+export function filterPublicDocument(document: CanvasDocument): CanvasDocument {
+  if (!document.objects.some((object) => object.isPrivate === true)) {
+    return document;
+  }
+  return {
+    ...document,
+    objects: document.objects.filter((object) => object.isPrivate !== true),
+  };
+}
+
 export type DocumentCommand =
   | { type: 'ink.add'; stroke: InkStroke }
   | { type: 'ink.erase'; point: Point; radius: number }
@@ -1226,6 +1328,10 @@ export type DocumentCommand =
       hasHeaderRow?: boolean;
       fillHeader?: boolean;
       locked?: boolean;
+      isRevealed?: boolean;
+      label?: string;
+      isPrivate?: boolean;
+      transcript?: string;
       table?: Partial<
         Pick<
           TableObject,
@@ -1285,6 +1391,15 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
         if (command.locked !== undefined && Boolean(next.locked) !== command.locked) {
           next = { ...next, locked: command.locked };
         }
+        if (command.isPrivate !== undefined && Boolean(next.isPrivate) !== command.isPrivate) {
+          if (command.isPrivate) {
+            next = { ...next, isPrivate: true };
+          } else {
+            const copy = { ...next };
+            delete copy.isPrivate;
+            next = copy;
+          }
+        }
         if (command.table && next.type === 'table') {
           next = {
             ...next,
@@ -1310,6 +1425,9 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
           style: command.style,
           hasHeaderRow: command.hasHeaderRow,
           fillHeader: command.fillHeader,
+          isRevealed: command.isRevealed,
+          label: command.label,
+          transcript: command.transcript,
         });
       });
       if (updated === document) return document;
@@ -1355,8 +1473,26 @@ function objectEquals(left: CanvasObject, right: CanvasObject): boolean {
   if (left === right) return true;
   if (left.type !== right.type) return false;
   if (Boolean(left.locked) !== Boolean(right.locked)) return false;
+  if (Boolean(left.isPrivate) !== Boolean(right.isPrivate)) return false;
   if (left.type === 'table' && right.type === 'table') {
     return tableEquals(left, right);
+  }
+  if (left.type === 'voice-pin' && right.type === 'voice-pin') {
+    return (
+      left.id === right.id &&
+      left.x === right.x &&
+      left.y === right.y &&
+      left.width === right.width &&
+      left.height === right.height &&
+      left.rotation === right.rotation &&
+      left.audioAssetId === right.audioAssetId &&
+      left.storagePath === right.storagePath &&
+      left.durationMs === right.durationMs &&
+      left.transcript === right.transcript &&
+      left.colorKey === right.colorKey &&
+      left.waveformPeaks.length === right.waveformPeaks.length &&
+      left.waveformPeaks.every((peak, idx) => peak === right.waveformPeaks[idx])
+    );
   }
   if (left.type === 'connector' && right.type === 'connector') {
     return (

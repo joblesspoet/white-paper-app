@@ -1,6 +1,25 @@
 # Task status
 
 ## Current phase
+Session 27 — Phase H: Active Recall Reveal Tape, Voice Pins & Presenter Teleprompter Layer (branch `feat/phase-h-active-recall-voice-presenter`).
+
+## Status
+`implemented-unverified` — Phase H (`prompts/27-phase-h-active-recall-voice-presenter.md`) is implemented with `npm run typecheck`, `npm test` (19 suites including `npm run test:active-recall-presenter`), and iOS & Android Metro bundle checks passing; simulator/device touch and microphone audio recording/playback testing remain unverified in this environment:
+- **Tap-to-Reveal Answer Tape & Stage Curtain / Spotlight (`src/canvas/reveal-tape.ts`, `src/hooks/useRevealAndCurtain.ts`, `src/components/canvas/RevealTapeLayer.tsx`, `src/components/StageCurtainOverlay.tsx`, `src/components/StageCurtainOverlay.styles.ts`, `src/components/ExportSheet.tsx`):**
+  - Added `RevealTapeObject` (`isRevealed`, `label`, `colorKey`, `isPrivate?`) with tap-to-reveal toggling + haptic tick, `Cover with tape` action on selected text/math/sticky objects, `Reset all tapes` in the export/overflow sheet, and spatial overlap detection (`findCoveredObjectsUnderTape`).
+  - Added draggable `StageCurtainOverlay` supporting **Window Curtain** (top/bottom anchored teal shade with `48pt` drag handle) and **Spotlight Focus** (75% dark Skia scrim with draggable, resizable circular/rectangular cutout).
+- **Spatial Voice-Pin Stickers (`src/audio/voice-pin-model.ts`, `src/audio/voice-pin-store.ts`, `src/audio/voice-pin-recorder.ts`, `src/hooks/useVoicePins.ts`, `src/components/canvas/VoicePinLayer.tsx`, `src/components/VoicePinBar.tsx`, `src/components/VoicePinBar.styles.ts`, `src/recorder/permissions.ts`):**
+  - Added `VoicePinObject` (`audioAssetId`, `storagePath`, `durationMs`, `waveformPeaks`, `transcript`) with lazy `expo-audio` recording/playback, cross-version iOS/Android microphone permission checks (`Open Settings` guidance when blocked), 5-minute per-pin duration cap, 16-bar Skia waveform pill rendering, durable storage under `media/<boardId>/audio/<assetId>.m4a`, SQLite `media_assets` persistence, and `.flowcanvas.json` base64 backup/import parity.
+- **Presenter-Only Private Teleprompter Layer (`isPrivate` on `CanvasObjectBase`, `src/canvas/document.ts`, `src/components/canvas/PrivateBadgeLayer.tsx`, `src/classroom/protocol.ts`, `src/classroom/classroom-session.ts`, `src/export/export-service.ts`):**
+  - Added `isPrivate?: boolean` on `CanvasObjectBase` (`Presenter-only (Private)` toggle in `PhoneRecallSelectionBar` and `EditorInspectorPanel`), rendering at `82%` opacity with a dashed teal border and `Private` badge on the teacher's canvas plus a `Presenter` / `Notes Off` preview toggle in the editor top bar.
+  - Automatically stripped `isPrivate` objects via `filterPublicDocument` and `filterPublicSerializableCommand` from Live Classroom student broadcasts (`snapshot.sync`, `command.broadcast`, `page.switch`) and default PNG/JPEG/PDF exports (with an opt-in `Include presenter notes` toggle in `ExportSheet`), while retaining them in local SQLite and `.flowcanvas.json` backups.
+- **Live Classroom Pop-Quiz Poll & 1-Thumb Flashcard Study Mode (`src/classroom/poll-model.ts`, `src/hooks/useClassroomPoll.ts`, `src/components/PollOverlayModal.tsx`, `src/components/PollOverlayModal.styles.ts`, `src/canvas/flashcards.ts`, `src/components/FlashcardStudyModal.tsx`, `src/components/FlashcardStudyModal.styles.ts`):**
+  - Added `poll.start`, `poll.vote`, and `poll.close` actions (`A/B/C/D` and `True/False`, deduplicated voting per `peerId`, live percentage bars in `FlatList`, and one-tap `Insert results chart on board`).
+  - Added `FlashcardStudyModal` (`FlatList`-paged swipeable deck with `Know it` / `Review again`) extracting study cards from `RevealTapeObject` pairs and magnetic connected `StickyObject` pairs.
+- Verification suite added at `scripts/verify-active-recall-presenter.mts` and wired into `npm test` via `npm run test:active-recall-presenter`.
+- The next task is Session 18 — Quality hardening (resumed after Phase H).
+
+Previous slice (Phase G):
 Session 26 — Phase G: Magnetic Mind-Mapping, Live STEM Graphing & Spatial OCR Explode (branch `feat/phase-g-interactive-stem-mindmap`).
 
 ## Status
