@@ -82,6 +82,7 @@ export type ClassroomSessionCallbacks = {
     document?: CanvasDocument;
     viewport?: Viewport;
   }) => void;
+  onFollowTeacherViewport?: (follow: boolean, viewport?: Viewport) => void;
   onNotice?: (message: string) => void;
   onKicked?: () => void;
   onClassEnded?: () => void;
@@ -265,12 +266,17 @@ export class ClassroomSession {
     });
 
     this.bindTransport();
-    await this.transport.connect(code, {
-      peerId: this.state.peerId,
-      displayName,
-      role: 'teacher',
-      joinedAt: new Date().toISOString(),
-    });
+    try {
+      await this.transport.connect(code, {
+        peerId: this.state.peerId,
+        displayName,
+        role: 'teacher',
+        joinedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      await this.endOrLeave();
+      throw error;
+    }
 
     return roomInfo;
   }
@@ -574,6 +580,9 @@ export class ClassroomSession {
 
   async setClassLocked(locked: boolean): Promise<void> {
     if (this.state.role !== 'teacher' || !this.state.roomInfo) return;
+    if (locked && this.state.roomInfo.activeSpeakerPeerId) {
+      await this.revokeStudentVoice(this.state.roomInfo.activeSpeakerPeerId);
+    }
     const participants = this.state.participants.map((p) =>
       p.role === 'student'
         ? { ...p, permission: locked ? ('locked' as const) : ('view-only' as const) }
@@ -591,11 +600,18 @@ export class ClassroomSession {
     this.updateState({
       roomInfo: { ...this.state.roomInfo, followTeacherViewport: follow },
     });
-    if (this.state.role === 'teacher' && follow) {
-      await this.sendEphemeral(
-        { pageId: this.hostBoardState.pageId, viewport: this.hostBoardState.viewport },
-        true,
-      );
+    if (this.state.role === 'teacher') {
+      await this.sendControl({
+        action: 'viewport.follow',
+        follow,
+        viewport: follow ? this.hostBoardState.viewport : undefined,
+      });
+      if (follow) {
+        await this.sendEphemeral(
+          { pageId: this.hostBoardState.pageId, viewport: this.hostBoardState.viewport },
+          true,
+        );
+      }
     }
   }
 
@@ -625,9 +641,21 @@ export class ClassroomSession {
 
   async kickParticipant(targetPeerId: string): Promise<void> {
     if (this.state.role !== 'teacher') return;
+    const nextBoards = { ...this.state.studentBoards };
+    delete nextBoards[targetPeerId];
+    const wasActiveSpeaker = this.state.roomInfo?.activeSpeakerPeerId === targetPeerId;
+    const wasShowcased = this.state.showcasedStudentPeerId === targetPeerId;
     this.updateState({
       participants: this.state.participants.filter((p) => p.peerId !== targetPeerId),
+      studentBoards: nextBoards,
+      roomInfo:
+        this.state.roomInfo && wasActiveSpeaker
+          ? { ...this.state.roomInfo, activeSpeakerPeerId: null }
+          : this.state.roomInfo,
     });
+    if (wasShowcased) {
+      await this.showcaseStudentBoard(null);
+    }
     await this.sendControl({ action: 'peer.kick', targetPeerId });
   }
 
@@ -977,6 +1005,17 @@ export class ClassroomSession {
           this.callbacks.onNotice?.(
             action.locked ? 'Class locked by teacher.' : 'Class unlocked by teacher.',
           );
+        }
+        return;
+      }
+      case 'viewport.follow': {
+        if (this.state.roomInfo) {
+          this.updateState({
+            roomInfo: { ...this.state.roomInfo, followTeacherViewport: action.follow },
+          });
+        }
+        if (this.state.role === 'student') {
+          this.callbacks.onFollowTeacherViewport?.(action.follow, action.viewport);
         }
         return;
       }

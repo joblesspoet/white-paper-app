@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import Svg, { Rect } from 'react-native-svg';
 
 import { encodeQrMatrix } from '../classroom/qr';
+import { fcprobe } from '../dev-probe';
 import { classroomQrStyles as styles } from './ClassroomQrCode.styles';
 
 type ClassroomQrCodeProps = {
@@ -16,7 +17,14 @@ export const ClassroomQrCode = React.memo(function ClassroomQrCode({
   size = 156,
   borderColor = '#E2E8F0',
 }: ClassroomQrCodeProps) {
-  const matrix = useMemo(() => encodeQrMatrix(value), [value]);
+  // FCPROBE
+  fcprobe(`qr render ${value}`);
+  const matrix = useMemo(() => {
+    fcprobe(`qr encode start ${value}`);
+    const m = encodeQrMatrix(value);
+    fcprobe(`qr encode done size=${m.size}`);
+    return m;
+  }, [value]);
   const quietZone = 2;
   const totalModules = matrix.size + quietZone * 2;
   const moduleSize = size / totalModules;

@@ -3,15 +3,27 @@ import { StyleSheet } from 'react-native';
 import { radii, spacing, touchTarget, typography } from '../theme';
 
 export const liveClassHostStyles = StyleSheet.create({
-  scrim: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
     justifyContent: 'flex-end',
   },
-  scrimCentered: {
+  overlayCentered: {
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.lg,
+  },
+  scrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
   },
   sheet: {
     width: '96%',
@@ -20,7 +32,9 @@ export const liveClassHostStyles = StyleSheet.create({
     borderTopLeftRadius: radii.lg,
     borderTopRightRadius: radii.lg,
     borderWidth: 1,
-    maxHeight: '92%',
+    maxHeight: '88%',
+    flexShrink: 1,
+    overflow: 'hidden',
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
     gap: spacing.sm,
@@ -30,7 +44,8 @@ export const liveClassHostStyles = StyleSheet.create({
     width: '94%',
     maxWidth: 540,
     paddingHorizontal: spacing.lg,
-    maxHeight: '88%',
+    maxHeight: '86%',
+    flexShrink: 1,
   },
   grabber: {
     alignSelf: 'center',
@@ -124,6 +139,10 @@ export const liveClassHostStyles = StyleSheet.create({
     minHeight: 40,
     gap: spacing.sm,
   },
+  switchLabelWrap: {
+    flex: 1,
+    paddingVertical: 4,
+  },
   switchLabel: {
     flex: 1,
     flexShrink: 1,
@@ -150,14 +169,30 @@ export const liveClassHostStyles = StyleSheet.create({
   },
   list: {
     flexGrow: 0,
+    flexShrink: 1,
+    minHeight: 0,
   },
   listContent: {
-    gap: spacing.xs,
-    paddingBottom: spacing.sm,
-  },
-  headerSpacer: {
     gap: spacing.sm,
-    marginBottom: spacing.xs,
+    paddingBottom: spacing.xs,
+  },
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingTop: spacing.xs,
+  },
+  minimizeBtn: {
+    flex: 1,
+    minHeight: touchTarget,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  minimizeBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
   },
   emptyList: {
     paddingVertical: spacing.lg,
@@ -207,9 +242,6 @@ export const liveClassHostStyles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
-  galleryRow: {
-    gap: spacing.sm,
-  },
   galleryCard: {
     flex: 1,
     borderRadius: radii.md,
@@ -232,11 +264,11 @@ export const liveClassHostStyles = StyleSheet.create({
     gap: spacing.xs,
   },
   endBtn: {
+    flex: 1.4,
     minHeight: touchTarget,
     borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: spacing.xs,
   },
   endBtnText: {
     color: '#FFFFFF',

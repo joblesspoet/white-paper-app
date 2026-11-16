@@ -258,10 +258,17 @@ async function main() {
   await teacher.showcaseStudentBoard('student-1');
   assert.equal(student2ShowcaseName, 'Ali');
 
-  // Lock class revokes drawing
+  // Lock class revokes drawing and active student speaker
   await teacher.setClassLocked(true);
   assert.equal(student1.getState().myPermission, 'locked');
+  assert.equal(student2.getState().myCanSpeak, false);
   assert.equal(teacher.getState().roomInfo?.isLocked, true);
+
+  // Follow teacher viewport toggle broadcasts to students
+  await teacher.setFollowTeacherViewport(false);
+  assert.equal(student1.getState().roomInfo?.followTeacherViewport, false);
+  await teacher.setFollowTeacherViewport(true);
+  assert.equal(student1.getState().roomInfo?.followTeacherViewport, true);
 
   // Reconnect & seq resync check
   await student3.resume();

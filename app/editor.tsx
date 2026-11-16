@@ -228,6 +228,7 @@ import {
   resolveEditorLayout,
 } from '../src/responsive/layout';
 import { radii, spacing, touchTarget, typography, type ThemeColors } from '../src/theme';
+import { fcprobe } from '../src/dev-probe';
 
 const TOOLS = [
   { tool: 'select', label: 'Select', Icon: SelectIcon },
@@ -264,6 +265,12 @@ function sameViewport(left: Viewport, right: Viewport): boolean {
 type Editing = { object: CanvasObject; isNew: boolean };
 
 export default function BoardEditorScreen() {
+  // FCPROBE
+  if (typeof globalThis.__fcRenderCount !== 'number') globalThis.__fcRenderCount = 0;
+  globalThis.__fcRenderCount += 1;
+  if (globalThis.__fcRenderCount % 5 === 0) {
+    fcprobe(`editor render count ${globalThis.__fcRenderCount}`);
+  }
   const router = useRouter();
   const navigation = useNavigation();
   const {
@@ -391,6 +398,7 @@ export default function BoardEditorScreen() {
   const [shapeOptionsVisible, setShapeOptionsVisible] = useState(false);
   const [exportSheetVisible, setExportSheetVisible] = useState(false);
   const [hostSheetVisible, setHostSheetVisible] = useState(false);
+  const [startingLiveClass, setStartingLiveClass] = useState(false);
   const [classroomState, setClassroomState] = useState<ClassroomSessionState | null>(null);
   const [classroomNotice, setClassroomNotice] = useState<string | null>(null);
   const [remoteActiveStroke, setRemoteActiveStroke] = useState<EphemeralStrokePacket | null>(null);
@@ -847,6 +855,10 @@ export default function BoardEditorScreen() {
         studentLiveDocRef.current = snapshot.document;
         setLiveBoardSettings(snapshot.boardSettings);
         setTitle(snapshot.roomInfo.boardTitle || 'Live Class');
+        if (typeof snapshot.roomInfo.followTeacherViewport === 'boolean') {
+          followTeacherViewportRef.current = snapshot.roomInfo.followTeacherViewport;
+          setFollowTeacherViewport(snapshot.roomInfo.followTeacherViewport);
+        }
         if (!isScratchpadModeRef.current) {
           applyingRemoteCommandRef.current = true;
           dispatch({ type: 'hydrate', document: snapshot.document });
@@ -920,6 +932,13 @@ export default function BoardEditorScreen() {
           setTimeout(() => {
             applyingRemoteCommandRef.current = false;
           }, 0);
+        }
+      },
+      onFollowTeacherViewport: (follow, vp) => {
+        followTeacherViewportRef.current = follow;
+        setFollowTeacherViewport(follow);
+        if (follow && vp && !isScratchpadModeRef.current) {
+          requestViewport(vp);
         }
       },
       onNotice: (msg) => showClassroomNotice(msg),
@@ -999,6 +1018,9 @@ export default function BoardEditorScreen() {
     const sub = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
         void classroomSessionRef.current?.resume();
+        if (classroomSessionRef.current?.getState().active) {
+          void audioAdapterRef.current?.resume();
+        }
       }
     });
     return () => sub.remove();
@@ -1093,6 +1115,14 @@ export default function BoardEditorScreen() {
     return () => sub.remove();
   }, [confirmLeaveActiveClassroom, hostSheetVisible]);
 
+  // Keep the host sheet in sync with the session: never leave it on screen once
+  // the classroom has ended (or a start attempt failed and rolled back).
+  useEffect(() => {
+    if (!classroomState?.active && hostSheetVisible) {
+      setHostSheetVisible(false);
+    }
+  }, [classroomState?.active, hostSheetVisible]);
+
   // Ensure any active LiveKit + Realtime session is cleaned up if the editor unmounts
   useEffect(() => {
     return () => {
@@ -1108,6 +1138,7 @@ export default function BoardEditorScreen() {
     const session = classroomSessionRef.current;
     const prevDoc = prevBroadcastDocRef.current;
     prevBroadcastDocRef.current = document;
+    fcprobe(`broadcast effect active=${classroomState?.active} sameDoc=${prevDoc === document}`);
     if (!session || !classroomState?.active) return;
     if (applyingRemoteCommandRef.current) return;
 
@@ -1139,22 +1170,33 @@ export default function BoardEditorScreen() {
 
   const handleStartOrOpenLiveClass = useCallback(async () => {
     if (isStudentRoute) return;
+
+    // Ignore extra taps while a start attempt is in flight. This also prevents
+    // the sheet from opening before the classroom transport has connected,
+    // because `startAsTeacher` marks the session active before it awaits.
+    if (startingLiveClassRef.current) {
+      return;
+    }
+
     const session = ensureClassroomSession();
     if (session.getState().active) {
       setHostSheetVisible(true);
       return;
     }
-    if (startingLiveClassRef.current) {
-      return;
-    }
+
     const entitlement = getLiveClassEntitlement();
     if (!entitlement.canHost) {
       Alert.alert('Teacher Pro Required', entitlement.reason ?? 'Upgrade to host Live Classes.');
       return;
     }
+
     startingLiveClassRef.current = true;
+    setStartingLiveClass(true);
+    setHostSheetVisible(false);
     try {
+      fcprobe('start: requesting mic');
       const micPerm = await requestMicrophonePermission();
+      fcprobe(`start: mic resolved granted=${micPerm.granted}`);
       if (!micPerm.granted) {
         Alert.alert(
           'Microphone Permission Required',
@@ -1170,6 +1212,7 @@ export default function BoardEditorScreen() {
       }
 
       const currentPage = pages.find((p) => p.id === activePageId);
+      fcprobe('start: calling startAsTeacher');
       const roomInfo = await session.startAsTeacher({
         boardId: boardId ?? 'local-board',
         boardTitle: title,
@@ -1181,9 +1224,13 @@ export default function BoardEditorScreen() {
         viewport: viewportLive.current,
         displayName: 'Teacher',
       });
+
+      fcprobe('start: startAsTeacher resolved');
+      // The realtime session is connected now, so it is safe to reveal the sheet.
       setHostSheetVisible(true);
 
       const audio = audioAdapterRef.current;
+      fcprobe(`start: audio present=${Boolean(audio)}`);
       if (audio) {
         void (async () => {
           const st = await audio.connect({
@@ -1200,8 +1247,16 @@ export default function BoardEditorScreen() {
           }
         })();
       }
+    } catch (error) {
+      setHostSheetVisible(false);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Could not connect to the Live Classroom server. Check your internet connection and try again.';
+      Alert.alert('Unable to Start Live Class', message);
     } finally {
       startingLiveClassRef.current = false;
+      setStartingLiveClass(false);
     }
   }, [activePageId, board?.settings, boardId, ensureClassroomSession, isStudentRoute, pages, showClassroomNotice, title]);
 
@@ -2489,10 +2544,29 @@ function mathSpanAtPoint(
           {!isStudentRoute && (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={classroomState?.active ? 'Live class active' : 'Start live class'}
-              accessibilityState={{ disabled: Boolean(classroomState?.active) }}
-              disabled={Boolean(classroomState?.active)}
-              onPress={() => { commitEditing(); void handleStartOrOpenLiveClass(); }}
+              accessibilityState={{
+                disabled: startingLiveClass && !classroomState?.active,
+                busy: startingLiveClass && !classroomState?.active,
+              }}
+              disabled={startingLiveClass && !classroomState?.active}
+              accessibilityLabel={
+                startingLiveClass && !classroomState?.active
+                  ? 'Starting live class'
+                  : classroomState?.active
+                    ? hostSheetVisible
+                      ? 'Hide live classroom controls'
+                      : 'Open live classroom controls'
+                    : 'Start live class'
+              }
+              onPress={() => {
+                commitEditing();
+                if (startingLiveClassRef.current) return;
+                if (classroomState?.active) {
+                  setHostSheetVisible((prev) => !prev);
+                } else {
+                  void handleStartOrOpenLiveClass();
+                }
+              }}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -2502,14 +2576,20 @@ function mathSpanAtPoint(
                 borderRadius: 10,
                 borderWidth: 1,
                 borderColor: classroomState?.active ? '#DC2626' : theme.primary,
-                backgroundColor: classroomState?.active ? theme.muted : theme.surface,
-                opacity: classroomState?.active ? 0.65 : 1,
+                backgroundColor: classroomState?.active
+                  ? (dark ? '#7F1D1D33' : '#FEE2E2')
+                  : theme.surface,
+                opacity: startingLiveClass && !classroomState?.active ? 0.65 : 1,
               }}
             >
-              <BroadcastIcon
-                size={16}
-                color={classroomState?.active ? '#DC2626' : theme.primary}
-              />
+              {startingLiveClass && !classroomState?.active ? (
+                <ActivityIndicator size="small" color={theme.primary} />
+              ) : (
+                <BroadcastIcon
+                  size={16}
+                  color={classroomState?.active ? '#DC2626' : theme.primary}
+                />
+              )}
               <Text
                 style={{
                   fontSize: 12,
@@ -2701,7 +2781,12 @@ function mathSpanAtPoint(
                   showcasedName={showcasedName}
                   notice={classroomNotice}
                   theme={theme}
-                  onOpenHostSheet={() => setHostSheetVisible(true)}
+                  onOpenHostSheet={() => {
+                    // Don't let the HUD open the sheet until the classroom
+                    // transport has finished connecting.
+                    if (startingLiveClassRef.current) return;
+                    setHostSheetVisible(true);
+                  }}
                   onRequestSync={() => {
                     void classroomSessionRef.current?.requestSync();
                   }}
@@ -3709,56 +3794,56 @@ function mathSpanAtPoint(
           onClose={() => { setImageFlowOpen(false); setImageFlowId(null); }}
         />
       )}
-      {hostSheetVisible &&
-        classroomState?.active &&
-        classroomState.role === 'teacher' &&
-        classroomState.roomInfo && (
-        <LiveClassHostSheet
-          visible={hostSheetVisible}
-          centered={tablet}
-          roomInfo={classroomState.roomInfo}
-          status={classroomState.status}
-          participants={classroomState.participants}
-          studentBoards={classroomState.studentBoards}
-          showcasedStudentPeerId={classroomState.showcasedStudentPeerId}
-          theme={theme}
-          onClose={() => setHostSheetVisible(false)}
-          onToggleLock={(locked) => {
-            void classroomSessionRef.current?.setClassLocked(locked);
-          }}
-          onToggleFollowViewport={(follow) => {
-            void classroomSessionRef.current?.setFollowTeacherViewport(follow);
-          }}
-          onToggleDrawPermission={(peerId, currentlyCanDraw) => {
-            if (currentlyCanDraw) {
-              void classroomSessionRef.current?.revokeDrawPermission(peerId);
-            } else {
-              void classroomSessionRef.current?.grantDrawPermission(peerId);
-            }
-          }}
-          onToggleVoicePermission={(peerId, currentlyCanSpeak) => {
-            if (currentlyCanSpeak) {
-              void classroomSessionRef.current?.revokeStudentVoice(peerId);
-            } else {
-              void classroomSessionRef.current?.allowStudentVoice(peerId);
-            }
-          }}
-          onLowerHand={(peerId) => {
-            void classroomSessionRef.current?.lowerStudentHand(peerId);
-          }}
-          onShowcaseStudent={(peerId) => {
-            void classroomSessionRef.current?.showcaseStudentBoard(peerId);
-          }}
-          onKickParticipant={(peerId) => {
-            void classroomSessionRef.current?.kickParticipant(peerId);
-          }}
-          onEndClass={() => {
-            setHostSheetVisible(false);
-            void audioAdapterRef.current?.disconnect();
-            void classroomSessionRef.current?.endOrLeave();
-          }}
-        />
-      )}
+      <LiveClassHostSheet
+        visible={Boolean(
+          hostSheetVisible &&
+            classroomState?.active &&
+            classroomState.role === 'teacher' &&
+            classroomState.roomInfo,
+        )}
+        centered={tablet}
+        roomInfo={classroomState?.roomInfo ?? null}
+        status={classroomState?.status ?? 'disconnected'}
+        participants={classroomState?.participants ?? []}
+        studentBoards={classroomState?.studentBoards ?? {}}
+        showcasedStudentPeerId={classroomState?.showcasedStudentPeerId ?? null}
+        theme={theme}
+        onClose={() => setHostSheetVisible(false)}
+        onToggleLock={(locked) => {
+          void classroomSessionRef.current?.setClassLocked(locked);
+        }}
+        onToggleFollowViewport={(follow) => {
+          void classroomSessionRef.current?.setFollowTeacherViewport(follow);
+        }}
+        onToggleDrawPermission={(peerId, currentlyCanDraw) => {
+          if (currentlyCanDraw) {
+            void classroomSessionRef.current?.revokeDrawPermission(peerId);
+          } else {
+            void classroomSessionRef.current?.grantDrawPermission(peerId);
+          }
+        }}
+        onToggleVoicePermission={(peerId, currentlyCanSpeak) => {
+          if (currentlyCanSpeak) {
+            void classroomSessionRef.current?.revokeStudentVoice(peerId);
+          } else {
+            void classroomSessionRef.current?.allowStudentVoice(peerId);
+          }
+        }}
+        onLowerHand={(peerId) => {
+          void classroomSessionRef.current?.lowerStudentHand(peerId);
+        }}
+        onShowcaseStudent={(peerId) => {
+          void classroomSessionRef.current?.showcaseStudentBoard(peerId);
+        }}
+        onKickParticipant={(peerId) => {
+          void classroomSessionRef.current?.kickParticipant(peerId);
+        }}
+        onEndClass={() => {
+          setHostSheetVisible(false);
+          void audioAdapterRef.current?.disconnect();
+          void classroomSessionRef.current?.endOrLeave();
+        }}
+      />
       <ExportSheet
         visible={exportSheetVisible}
         theme={theme}

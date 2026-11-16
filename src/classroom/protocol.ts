@@ -98,6 +98,7 @@ export type ClassroomControlAction =
   | { action: 'voice.revoke'; targetPeerId: string | null }
   | { action: 'voice.teacher-mute'; muted: boolean }
   | { action: 'class.lock'; locked: boolean }
+  | { action: 'viewport.follow'; follow: boolean; viewport?: Viewport }
   | { action: 'class.end' }
   | { action: 'peer.kick'; targetPeerId: string }
   | {
@@ -308,6 +309,7 @@ const VALID_CONTROL_ACTIONS = new Set([
   'voice.revoke',
   'voice.teacher-mute',
   'class.lock',
+  'viewport.follow',
   'class.end',
   'peer.kick',
   'page.switch',

@@ -9,6 +9,7 @@
  */
 
 import type { ClassroomRole } from './protocol.ts';
+import { fcprobe } from '../dev-probe';
 
 export type ClassroomAudioState = {
   available: boolean;
@@ -159,6 +160,20 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
     return { ...this.state };
   }
 
+  private tickTimer: ReturnType<typeof setInterval> | null = null;
+
+  startTicker() {
+    if (this.tickTimer) return;
+    this.tickTimer = setInterval(() => fcprobe('tick'), 500);
+  }
+
+  stopTicker() {
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+  }
+
   async connect(params: {
     roomCode: string;
     peerId: string;
@@ -167,9 +182,11 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
     canPublish: boolean;
     startMicMuted?: boolean;
   }): Promise<ClassroomAudioState> {
+    fcprobe('audio: connect start');
     this.lastParams = params;
     const config = getLiveKitConfig();
     const sdk = tryLoadLiveKitSdk();
+    fcprobe(`audio: config=${Boolean(config)} sdk=${Boolean(sdk)}`);
     if (!config || !sdk) {
       this.state = {
         available: false,
@@ -193,6 +210,7 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
         globalsRegistered = true;
       }
 
+      fcprobe('audio: starting audio session');
       try {
         await sdk.AudioSession?.startAudioSession?.();
       } catch {
@@ -208,6 +226,7 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
         headers.apikey = supabaseAnonKey;
         headers.Authorization = `Bearer ${supabaseAnonKey}`;
       }
+      fcprobe('audio: fetching token');
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
       const timeoutId = controller ? setTimeout(() => controller.abort(), 10_000) : null;
       let response: Response;
@@ -230,6 +249,7 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
       if (!response.ok) {
         throw new Error(`Token endpoint returned HTTP ${response.status}`);
       }
+      fcprobe(`audio: token http ${response.status}`);
       const data = (await response.json()) as { token?: string; url?: string };
       if (!data.token) {
         throw new Error('Missing LiveKit token from endpoint');
@@ -246,8 +266,10 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
       const room = new sdk.Room();
       const events = sdk.RoomEvent;
       if (events && room.on) {
+        fcprobe('audio: registering room events');
         if (events.Disconnected) {
           room.on(events.Disconnected, () => {
+            fcprobe('audio: EVENT Disconnected');
             this.state = {
               ...this.state,
               connected: false,
@@ -258,6 +280,7 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
         }
         if (events.MediaDevicesError) {
           room.on(events.MediaDevicesError, (err: unknown) => {
+            fcprobe('audio: EVENT MediaDevicesError ' + String(err));
             this.state = {
               ...this.state,
               micEnabled: false,
@@ -266,16 +289,29 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
             this.emitState();
           });
         }
+        // `startAudio()` re-emits `AudioPlaybackStatusChanged`. Retrying it from
+        // inside this listener creates a microtask chain that never yields when
+        // playback cannot succeed (e.g. an emulator with no audio route), which
+        // hard-freezes the Hermes thread. Attempt the unlock at most once per
+        // connection and never re-enter.
+        let audioUnlockAttempted = false;
         if (events.AudioPlaybackStatusChanged) {
           room.on(events.AudioPlaybackStatusChanged, () => {
-            if (room.canPlaybackAudio === false) {
-              void room.startAudio?.();
-            }
+            fcprobe(`audio: EVENT AudioPlaybackStatusChanged canPlayback=${room.canPlaybackAudio}`);
+            if (audioUnlockAttempted || room.canPlaybackAudio !== false) return;
+            audioUnlockAttempted = true;
+            void Promise.resolve(room.startAudio?.()).catch(() => undefined);
           });
+        }
+        if (events.AudioDeviceChanged) {
+          room.on(events.AudioDeviceChanged, () => fcprobe('audio: EVENT AudioDeviceChanged'));
         }
       }
 
+      fcprobe('audio: room.connect start');
+      this.startTicker();
       await room.connect(data.url ?? config.url, data.token);
+      fcprobe('audio: room.connect done');
       this.room = room;
 
       const shouldMic =
@@ -284,7 +320,15 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
       let micReason: string | undefined;
       if (shouldMic && room.localParticipant) {
         try {
+          // Let initial room-connect WebRTC callbacks and UI renders settle
+          // before starting microphone capture and synchronous addTransceiver.
+          fcprobe('audio: waiting 150ms before mic');
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          fcprobe('audio: enabling mic');
+          fcprobe('audio: about to await setMicrophoneEnabled');
           await room.localParticipant.setMicrophoneEnabled(true);
+          fcprobe('audio: awaited setMicrophoneEnabled');
+          fcprobe('audio: mic enabled');
           micEnabled = true;
         } catch (micError) {
           micEnabled = false;
@@ -303,6 +347,7 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
         reason: micReason,
       };
     } catch (error) {
+      fcprobe(`audio: connect threw ${error instanceof Error ? error.message : 'unknown'}`);
       this.state = {
         available: true,
         connected: false,
@@ -311,6 +356,8 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
         reason: error instanceof Error ? error.message : 'Unable to connect voice.',
       };
     }
+    fcprobe('audio: connect finished');
+    this.stopTicker();
     this.emitState();
     return this.getState();
   }
@@ -355,6 +402,13 @@ export class LiveKitClassroomAudioAdapter implements ClassroomAudioAdapter {
       return this.connect({ ...this.lastParams, canPublish: true });
     }
     this.emitState();
+    return this.getState();
+  }
+
+  async resume(): Promise<ClassroomAudioState> {
+    if (this.lastParams && this.state.available && !this.state.connected) {
+      return this.connect(this.lastParams);
+    }
     return this.getState();
   }
 

@@ -238,13 +238,22 @@ export class SupabaseRealtimeTransport implements ClassroomTransport {
       const socketUrl = `${wsBase}/realtime/v1/websocket?apikey=${encodeURIComponent(this.anonKey)}&vsn=1.0.0`;
 
       let settled = false;
+      let connectTimeout: ReturnType<typeof setTimeout> | null = null;
+      const clearConnectTimeout = () => {
+        if (connectTimeout) {
+          clearTimeout(connectTimeout);
+          connectTimeout = null;
+        }
+      };
       this.pendingJoinResolve = () => {
+        clearConnectTimeout();
         if (!settled) {
           settled = true;
           resolve();
         }
       };
       this.pendingJoinReject = (err: Error) => {
+        clearConnectTimeout();
         if (!settled) {
           settled = true;
           reject(err);
@@ -252,6 +261,23 @@ export class SupabaseRealtimeTransport implements ClassroomTransport {
       };
       const ws = new WebSocket(socketUrl);
       this.ws = ws;
+
+      // A silent network (no error, no close) must not leave the "Start Live
+      // Class" flow spinning forever; the host sheet opens only after connect.
+      connectTimeout = setTimeout(() => {
+        this.pendingJoinReject?.(
+          new Error(
+            'Timed out connecting to the Live Classroom server. Check your internet connection and try again.',
+          ),
+        );
+        this.pendingJoinResolve = null;
+        this.pendingJoinReject = null;
+        try {
+          ws.close();
+        } catch {
+          // Ignore close errors.
+        }
+      }, 15_000);
 
       ws.onopen = () => {
         this.reconnectAttempts = 0;
@@ -274,9 +300,15 @@ export class SupabaseRealtimeTransport implements ClassroomTransport {
       ws.onclose = () => {
         this.stopHeartbeat();
         if (this.closedManually) {
+          this.pendingJoinReject?.(new Error('Classroom connection cancelled.'));
+          this.pendingJoinResolve = null;
+          this.pendingJoinReject = null;
           this.emitStatus('disconnected');
           return;
         }
+        this.pendingJoinReject?.(new Error('Classroom connection closed before it was ready.'));
+        this.pendingJoinResolve = null;
+        this.pendingJoinReject = null;
         this.scheduleReconnect();
       };
     });
@@ -479,6 +511,10 @@ export class SupabaseRealtimeTransport implements ClassroomTransport {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    // Fail any in-flight join so callers awaiting `connect` don't hang.
+    this.pendingJoinReject?.(new Error('Classroom connection cancelled.'));
+    this.pendingJoinResolve = null;
+    this.pendingJoinReject = null;
     if (this.ws) {
       try {
         this.ws.close();
