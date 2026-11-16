@@ -265,12 +265,7 @@ function sameViewport(left: Viewport, right: Viewport): boolean {
 type Editing = { object: CanvasObject; isNew: boolean };
 
 export default function BoardEditorScreen() {
-  // FCPROBE
-  if (typeof globalThis.__fcRenderCount !== 'number') globalThis.__fcRenderCount = 0;
-  globalThis.__fcRenderCount += 1;
-  if (globalThis.__fcRenderCount % 5 === 0) {
-    fcprobe(`editor render count ${globalThis.__fcRenderCount}`);
-  }
+  
   const router = useRouter();
   const navigation = useNavigation();
   const {
