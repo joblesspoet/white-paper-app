@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 
 import { isCustomColor, PEN_COLORS } from '../canvas/document';
 import type { FreehandTool } from '../canvas/ink';
@@ -9,8 +9,9 @@ import {
   resolveLaserPalette,
   type LaserColorKey,
 } from '../canvas/laser';
-import { radii, spacing, typography, type ThemeColors } from '../theme';
+import type { ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
+import { inkingQuickTrayStyles as styles } from './InkingQuickTray.styles';
 import { EraserIcon, HighlighterIcon, LaserIcon, PenIcon, PlusIcon, StyleIcon } from './icons';
 
 export type InkingTool = FreehandTool | 'eraser' | 'laser';
@@ -37,7 +38,7 @@ type InkingQuickTrayProps = {
 const PEN_WIDTH_PRESETS = [2, 4, 8, 12];
 const ERASER_PRESETS = [12, 24, 36];
 
-export function InkingQuickTray({
+export const InkingQuickTray = memo(function InkingQuickTray({
   theme,
   dark,
   activeTool,
@@ -384,109 +385,5 @@ export function InkingQuickTray({
       </View>
     </View>
   );
-}
-
-const styles = StyleSheet.create({
-  floatingContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 15,
-  },
-  trayCard: {
-    maxWidth: 420,
-    marginHorizontal: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  rows: { gap: 2 },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
-  toolSegment: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-    paddingRight: spacing.xs,
-    borderRightWidth: 1,
-  },
-  toolButton: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  sizeSegment: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: spacing.xs,
-  },
-  segmentLabel: { ...typography.caption, fontSize: 11, fontWeight: '600', opacity: 0.6 },
-  sizeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  colorSegment: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingLeft: spacing.xs,
-    paddingRight: spacing.xs,
-    borderLeftWidth: 1,
-  },
-  colorSwatch: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: 'rgba(0,0,0,0.1)',
-  },
-  customColorSwatch: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  laserChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-  },
-  laserDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    borderWidth: 1.5,
-  },
-  laserChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  optionsButton: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.sm,
-  },
-  colorPickerWrapper: {
-    minWidth: 280,
-    padding: spacing.xs,
-  },
-  pressed: {
-    opacity: 0.65,
-  },
 });
 

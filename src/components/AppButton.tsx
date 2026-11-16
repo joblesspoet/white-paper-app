@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { colors, radii, spacing, touchTarget, typography } from '../theme';
@@ -14,7 +15,7 @@ type AppButtonProps = {
  * Design-system button: primary uses the accent/CTA color, secondary is an
  * outline button. Flat design — color shift on press, no elevation.
  */
-export function AppButton({
+export const AppButton = memo(function AppButton({
   label,
   onPress,
   variant = 'primary',
@@ -43,7 +44,7 @@ export function AppButton({
       </Text>
     </Pressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   base: {

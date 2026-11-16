@@ -1,54 +1,93 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import * as Linking from 'expo-linking';
-import { useRouter } from 'expo-router';
+import { useCallback, useMemo } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
-  Modal,
   Pressable,
-  StyleSheet,
   Text,
   useWindowDimensions,
   View,
+  type ListRenderItemInfo,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from '../src/components/AppButton';
-import { BoardCard, BoardSummary } from '../src/components/BoardCard';
-import { BoardIcon, PlusIcon, SettingsIcon } from '../src/components/icons';
-import { ImportBoardModal, type ImportModalState } from '../src/components/ImportBoardModal';
+import { BoardCard } from '../src/components/BoardCard';
+import { BroadcastIcon, ImportIcon, StyleIcon } from '../src/components/icons';
+import { ImportBoardModal } from '../src/components/ImportBoardModal';
 import { JoinClassModal } from '../src/components/JoinClassModal';
-import { parseClassroomDeepLink } from '../src/classroom/protocol';
-import { importErrorMessage } from '../src/export/backup';
-import { pickBackupFile } from '../src/export/backup-store';
+import { BoardOptionsModal } from '../src/components/home/BoardOptionsModal';
+import { CustomizeBoardModal } from '../src/components/home/CustomizeBoardModal';
+import { HomeActionBar } from '../src/components/home/HomeActionBar';
+import { HomeEmptyState } from '../src/components/home/HomeEmptyState';
+import { HomeHeader } from '../src/components/home/HomeHeader';
+import { HomeSearchBar } from '../src/components/home/HomeSearchBar';
+import type { Board } from '../src/board-context';
+import { useHomeBoards } from '../src/hooks/useHomeBoards';
 import { resolveHomeLayout } from '../src/responsive/layout';
-import { colors, radii, spacing, touchTarget, typography } from '../src/theme';
 import { homeStyles as styles } from '../src/screens/home.styles';
-import { useBoards } from '../src/board-context';
-import { BOARD_STYLE_OPTIONS, type BoardBackground, type BoardStyle } from '../src/persistence/schema';
 import { usePreferences } from '../src/settings/preferences-context';
 
+const keyExtractor = (item: Board) => item.id;
+
+function ItemSeparator() {
+  return <View style={styles.itemSeparator} />;
+}
+
 export default function HomeScreen() {
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const { theme, isDark, preferences } = usePreferences();
-  const { boards, createBoard, ready, storageError, refreshBoards } = useBoards();
-  const [sheetVisible, setSheetVisible] = useState(false);
-  const [joinModalVisible, setJoinModalVisible] = useState(false);
-  const [joinInitialCode, setJoinInitialCode] = useState<string | null>(null);
-  const [importState, setImportState] = useState<ImportModalState>({ status: 'closed' });
-  const [canvasBackground, setCanvasBackground] = useState<BoardBackground>(preferences.canvasBackground);
-  const [canvasStyle, setCanvasStyle] = useState<BoardStyle>(preferences.canvasStyle);
-  const [orientation] = useState<'portrait' | 'landscape'>('portrait');
+  const { theme, isDark, reducedMotion } = usePreferences();
+
+  const {
+    boards,
+    filteredBoards,
+    ready,
+    storageError,
+    showSearchBar,
+    searchQuery,
+    setSearchQuery,
+    clearSearch,
+    sheetVisible,
+    openCustomize,
+    closeCustomize,
+    canvasBackground,
+    setCanvasBackground,
+    canvasStyle,
+    setCanvasStyle,
+    orientation,
+    setOrientation,
+    createBoardNow,
+    createCustomizedBoard,
+    joinModalVisible,
+    joinInitialCode,
+    openJoinModal,
+    closeJoinModal,
+    handleJoinClass,
+    importState,
+    startImport,
+    closeImport,
+    handleImported,
+    openBoard,
+    openSettings,
+    menuBoard,
+    menuMode,
+    renameDraft,
+    setRenameDraft,
+    busyDuplicate,
+    openBoardMenu,
+    closeBoardMenu,
+    startRenameBoard,
+    submitRenameBoard,
+    handleDuplicateBoard,
+    startDeleteBoard,
+    backToBoardMenu,
+    confirmDeleteBoard,
+  } = useHomeBoards();
 
   const layout = useMemo(
     () => resolveHomeLayout(width, height, insets),
     [width, height, insets],
   );
   const { columns, cardWidth, twoPane, sidebarWidth } = layout;
-  const isCompactHeader = layout.profile.isCompactHeight;
-  const isTabletPortrait = layout.profile.isTabletPortrait;
 
   const contentStyle = useMemo(
     () => ({
@@ -59,247 +98,154 @@ export default function HomeScreen() {
     [layout.paddingBottom, layout.paddingLeft, layout.paddingRight, twoPane],
   );
 
-  const handleJoinClass = useCallback(
-    (params: { roomCode: string; displayName: string; projectorMode: boolean }) => {
-      setJoinModalVisible(false);
-      router.push({
-        pathname: '/editor',
-        params: {
-          liveRole: 'student',
-          roomCode: params.roomCode,
-          displayName: params.displayName,
-          projectorMode: params.projectorMode ? '1' : '0',
-        },
-      });
-    },
-    [router],
+  const renderBoard = useCallback(
+    ({ item }: ListRenderItemInfo<Board>) => (
+      <BoardCard
+        board={item}
+        width={cardWidth}
+        theme={theme}
+        onPress={openBoard}
+        onMenuPress={openBoardMenu}
+      />
+    ),
+    [cardWidth, openBoard, openBoardMenu, theme],
   );
 
-  const openJoinModal = useCallback((code?: string | null) => {
-    setJoinInitialCode(code ?? null);
-    setJoinModalVisible(true);
-  }, []);
+  const handleQuickCreate = useCallback(() => {
+    createBoardNow();
+  }, [createBoardNow]);
 
-  useEffect(() => {
-    const handleUrl = (url: string | null) => {
-      if (!url) return;
-      const code = parseClassroomDeepLink(url);
-      if (code) openJoinModal(code);
-    };
-    void Linking.getInitialURL().then(handleUrl);
-    const sub = Linking.addEventListener('url', (event) => handleUrl(event.url));
-    return () => sub.remove();
+  const handleOpenJoin = useCallback(() => {
+    openJoinModal();
   }, [openJoinModal]);
 
-  const createBoardNow = useCallback((settings?: { background: BoardBackground; style: BoardStyle; orientation: 'portrait' | 'landscape' }) => {
-    const defaultSettings = {
-      background: preferences.canvasBackground,
-      style: preferences.canvasStyle,
-      orientation: 'portrait' as const,
-    };
-    const board = createBoard(settings ?? defaultSettings);
-    router.push({ pathname: '/editor', params: { boardId: board.id } });
-  }, [createBoard, preferences.canvasBackground, preferences.canvasStyle, router]);
+  const handleStartImport = useCallback(() => {
+    void startImport();
+  }, [startImport]);
 
-  const openCustomize = useCallback(() => {
-    setCanvasBackground(preferences.canvasBackground);
-    setCanvasStyle(preferences.canvasStyle);
-    setSheetVisible(true);
-  }, [preferences.canvasBackground, preferences.canvasStyle]);
+  const handleDuplicate = useCallback(() => {
+    void handleDuplicateBoard();
+  }, [handleDuplicateBoard]);
 
-  const createCustomizedBoard = useCallback(() => {
-    setSheetVisible(false);
-    createBoardNow({ background: canvasBackground, style: canvasStyle, orientation });
-  }, [canvasBackground, canvasStyle, createBoardNow, orientation]);
-
-  const renderBoard = useCallback(({ item }: { item: BoardSummary }) => (
-    <BoardCard
-      board={item}
-      width={cardWidth}
-      theme={theme}
-      onPress={() => router.push({ pathname: '/editor', params: { boardId: item.id } })}
-      onMenuPress={() => undefined}
-    />
-  ), [cardWidth, router, theme]);
-
-  const startImport = useCallback(async () => {
-    try {
-      const picked = await pickBackupFile();
-      if (picked.canceled) return;
-      setImportState({
-        status: 'ready',
-        plan: picked.plan,
-        backup: picked.backup,
-        warnings: picked.warnings,
-        size: picked.size,
-      });
-    } catch (error) {
-      setImportState({
-        status: 'error',
-        message: importErrorMessage(error),
-      });
-    }
-  }, []);
-
-  const emptyComponent = !ready ? (
-    <View style={styles.loading}>
-      <ActivityIndicator color={theme.primary} />
-      <Text style={[styles.loadingText, { color: theme.foreground }]}>Opening your boards…</Text>
-    </View>
-  ) : (
-    <View style={[styles.empty, { borderColor: theme.border, backgroundColor: theme.muted }]}>
-      <View style={[styles.emptyIcon, { backgroundColor: isDark ? theme.darkSurface : colors.background }]}>
-        <BoardIcon size={44} color={theme.primary} />
-      </View>
-      <Text style={[styles.emptyTitle, { color: theme.foreground }]}>Start with a blank canvas</Text>
-      <Text style={[styles.emptyBody, { color: theme.foreground }]}>
-        Capture thoughts, sketch ideas, and turn them into something useful.
-      </Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Create your first board"
-        onPress={() => createBoardNow()}
-        style={[styles.emptyButton, { backgroundColor: theme.accent }]}
-      >
-        <PlusIcon />
-        <Text style={styles.emptyButtonText}>Create your first board</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Join live class"
-        onPress={() => openJoinModal()}
-        style={[
-          styles.customizeLink,
-          styles.customizeLinkInline,
-          { marginTop: spacing.md, borderColor: theme.primary, backgroundColor: theme.surface },
-        ]}
-      >
-        <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Join live class</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Import a board"
-        onPress={() => { void startImport(); }}
-        style={styles.import}
-      >
-        <Text style={[styles.importText, { color: theme.primary }]}>Import a board</Text>
-      </Pressable>
-    </View>
+  const listHeader = useMemo(
+    () =>
+      twoPane ? undefined : (
+        <HomeActionBar
+          theme={theme}
+          isTabletPortrait={layout.profile.isTabletPortrait}
+          showSearchBar={showSearchBar}
+          searchQuery={searchQuery}
+          boardCount={boards.length}
+          filteredCount={filteredBoards.length}
+          onSearchChange={setSearchQuery}
+          onClearSearch={clearSearch}
+          onCreateBoard={handleQuickCreate}
+          onOpenCustomize={openCustomize}
+          onOpenJoinClass={handleOpenJoin}
+          onStartImport={handleStartImport}
+        />
+      ),
+    [
+      boards.length,
+      clearSearch,
+      filteredBoards.length,
+      handleOpenJoin,
+      handleQuickCreate,
+      handleStartImport,
+      layout.profile.isTabletPortrait,
+      openCustomize,
+      searchQuery,
+      setSearchQuery,
+      showSearchBar,
+      theme,
+      twoPane,
+    ],
   );
 
-  const listHeader = twoPane ? undefined : isTabletPortrait ? (
-    <View style={styles.tabletActionRow}>
-      <View style={styles.tabletPrimaryWrap}>
-        <AppButton
-          label="New board"
-          accessibilityHint="Creates a blank board and opens it"
-          onPress={() => createBoardNow()}
-        />
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Customize new board"
-        onPress={openCustomize}
-        style={[styles.customizeLink, styles.customizeLinkInline, { borderColor: theme.border, backgroundColor: theme.surface }]}
-      >
-        <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Join live class"
-        onPress={() => openJoinModal()}
-        style={[
-          styles.customizeLink,
-          styles.customizeLinkInline,
-          { marginTop: spacing.md, borderColor: theme.primary, backgroundColor: theme.surface },
-        ]}
-      >
-        <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Join live class</Text>
-      </Pressable>
-    </View>
-  ) : (
-    <View style={styles.phoneActionStack}>
-      <AppButton
-        label="New board"
-        accessibilityHint="Creates a blank board and opens it"
-        onPress={() => createBoardNow()}
+  const emptyComponent = useMemo(
+    () => (
+      <HomeEmptyState
+        ready={ready}
+        hasAnyBoards={boards.length > 0}
+        searchQuery={searchQuery}
+        columns={columns}
+        cardWidth={cardWidth}
+        theme={theme}
+        isDark={isDark}
+        reducedMotion={reducedMotion}
+        onCreateBoard={handleQuickCreate}
+        onOpenJoinClass={handleOpenJoin}
+        onStartImport={handleStartImport}
+        onClearSearch={clearSearch}
       />
-      <View style={styles.tabletActionRow}>
+    ),
+    [
+      boards.length,
+      cardWidth,
+      clearSearch,
+      columns,
+      handleOpenJoin,
+      handleQuickCreate,
+      handleStartImport,
+      isDark,
+      ready,
+      reducedMotion,
+      searchQuery,
+      theme,
+    ],
+  );
+
+  const listFooter = useMemo(
+    () =>
+      !twoPane && filteredBoards.length > 0 ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Customize new board"
-          onPress={openCustomize}
-          style={[styles.customizeLink, styles.customizeLinkInline, { flex: 1, borderColor: theme.border, backgroundColor: theme.surface }]}
+          accessibilityLabel="Import a board"
+          onPress={handleStartImport}
+          style={styles.importFooter}
         >
-          <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text>
+          <ImportIcon size={18} color={theme.primary} />
+          <Text style={[styles.importFooterText, { color: theme.primary }]}>
+            Import a board backup
+          </Text>
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Join live class"
-          onPress={() => openJoinModal()}
-          style={[styles.customizeLink, styles.customizeLinkInline, { flex: 1, borderColor: theme.primary, backgroundColor: theme.surface }]}
-        >
-          <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Join live class</Text>
-        </Pressable>
-      </View>
-    </View>
+      ) : undefined,
+    [filteredBoards.length, handleStartImport, theme.primary, twoPane],
   );
 
   const boardList = (
     <FlatList
       key={`${columns}-${twoPane ? 'two' : 'one'}`}
-      data={boards}
+      data={ready ? filteredBoards : []}
       numColumns={columns}
       renderItem={renderBoard}
-      keyExtractor={(item) => item.id}
-      columnWrapperStyle={boards.length > 0 && columns > 1 ? styles.row : undefined}
+      keyExtractor={keyExtractor}
+      columnWrapperStyle={filteredBoards.length > 0 && columns > 1 ? styles.row : undefined}
       contentContainerStyle={contentStyle}
       ListHeaderComponent={listHeader}
       ListHeaderComponentStyle={!twoPane ? styles.listHeader : undefined}
       ListEmptyComponent={emptyComponent}
-      ListFooterComponent={
-        !twoPane && boards.length > 0 ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Import a board"
-            onPress={() => { void startImport(); }}
-            style={styles.import}
-          >
-            <Text style={[styles.importText, { color: theme.primary }]}>Import a board</Text>
-          </Pressable>
-        ) : undefined
-      }
+      ListFooterComponent={listFooter}
       showsVerticalScrollIndicator={false}
-      ItemSeparatorComponent={() => <View style={{ height: spacing.md }} />}
+      ItemSeparatorComponent={ItemSeparator}
+      removeClippedSubviews
+      initialNumToRender={8}
+      windowSize={5}
     />
   );
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: theme.background }]} edges={['top']}>
-      <View
-        style={[
-          styles.header,
-          isCompactHeader && styles.headerCompact,
-          { paddingLeft: layout.paddingLeft, paddingRight: layout.paddingRight },
-        ]}
-      >
-        <View style={styles.wordmarkWrap}>
-          <Text style={[styles.wordmark, { color: theme.foreground }]}>FlowCanvas</Text>
-          {!isCompactHeader && (
-            <Text style={[styles.subtitle, { color: theme.primary }]}>Your ideas, in motion.</Text>
-          )}
-        </View>
-        <View style={styles.headerActions}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open settings"
-            onPress={() => router.push('/settings')}
-            style={[styles.iconButton, { borderColor: theme.border, backgroundColor: theme.surface }]}
-          >
-            <SettingsIcon color={theme.foreground} />
-          </Pressable>
-        </View>
-      </View>
+      <HomeHeader
+        theme={theme}
+        paddingLeft={layout.paddingLeft}
+        paddingRight={layout.paddingRight}
+        isCompactHeight={layout.profile.isCompactHeight}
+        isTablet={layout.profile.isTablet}
+        boardCount={boards.length}
+        onImportPress={handleStartImport}
+        onSettingsPress={openSettings}
+      />
 
       {storageError && (
         <View
@@ -309,13 +255,14 @@ export default function HomeScreen() {
             {
               marginLeft: layout.paddingLeft,
               marginRight: layout.paddingRight,
-              borderColor: theme.border,
+              borderColor: theme.destructive,
               backgroundColor: theme.muted,
             },
           ]}
         >
           <Text style={[styles.storageBannerText, { color: theme.destructive }]}>
-            Local storage: {storageError} Boards stay usable in memory, and the next change retries the save.
+            Local storage: {storageError} Boards stay usable in memory, and the next change retries
+            the save.
           </Text>
         </View>
       )}
@@ -324,190 +271,157 @@ export default function HomeScreen() {
         <View
           style={[
             styles.twoPaneBody,
-            {
-              paddingLeft: layout.paddingLeft,
-              paddingRight: layout.paddingRight,
-            },
+            { paddingLeft: layout.paddingLeft, paddingRight: layout.paddingRight },
           ]}
         >
           <View style={[styles.sidebar, { width: sidebarWidth, borderRightColor: theme.border }]}>
             <AppButton
-              label="New board"
+              label="+ New board"
               accessibilityHint="Creates a blank board and opens it"
-              onPress={() => createBoardNow()}
+              onPress={handleQuickCreate}
             />
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Customize new board"
               onPress={openCustomize}
-              style={[styles.customizeLink, styles.customizeLinkInline, { borderColor: theme.border, backgroundColor: theme.surface }]}
+              style={({ pressed }) => [
+                styles.sidebarButton,
+                { borderColor: theme.border, backgroundColor: theme.surface },
+                pressed && styles.sidebarButtonPressed,
+              ]}
             >
-              <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Customize</Text>
+              <StyleIcon size={18} color={theme.primary} />
+              <Text style={[styles.sidebarButtonText, { color: theme.foreground }]}>
+                Customize board
+              </Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Join live class"
-              onPress={() => openJoinModal()}
-              style={[styles.customizeLink, styles.customizeLinkInline, { borderColor: theme.primary, backgroundColor: theme.surface }]}
+              onPress={handleOpenJoin}
+              style={({ pressed }) => [
+                styles.sidebarButton,
+                { borderColor: theme.primary, backgroundColor: theme.surface },
+                pressed && styles.sidebarButtonPressed,
+              ]}
             >
-              <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Join live class</Text>
+              <BroadcastIcon size={18} color={theme.primary} />
+              <Text style={[styles.sidebarButtonText, { color: theme.primary }]}>
+                Join live class
+              </Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Import a board"
-              onPress={() => { void startImport(); }}
-              style={[styles.customizeLink, styles.customizeLinkInline, { borderColor: theme.border, backgroundColor: theme.surface }]}
+              onPress={handleStartImport}
+              style={({ pressed }) => [
+                styles.sidebarButton,
+                { borderColor: theme.border, backgroundColor: theme.surface },
+                pressed && styles.sidebarButtonPressed,
+              ]}
             >
-              <Text style={[styles.customizeLinkText, { color: theme.primary }]}>Import a board</Text>
+              <ImportIcon size={18} color={theme.primary} />
+              <Text style={[styles.sidebarButtonText, { color: theme.foreground }]}>
+                Import backup
+              </Text>
             </Pressable>
-            <View style={[styles.sidebarCard, { borderColor: theme.border, backgroundColor: theme.surface }]}>
-              <Text style={[styles.sidebarMetaTitle, { color: theme.primary }]}>LOCAL WORKSPACE</Text>
+
+            <View
+              style={[
+                styles.sidebarCard,
+                { borderColor: theme.border, backgroundColor: theme.surface },
+              ]}
+            >
+              <Text style={[styles.sidebarMetaTitle, { color: theme.primary }]}>
+                LOCAL WORKSPACE
+              </Text>
               <Text style={[styles.sidebarMetaBody, { color: theme.foreground }]}>
                 {boards.length} {boards.length === 1 ? 'board' : 'boards'} stored on this device.
               </Text>
             </View>
           </View>
-          <View style={styles.gridPane}>{boardList}</View>
+
+          <View style={styles.gridPane}>
+            {(showSearchBar || boards.length > 0) && (
+              <View style={styles.twoPaneSearchHeader}>
+                {showSearchBar && (
+                  <HomeSearchBar
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    onClear={clearSearch}
+                    theme={theme}
+                  />
+                )}
+                {boards.length > 0 && (
+                  <View style={styles.sectionMetaRow}>
+                    <Text style={[styles.sectionHeading, { color: theme.primary }]}>
+                      RECENT BOARDS ({filteredBoards.length})
+                    </Text>
+                    <Text style={[styles.sectionCount, { color: theme.foreground }]}>
+                      100% On-device SQLite
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+            {boardList}
+          </View>
         </View>
       ) : (
         boardList
       )}
 
-      <Modal
-        transparent
+      <CustomizeBoardModal
         visible={sheetVisible}
-        animationType={layout.customizeModalCentered ? 'fade' : 'slide'}
-        statusBarTranslucent
-        onRequestClose={() => setSheetVisible(false)}
-      >
-        <Pressable
-          style={[
-            sheetStyles.scrim,
-            layout.customizeModalCentered && sheetStyles.scrimCentered,
-          ]}
-          onPress={() => setSheetVisible(false)}
-        >
-          <Pressable
-            style={[
-              sheetStyles.sheet,
-              layout.customizeModalCentered
-                ? [
-                    sheetStyles.sheetModal,
-                    {
-                      maxWidth: layout.customizeModalMaxWidth,
-                      borderColor: theme.border,
-                    },
-                  ]
-                : { paddingBottom: insets.bottom + spacing.md, borderColor: theme.border },
-              { backgroundColor: theme.surface },
-            ]}
-            onPress={() => undefined}
-          >
-            {!layout.customizeModalCentered && (
-              <View style={[sheetStyles.grabber, { backgroundColor: theme.border }]} />
-            )}
-            <Text style={[sheetStyles.title, { color: theme.foreground }]}>Customize your board</Text>
-            <Text style={[sheetStyles.body, { color: theme.foreground }]}>Choose a canvas style before you start.</Text>
-            <Text style={[sheetStyles.label, { color: theme.foreground }]}>Canvas background</Text>
-            <View style={sheetStyles.choiceRow}>
-              <Choice label="Light" active={canvasBackground === 'light'} onPress={() => setCanvasBackground('light')} theme={theme} />
-              <Choice label="White" active={canvasBackground === 'white'} onPress={() => setCanvasBackground('white')} theme={theme} />
-              <Choice label="Dark" active={canvasBackground === 'dark'} onPress={() => setCanvasBackground('dark')} theme={theme} />
-            </View>
-            <Text style={[sheetStyles.label, { color: theme.foreground }]}>Canvas surface</Text>
-            <View style={[sheetStyles.choiceRow, { flexWrap: 'wrap' }]}>
-              {BOARD_STYLE_OPTIONS.map((opt) => (
-                <Choice
-                  key={opt.key}
-                  label={opt.shortLabel}
-                  active={canvasStyle === opt.key}
-                  onPress={() => setCanvasStyle(opt.key)}
-                  theme={theme}
-                />
-              ))}
-            </View>
-            <AppButton label="Create board" onPress={createCustomizedBoard} />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Cancel customization"
-              onPress={() => setSheetVisible(false)}
-              style={sheetStyles.cancel}
-            >
-              <Text style={[sheetStyles.link, { color: theme.primary }]}>Cancel</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        centered={layout.customizeModalCentered}
+        maxWidth={layout.customizeModalMaxWidth}
+        bottomInset={insets.bottom}
+        theme={theme}
+        reducedMotion={reducedMotion}
+        canvasBackground={canvasBackground}
+        canvasStyle={canvasStyle}
+        orientation={orientation}
+        onSelectBackground={setCanvasBackground}
+        onSelectStyle={setCanvasStyle}
+        onSelectOrientation={setOrientation}
+        onCreate={createCustomizedBoard}
+        onClose={closeCustomize}
+      />
+
+      <BoardOptionsModal
+        board={menuBoard}
+        mode={menuMode}
+        renameDraft={renameDraft}
+        busyDuplicate={busyDuplicate}
+        centered={layout.customizeModalCentered}
+        maxWidth={layout.customizeModalMaxWidth}
+        bottomInset={insets.bottom}
+        theme={theme}
+        reducedMotion={reducedMotion}
+        onChangeRenameDraft={setRenameDraft}
+        onStartRename={startRenameBoard}
+        onSubmitRename={submitRenameBoard}
+        onDuplicate={handleDuplicate}
+        onStartDelete={startDeleteBoard}
+        onConfirmDelete={confirmDeleteBoard}
+        onBackToMenu={backToBoardMenu}
+        onClose={closeBoardMenu}
+      />
 
       <ImportBoardModal
         state={importState}
         theme={theme}
-        onClose={() => setImportState({ status: 'closed' })}
-        onImported={(boardId) => {
-          setImportState({ status: 'closed' });
-          void refreshBoards();
-          router.push({ pathname: '/editor', params: { boardId } });
-        }}
+        onClose={closeImport}
+        onImported={handleImported}
       />
 
       <JoinClassModal
         visible={joinModalVisible}
         initialCode={joinInitialCode}
         theme={theme}
-        onClose={() => setJoinModalVisible(false)}
+        onClose={closeJoinModal}
         onJoin={handleJoinClass}
       />
     </SafeAreaView>
   );
 }
-
-function Choice({ label, active, onPress, theme }: { label: string; active: boolean; onPress: () => void; theme: { primary: string; foreground: string; border: string; muted: string; surface: string } }) {
-  return (
-    <Pressable
-      accessibilityRole="radio"
-      accessibilityState={{ selected: active }}
-      onPress={onPress}
-      style={[
-        sheetStyles.choice,
-        {
-          borderColor: active ? theme.primary : theme.border,
-          backgroundColor: active ? theme.muted : theme.surface,
-        },
-      ]}
-    >
-      <Text style={[typography.bodyStrong, { color: theme.foreground }]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-const sheetStyles = StyleSheet.create({
-  scrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000055' },
-  scrimCentered: { justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
-  sheet: {
-    padding: spacing.lg,
-    borderTopLeftRadius: radii.lg,
-    borderTopRightRadius: radii.lg,
-    borderTopWidth: 1,
-    gap: spacing.md,
-  },
-  sheetModal: {
-    width: '100%',
-    borderRadius: radii.lg,
-    borderWidth: 1,
-  },
-  grabber: { width: 44, height: 4, borderRadius: 2, alignSelf: 'center' },
-  title: { ...typography.title },
-  body: { ...typography.body, opacity: 0.75 },
-  label: { ...typography.bodyStrong, marginTop: spacing.xs },
-  choiceRow: { flexDirection: 'row', gap: spacing.sm },
-  choice: {
-    flex: 1,
-    minHeight: touchTarget,
-    borderWidth: 2,
-    borderRadius: radii.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cancel: { minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  link: { ...typography.bodyStrong },
-});

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -21,20 +21,42 @@ import {
 } from '../canvas/document';
 import type { InstrumentKind } from '../canvas/geometry-box';
 import { type ConnectorStyle } from '../canvas/shapes';
+import { usePreferences } from '../settings/preferences-context';
 import { spacing, type ThemeColors } from '../theme';
-import { styles } from './QuickCreationSheet.styles';
 import { ColorPicker } from './ColorPicker';
-import { ShapeCatalogPicker } from './ShapeCatalogPicker';
+import {
+  QuickCreationCard,
+  QuickCreationSection,
+  QuickCreationSwatch,
+  QuickCreationSwatchRow,
+  QuickCreationTile,
+} from './creation/QuickCreationPrimitives';
 import {
   CalculatorIcon,
+  CompassIcon,
+  CompassRulerIcon,
   ConnectorIcon,
+  CurtainIcon,
   ElbowIcon,
+  FaceCamIcon,
+  FlashcardsIcon,
   ImageIcon,
   LineIcon,
-  PlusIcon,
+  MathSumIcon,
+  MicIcon,
+  PdfDocIcon,
+  PlayLessonIcon,
+  ProtractorIcon,
+  RecordDotIcon,
+  RevealTapeIcon,
+  RulerIcon,
+  SpotlightIcon,
   StickyIcon,
+  TableGridIcon,
   TimerIcon,
 } from './icons';
+import { styles } from './QuickCreationSheet.styles';
+import { ShapeCatalogPicker } from './ShapeCatalogPicker';
 
 export type InsertToolRequest =
   | { type: 'sticky'; colorKey?: string }
@@ -79,7 +101,7 @@ const TEXT_SWATCHES = TEXT_COLORS.slice(0, 6);
  * object the board can create. It keeps the bottom pill at four anchors while
  * giving new object types (tables, frames, templates) an obvious home.
  */
-export function QuickCreationSheet({
+export const QuickCreationSheet = memo(function QuickCreationSheet({
   theme,
   dark,
   visible,
@@ -90,6 +112,7 @@ export function QuickCreationSheet({
 }: QuickCreationSheetProps) {
   const { height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const { reducedMotion } = usePreferences();
   const [customPickerTarget, setCustomPickerTarget] = useState<'sticky' | 'text' | null>(null);
   /** Draft colour while the custom picker is open; applied when it is confirmed. */
   const [customColor, setCustomColor] = useState<string>(theme.primary);
@@ -105,38 +128,112 @@ export function QuickCreationSheet({
   const maxSheetHeight = Math.min(windowHeight * 0.8, 560);
 
   /** Every insert path closes the sheet before the canvas is touched. */
-  const insert = useCallback((request: InsertToolRequest) => {
-    onSelectInsert(request);
-    onClose();
-  }, [onClose, onSelectInsert]);
+  const insert = useCallback(
+    (request: InsertToolRequest) => {
+      onSelectInsert(request);
+      onClose();
+    },
+    [onClose, onSelectInsert],
+  );
 
-  const handleSelectShape = useCallback((shape: ShapeKind) => {
-    insert({ type: 'shape', shape });
-  }, [insert]);
+  const handleSelectShape = useCallback(
+    (shape: ShapeKind) => {
+      insert({ type: 'shape', shape });
+    },
+    [insert],
+  );
 
   /** Seed the picker with the row's default so it opens on a usable colour. */
-  const openCustomPicker = (target: 'sticky' | 'text') => {
-    setCustomColor(target === 'sticky' ? STICKY_COLORS[0].fill : theme.primary);
-    setCustomPickerTarget(target);
-  };
+  const openCustomPicker = useCallback(
+    (target: 'sticky' | 'text') => {
+      setCustomColor(target === 'sticky' ? STICKY_COLORS[0].fill : theme.primary);
+      setCustomPickerTarget(target);
+    },
+    [theme.primary],
+  );
+
+  const openStickyCustomPicker = useCallback(() => openCustomPicker('sticky'), [openCustomPicker]);
+  const openTextCustomPicker = useCallback(() => openCustomPicker('text'), [openCustomPicker]);
+
+  const closeCustomPicker = useCallback(() => setCustomPickerTarget(null), []);
+  const handleConfirmCustomColor = useCallback(() => {
+    if (!customPickerTarget) return;
+    const target = customPickerTarget;
+    setCustomPickerTarget(null);
+    insert({ type: target, colorKey: customColor });
+  }, [customColor, customPickerTarget, insert]);
+
+  const handleDecRows = useCallback(() => setCustomRows((r) => Math.max(1, r - 1)), []);
+  const handleIncRows = useCallback(() => setCustomRows((r) => Math.min(MAX_TABLE_ROWS, r + 1)), []);
+  const handleDecCols = useCallback(() => setCustomCols((c) => Math.max(1, c - 1)), []);
+  const handleIncCols = useCallback(() => setCustomCols((c) => Math.min(MAX_TABLE_COLUMNS, c + 1)), []);
+  const handleInsertCustomTable = useCallback(
+    () => insert({ type: 'table', rows: customRows, columns: customCols }),
+    [customCols, customRows, insert],
+  );
+
+  const textSectionAction = useMemo(
+    () => ({
+      label: 'Styles',
+      accessibilityLabel: 'Text and note styles',
+      onPress: () => {
+        onClose();
+        onOpenObjectOptions('text');
+      },
+    }),
+    [onClose, onOpenObjectOptions],
+  );
+
+  const shapesSectionAction = useMemo(
+    () => ({
+      label: 'Styles',
+      accessibilityLabel: 'Shape style options',
+      onPress: () => {
+        onClose();
+        onOpenShapeOptions('shape');
+      },
+    }),
+    [onClose, onOpenShapeOptions],
+  );
+
+  const connectorsSectionAction = useMemo(
+    () => ({
+      label: 'Styles',
+      accessibilityLabel: 'Connector style options',
+      onPress: () => {
+        onClose();
+        onOpenShapeOptions('connector');
+      },
+    }),
+    [onClose, onOpenShapeOptions],
+  );
+
+  const sheetSurfaceStyle = useMemo(
+    () => [
+      styles.sheet,
+      {
+        backgroundColor: theme.surface,
+        borderColor: theme.border,
+        paddingBottom: insets.bottom + spacing.md,
+      },
+    ],
+    [insets.bottom, theme.border, theme.surface],
+  );
+
+  const layerPaddingStyle = useMemo(
+    () => [styles.layer, { paddingLeft: insets.left, paddingRight: insets.right }],
+    [insets.left, insets.right],
+  );
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType={reducedMotion ? 'none' : 'slide'}
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View
-        style={[
-          styles.layer,
-          {
-            paddingLeft: insets.left,
-            paddingRight: insets.right,
-          },
-        ]}
-      >
+      <View style={layerPaddingStyle}>
         <Pressable
           style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(19, 78, 74, 0.24)' }]}
           onPress={onClose}
@@ -147,14 +244,7 @@ export function QuickCreationSheet({
         <View
           accessibilityViewIsModal
           accessibilityLabel="Insert object"
-          style={[
-            styles.sheet,
-            {
-              backgroundColor: theme.surface,
-              borderColor: theme.border,
-              paddingBottom: insets.bottom + spacing.md,
-            },
-          ]}
+          style={sheetSurfaceStyle}
         >
           <View style={styles.handleWrap}>
             <View style={[styles.handle, { backgroundColor: theme.border }]} />
@@ -174,7 +264,7 @@ export function QuickCreationSheet({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={customPickerTarget ? 'Back to insert options' : 'Close insert sheet'}
-              onPress={customPickerTarget ? () => setCustomPickerTarget(null) : onClose}
+              onPress={customPickerTarget ? closeCustomPicker : onClose}
               style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
             >
               <Text style={[styles.closeText, { color: theme.primary }]}>
@@ -202,30 +292,19 @@ export function QuickCreationSheet({
                   background={theme.background}
                   checkContrast={false}
                   onChange={setCustomColor}
-                  onClose={() => {
-                    const target = customPickerTarget;
-                    setCustomPickerTarget(null);
-                    insert({ type: target, colorKey: customColor });
-                  }}
+                  onClose={handleConfirmCustomColor}
                 />
               </View>
             ) : (
               <>
                 {/* ---------------------------------------- Text & notes */}
-                <Section
+                <QuickCreationSection
                   theme={theme}
                   label="Text & notes"
-                  action={{
-                    label: 'Styles',
-                    accessibilityLabel: 'Text and note styles',
-                    onPress: () => {
-                      onClose();
-                      onOpenObjectOptions('text');
-                    },
-                  }}
+                  action={textSectionAction}
                 >
                   <View style={styles.row}>
-                    <Card
+                    <QuickCreationCard
                       theme={theme}
                       accessibilityLabel="Add text block"
                       accessibilityHint="Type a heading or paragraph on the board"
@@ -238,7 +317,7 @@ export function QuickCreationSheet({
                       }
                       onPress={() => insert({ type: 'text' })}
                     />
-                    <Card
+                    <QuickCreationCard
                       theme={theme}
                       accessibilityLabel="Add sticky note"
                       accessibilityHint="Places a note in the current pastel"
@@ -250,14 +329,14 @@ export function QuickCreationSheet({
                     />
                   </View>
 
-                  <SwatchRow
+                  <QuickCreationSwatchRow
                     theme={theme}
                     label="Note"
                     addLabel="Pick a custom note colour"
-                    onAdd={() => openCustomPicker('sticky')}
+                    onAdd={openStickyCustomPicker}
                   >
                     {NOTE_SWATCHES.map((entry) => (
-                      <Swatch
+                      <QuickCreationSwatch
                         key={entry.key}
                         accessibilityLabel={`Add ${entry.name.toLowerCase()} sticky note`}
                         color={entry.fill}
@@ -265,16 +344,16 @@ export function QuickCreationSheet({
                         onPress={() => insert({ type: 'sticky', colorKey: entry.key })}
                       />
                     ))}
-                  </SwatchRow>
+                  </QuickCreationSwatchRow>
 
-                  <SwatchRow
+                  <QuickCreationSwatchRow
                     theme={theme}
                     label="Text"
                     addLabel="Pick a custom text colour"
-                    onAdd={() => openCustomPicker('text')}
+                    onAdd={openTextCustomPicker}
                   >
                     {TEXT_SWATCHES.map((entry) => (
-                      <Swatch
+                      <QuickCreationSwatch
                         key={entry.key}
                         accessibilityLabel={`Add text in ${entry.name.toLowerCase()}`}
                         color={dark ? entry.dark : entry.light}
@@ -282,43 +361,32 @@ export function QuickCreationSheet({
                         onPress={() => insert({ type: 'text', colorKey: entry.key })}
                       />
                     ))}
-                  </SwatchRow>
-                </Section>
+                  </QuickCreationSwatchRow>
+                </QuickCreationSection>
 
                 {/* ---------------------------------------------- Shapes */}
-                <Section
+                <QuickCreationSection
                   theme={theme}
                   label="Shapes & Diagrams (53)"
-                  action={{
-                    label: 'Styles',
-                    accessibilityLabel: 'Shape style options',
-                    onPress: () => {
-                      onClose();
-                      onOpenShapeOptions('shape');
-                    },
-                  }}
+                  action={shapesSectionAction}
                 >
                   <ShapeCatalogPicker
                     theme={theme}
                     showLabels
                     onSelectShape={handleSelectShape}
                   />
-                </Section>
+                </QuickCreationSection>
 
                 {/* ---------------------------------------------- Tables */}
-                <Section theme={theme} label="Table">
+                <QuickCreationSection theme={theme} label="Table">
                   <View style={styles.row}>
                     {TABLE_PRESETS.map((preset) => (
-                      <Tile
+                      <QuickCreationTile
                         key={preset.label}
                         theme={theme}
                         accessibilityLabel={`Insert ${preset.label} table`}
                         label={preset.label}
-                        icon={
-                          <Text style={[styles.tablePresetIcon, { color: theme.primary }]}>
-                            ⊞
-                          </Text>
-                        }
+                        icon={<TableGridIcon size={22} color={theme.primary} />}
                         onPress={() =>
                           insert({ type: 'table', rows: preset.rows, columns: preset.columns })
                         }
@@ -333,7 +401,7 @@ export function QuickCreationSheet({
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Decrease table rows"
-                        onPress={() => setCustomRows((r) => Math.max(1, r - 1))}
+                        onPress={handleDecRows}
                         style={[styles.stepperBtn, { borderColor: theme.border }]}
                       >
                         <Text style={[styles.stepperBtnText, { color: theme.foreground }]}>−</Text>
@@ -341,7 +409,7 @@ export function QuickCreationSheet({
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Increase table rows"
-                        onPress={() => setCustomRows((r) => Math.min(MAX_TABLE_ROWS, r + 1))}
+                        onPress={handleIncRows}
                         style={[styles.stepperBtn, { borderColor: theme.border }]}
                       >
                         <Text style={[styles.stepperBtnText, { color: theme.foreground }]}>+</Text>
@@ -354,7 +422,7 @@ export function QuickCreationSheet({
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Decrease table columns"
-                        onPress={() => setCustomCols((c) => Math.max(1, c - 1))}
+                        onPress={handleDecCols}
                         style={[styles.stepperBtn, { borderColor: theme.border }]}
                       >
                         <Text style={[styles.stepperBtnText, { color: theme.foreground }]}>−</Text>
@@ -362,7 +430,7 @@ export function QuickCreationSheet({
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="Increase table columns"
-                        onPress={() => setCustomCols((c) => Math.min(MAX_TABLE_COLUMNS, c + 1))}
+                        onPress={handleIncCols}
                         style={[styles.stepperBtn, { borderColor: theme.border }]}
                       >
                         <Text style={[styles.stepperBtnText, { color: theme.foreground }]}>+</Text>
@@ -371,45 +439,36 @@ export function QuickCreationSheet({
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={`Insert ${customRows} by ${customCols} table`}
-                      onPress={() =>
-                        insert({ type: 'table', rows: customRows, columns: customCols })
-                      }
+                      onPress={handleInsertCustomTable}
                       style={[styles.insertTableBtn, { backgroundColor: theme.primary }]}
                     >
                       <Text style={styles.insertTableBtnText}>Insert</Text>
                     </Pressable>
                   </View>
-                </Section>
+                </QuickCreationSection>
 
                 {/* ------------------------------------------ Connectors */}
-                <Section
+                <QuickCreationSection
                   theme={theme}
                   label="Connectors"
-                  action={{
-                    label: 'Styles',
-                    accessibilityLabel: 'Connector style options',
-                    onPress: () => {
-                      onClose();
-                      onOpenShapeOptions('connector');
-                    },
-                  }}
+                  action={connectorsSectionAction}
                 >
                   <View style={styles.row}>
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Draw a straight arrow connector"
                       label="Arrow"
                       icon={<ConnectorIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'connector', style: 'arrow' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Draw a plain line connector"
                       label="Line"
                       icon={<LineIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'connector', style: 'line' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Draw an elbow connector"
                       label="Elbow"
@@ -417,10 +476,10 @@ export function QuickCreationSheet({
                       onPress={() => insert({ type: 'connector', style: 'elbow' })}
                     />
                   </View>
-                </Section>
+                </QuickCreationSection>
 
                 {/* ----------------------------------------------- Media */}
-                <Section theme={theme} label="Media">
+                <QuickCreationSection theme={theme} label="Media">
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Add a photo from the camera or library"
@@ -455,7 +514,7 @@ export function QuickCreationSheet({
                     ]}
                   >
                     <View style={[styles.iconPill, { backgroundColor: theme.primary + '18' }]}>
-                      <Text style={[styles.tablePresetIcon, { color: theme.primary }]}>PDF</Text>
+                      <PdfDocIcon size={20} color={theme.primary} />
                     </View>
                     <View style={styles.cardText}>
                       <Text style={[styles.cardTitle, { color: theme.foreground }]}>Import PDF for markup</Text>
@@ -464,130 +523,130 @@ export function QuickCreationSheet({
                       </Text>
                     </View>
                   </Pressable>
-                </Section>
+                </QuickCreationSection>
 
                 {/* ------------------------------------------- Utilities */}
-                <Section theme={theme} label="Geometry Box & Utilities">
+                <QuickCreationSection theme={theme} label="Geometry Box & Utilities">
                   <View style={styles.row}>
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open ruler"
                       label="Ruler"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>📏</Text>}
+                      icon={<RulerIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'geometry', instrument: 'ruler' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open protractor"
                       label="Protractor"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>◠</Text>}
+                      icon={<ProtractorIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'geometry', instrument: 'protractor' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open compass"
                       label="Compass"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>⌖</Text>}
+                      icon={<CompassIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'geometry', instrument: 'compass' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open set square"
                       label="Set Square"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>⊿</Text>}
+                      icon={<CompassRulerIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'geometry', instrument: 'set-square-45' })}
                     />
                   </View>
                   <View style={styles.row}>
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open floating classroom timer"
                       label="Timer"
                       icon={<TimerIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'timer' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open floating scientific calculator"
                       label="Calculator"
                       icon={<CalculatorIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'calculator' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open math formula builder"
                       label="Math f(x)"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>∑</Text>}
+                      icon={<MathSumIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'math' })}
                     />
                   </View>
                   <View style={styles.row}>
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Toggle floating Face-Cam"
                       label="Face-Cam"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>◉</Text>}
+                      icon={<FaceCamIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'facecam' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open lesson recorder"
                       label="Record"
-                      icon={<Text style={[styles.tablePresetIcon, { color: '#DC2626' }]}>●</Text>}
+                      icon={<RecordDotIcon size={22} color={theme.destructive} />}
                       onPress={() => insert({ type: 'recorder' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open saved lessons library"
                       label="Lessons"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>▶</Text>}
+                      icon={<PlayLessonIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'saved-lessons' })}
                     />
                   </View>
-                </Section>
+                </QuickCreationSection>
 
                 {/* ----------------------------- Active Recall & Presenter */}
-                <Section theme={theme} label="Active Recall & Presenter">
+                <QuickCreationSection theme={theme} label="Active Recall & Presenter">
                   <View style={styles.row}>
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Place tap-to-reveal answer tape"
                       label="Reveal Tape"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>▓</Text>}
+                      icon={<RevealTapeIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'reveal-tape' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Record spatial voice pin"
                       label="Voice Pin"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>🎤</Text>}
+                      icon={<MicIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'voice-pin' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open stage curtain shade"
                       label="Curtain"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>▥</Text>}
+                      icon={<CurtainIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'curtain' })}
                     />
                   </View>
                   <View style={styles.row}>
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Open spotlight focus shade"
                       label="Spotlight"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>◎</Text>}
+                      icon={<SpotlightIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'spotlight' })}
                     />
-                    <Tile
+                    <QuickCreationTile
                       theme={theme}
                       accessibilityLabel="Study board flashcards"
                       label="Flashcards"
-                      icon={<Text style={[styles.tablePresetIcon, { color: theme.primary }]}>🗂</Text>}
+                      icon={<FlashcardsIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'flashcards' })}
                     />
                   </View>
-                </Section>
+                </QuickCreationSection>
               </>
             )}
           </ScrollView>
@@ -595,171 +654,4 @@ export function QuickCreationSheet({
       </View>
     </Modal>
   );
-}
-
-function Section({
-  theme,
-  label,
-  action,
-  children,
-}: {
-  theme: ThemeColors;
-  label: string;
-  action?: { label: string; accessibilityLabel: string; onPress: () => void };
-  children: ReactNode;
-}) {
-  return (
-    <View style={styles.section}>
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionLabel, { color: theme.foreground }]}>{label}</Text>
-        {action && (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={action.accessibilityLabel}
-            onPress={action.onPress}
-            style={({ pressed }) => [styles.sectionAction, pressed && styles.pressed]}
-          >
-            <Text style={[styles.sectionActionText, { color: theme.primary }]}>{action.label}</Text>
-          </Pressable>
-        )}
-      </View>
-      {children}
-    </View>
-  );
-}
-
-function Card({
-  theme,
-  accessibilityLabel,
-  accessibilityHint,
-  title,
-  caption,
-  icon,
-  iconBackground,
-  onPress,
-}: {
-  theme: ThemeColors;
-  accessibilityLabel: string;
-  accessibilityHint: string;
-  title: string;
-  caption: string;
-  icon: ReactNode;
-  iconBackground?: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityHint={accessibilityHint}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.card,
-        { backgroundColor: theme.background, borderColor: theme.border },
-        pressed && styles.pressed,
-      ]}
-    >
-      <View style={[styles.iconPill, { backgroundColor: iconBackground ?? theme.primary + '18' }]}>
-        {icon}
-      </View>
-      <View style={styles.cardText}>
-        <Text style={[styles.cardTitle, { color: theme.foreground }]} numberOfLines={1}>{title}</Text>
-        <Text style={[styles.cardCaption, { color: theme.foreground + '99' }]} numberOfLines={2}>
-          {caption}
-        </Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function Tile({
-  theme,
-  accessibilityLabel,
-  label,
-  icon,
-  onPress,
-}: {
-  theme: ThemeColors;
-  accessibilityLabel: string;
-  label: string;
-  icon: ReactNode;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.tile,
-        { backgroundColor: theme.background, borderColor: theme.border },
-        pressed && styles.pressed,
-      ]}
-    >
-      {icon}
-      <Text style={[styles.tileLabel, { color: theme.foreground }]} numberOfLines={1}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function SwatchRow({
-  theme,
-  label,
-  addLabel,
-  onAdd,
-  children,
-}: {
-  theme: ThemeColors;
-  label: string;
-  addLabel: string;
-  onAdd: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <View style={styles.swatchGroup}>
-      <Text style={[styles.swatchLabel, { color: theme.foreground }]}>{label}</Text>
-      <View style={styles.swatchRow}>
-        {children}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={addLabel}
-          onPress={onAdd}
-          style={({ pressed }) => [styles.swatch, pressed && styles.pressed]}
-        >
-          <View
-            style={[
-              styles.swatchChip,
-              styles.swatchAdd,
-              { borderColor: theme.border, backgroundColor: theme.muted },
-            ]}
-          >
-            <PlusIcon size={12} color={theme.foreground} />
-          </View>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function Swatch({
-  accessibilityLabel,
-  color,
-  borderColor,
-  onPress,
-}: {
-  accessibilityLabel: string;
-  color: string;
-  borderColor: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      onPress={onPress}
-      style={({ pressed }) => [styles.swatch, pressed && styles.pressed]}
-    >
-      <View style={[styles.swatchChip, { backgroundColor: color, borderColor }]} />
-    </Pressable>
-  );
-}
+});

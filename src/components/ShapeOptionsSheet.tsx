@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { memo, useState } from 'react';
+import { Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import {
   SHAPE_COLORS,
   SHAPE_FILLS,
@@ -7,9 +7,10 @@ import {
 } from '../canvas/document';
 import { CONNECTOR_STROKE_WIDTHS, SHAPE_STROKE_WIDTHS, STROKE_WIDTH_LABELS, type ConnectorStyle, type ShapeKind } from '../canvas/shapes';
 import type { ToolOptionsVariant } from '../responsive/layout';
-import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { spacing, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
 import { ShapeCatalogPicker } from './ShapeCatalogPicker';
+import { shapeOptionsSheetStyles as styles } from './ShapeOptionsSheet.styles';
 import { PlusIcon } from './icons';
 
 type Props = {
@@ -40,7 +41,7 @@ type Props = {
   onDone: () => void;
 };
 
-export function ShapeOptionsSheet({
+export const ShapeOptionsSheet = memo(function ShapeOptionsSheet({
   theme, mode, shapeKind, shapeColorKey, shapeFillKey, shapeStrokeWidth, showMeasurements = false,
   connectorStyle, connectorColorKey, connectorStrokeWidth, bottomOffset,
   variant = 'bottom-sheet',
@@ -268,22 +269,22 @@ export function ShapeOptionsSheet({
       </View>
     </View>
   );
-}
+});
 
-function Choice({ label, selected, theme, onPress }: { label: string; selected: boolean; theme: ThemeColors; onPress: () => void }) { return <Pressable accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ selected }} onPress={onPress} style={[styles.choice, { borderColor: selected ? theme.primary : theme.border }, selected && { backgroundColor: theme.primary }]}><Text style={{ color: selected ? theme.surface : theme.foreground }}>{label}</Text></Pressable>; }
-
-const styles = StyleSheet.create({
-  layer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: spacing.md, zIndex: 25 },
-  popoverLayer: { position: 'absolute', zIndex: 25 },
-  sheet: { width: '100%', maxWidth: 460, borderWidth: 1, borderRadius: radii.md, padding: spacing.md },
-  sheetContent: { gap: spacing.sm },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { ...typography.bodyStrong },
-  done: { minHeight: touchTarget, minWidth: touchTarget, alignItems: 'flex-end', justifyContent: 'center', paddingHorizontal: spacing.sm },
-  doneText: { ...typography.bodyStrong },
-  label: { ...typography.caption },
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, alignItems: 'center' },
-  choice: { minWidth: touchTarget, minHeight: touchTarget, paddingHorizontal: spacing.sm, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
-  swatch: { width: touchTarget, height: touchTarget, borderRadius: radii.sm, borderWidth: 2 },
-  customSwatch: { alignItems: 'center', justifyContent: 'center' },
+const Choice = memo(function Choice({ label, selected, theme, onPress }: { label: string; selected: boolean; theme: ThemeColors; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="radio"
+      accessibilityLabel={label}
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={[
+        styles.choice,
+        { borderColor: selected ? theme.primary : theme.border },
+        selected && { backgroundColor: theme.primary },
+      ]}
+    >
+      <Text style={{ color: selected ? theme.surface : theme.foreground }}>{label}</Text>
+    </Pressable>
+  );
 });

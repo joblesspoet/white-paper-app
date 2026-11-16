@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { memo, useState, type ReactNode } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -22,8 +22,9 @@ import {
   type LaserColorKey,
 } from '../canvas/laser';
 import type { ToolOptionsVariant } from '../responsive/layout';
-import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { spacing, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
+import { inkOptionsSheetStyles as styles } from './InkOptionsSheet.styles';
 import { EraserIcon, HighlighterIcon, PenIcon } from './icons';
 
 export type InkSheetTool = FreehandTool | 'eraser' | 'laser';
@@ -59,7 +60,7 @@ type InkOptionsSheetProps = {
  * Compact ink options sheet: a small popover above the dock on phones or beside
  * the left tool rail on tablets so the canvas keeps most of the screen.
  */
-export function InkOptionsSheet({
+export const InkOptionsSheet = memo(function InkOptionsSheet({
   theme,
   dark,
   tool,
@@ -465,9 +466,9 @@ export function InkOptionsSheet({
       </View>
     </>
   );
-}
+});
 
-function ToolChoice({
+const ToolChoice = memo(function ToolChoice({
   theme,
   label,
   icon,
@@ -497,30 +498,4 @@ function ToolChoice({
       <Text style={[styles.toolChoiceText, { color: selected ? theme.surface : theme.foreground }]}>{label}</Text>
     </Pressable>
   );
-}
-
-const styles = StyleSheet.create({
-  layer: { position: 'absolute', left: 0, right: 0, alignItems: 'center', paddingHorizontal: spacing.md, zIndex: 25 },
-  popoverLayer: { position: 'absolute', zIndex: 25 },
-  sheet: { width: '100%', maxWidth: 460, borderWidth: 1, borderRadius: radii.md, padding: spacing.md },
-  sheetContent: { gap: spacing.sm },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { ...typography.bodyStrong },
-  done: { minHeight: touchTarget, minWidth: touchTarget, alignItems: 'flex-end', justifyContent: 'center', paddingHorizontal: spacing.sm },
-  doneText: { ...typography.bodyStrong },
-  label: { ...typography.caption, marginTop: spacing.xs },
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, alignItems: 'center' },
-  toolChoice: { minHeight: touchTarget, flexDirection: 'row', alignItems: 'center', gap: spacing.xs, borderWidth: 1, borderRadius: radii.sm, paddingHorizontal: spacing.md },
-  toolChoiceText: { ...typography.caption },
-  swatch: { width: touchTarget, height: touchTarget, borderRadius: radii.sm, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
-  swatchFill: { width: 26, height: 26, borderRadius: 13 },
-  swatchCenter: { alignItems: 'center', justifyContent: 'center' },
-  plus: { ...typography.bodyStrong, lineHeight: 20 },
-  chip: { minWidth: touchTarget, minHeight: touchTarget, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm },
-  chipText: { ...typography.caption },
-  widthPreview: { width: 24, borderRadius: 6 },
-  sizeChip: { width: touchTarget + 8, height: touchTarget + 8, borderWidth: 1, borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
-  eraserPreview: { borderWidth: 2 },
-  note: { ...typography.caption, opacity: 0.72 },
-  pressed: { opacity: 0.65 },
 });

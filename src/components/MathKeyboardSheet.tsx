@@ -29,6 +29,7 @@ import {
   type MathKeypadTab,
   type MathQuickFormula,
 } from '../canvas/math-model';
+import { usePreferences } from '../settings/preferences-context';
 import type { ThemeColors } from '../theme';
 import { styles } from './MathKeyboardSheet.styles';
 
@@ -147,6 +148,7 @@ export const MathKeyboardSheet = memo(function MathKeyboardSheet({
   onSubmit,
   onClose,
 }: MathKeyboardSheetProps) {
+  const { reducedMotion } = usePreferences();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [latex, setLatex] = useState(initialLatex);
@@ -279,7 +281,7 @@ export const MathKeyboardSheet = memo(function MathKeyboardSheet({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType={reducedMotion ? 'none' : centered ? 'fade' : 'slide'}
       statusBarTranslucent
       onRequestClose={onClose}
     >

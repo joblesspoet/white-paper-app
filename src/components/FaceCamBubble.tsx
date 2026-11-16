@@ -1,16 +1,23 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useState, type ComponentType } from 'react';
+import { Platform, Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 
 import {
+  FACECAM_EDGE_MARGIN,
   FACECAM_RING_WIDTH,
   clampFaceCamPosition,
   cornerPosition,
   cycleFaceCamSize,
   faceCamBorderRadius,
+  faceCamBounds,
   faceCamRingColor,
   faceCamSizePt,
-  snapFaceCamToNearestCorner,
   type FaceCamCorner,
   type FaceCamFacing,
   type FaceCamPermissionStatus,
@@ -18,6 +25,7 @@ import {
   type FaceCamSizePreset,
 } from '../recorder/facecam-model';
 import { openAppSettings, requestCameraPermission } from '../recorder/permissions';
+import { usePreferences } from '../settings/preferences-context';
 import type { ThemeColors } from '../theme';
 import { triggerHapticFeedback } from '../utils/haptics';
 import { faceCamStyles as styles } from './FaceCamBubble.styles';
@@ -51,6 +59,8 @@ function getOptionalCameraView(): ComponentType<OptionalCameraViewProps> | null 
   return null;
 }
 
+const SNAP_SPRING = { damping: 20, stiffness: 240, mass: 0.7 };
+
 export type FaceCamBubbleProps = {
   visible: boolean;
   isRecording: boolean;
@@ -70,6 +80,7 @@ export const FaceCamBubble = memo(function FaceCamBubble({
   bottomExclusion,
   onClose,
 }: FaceCamBubbleProps) {
+  const { reducedMotion } = usePreferences();
   const [sizePreset, setSizePreset] = useState<FaceCamSizePreset>('medium');
   const [shape, setShape] = useState<FaceCamShape>('circle');
   const [facing, setFacing] = useState<FaceCamFacing>('front');
@@ -89,7 +100,12 @@ export const FaceCamBubble = memo(function FaceCamBubble({
   const [pos, setPos] = useState(() =>
     cornerPosition('bottom-right', bounds.width, bounds.height, sizePt, bottomExclusion),
   );
-  const dragStartRef = useRef(pos);
+
+  // UI-thread shared position drives smooth 60/120fps drag & corner snap without per-frame setState.
+  const posX = useSharedValue(pos.x);
+  const posY = useSharedValue(pos.y);
+  const dragStartX = useSharedValue(pos.x);
+  const dragStartY = useSharedValue(pos.y);
 
   const requestPermission = useCallback(async () => {
     const res = await requestCameraPermission();
@@ -114,11 +130,23 @@ export const FaceCamBubble = memo(function FaceCamBubble({
   }, [facing]);
 
   useEffect(() => {
-    setPos(cornerPosition(corner, bounds.width, bounds.height, sizePt, bottomExclusion));
-  }, [bottomExclusion, bounds.height, bounds.width, corner, sizePt]);
+    const next = cornerPosition(corner, bounds.width, bounds.height, sizePt, bottomExclusion);
+    setPos(next);
+    posX.value = next.x;
+    posY.value = next.y;
+  }, [bottomExclusion, bounds.height, bounds.width, corner, posX, posY, sizePt]);
 
   const handleToggleControls = useCallback(() => {
     setControlsVisible((prev) => !prev);
+  }, []);
+
+  const hideControls = useCallback(() => {
+    setControlsVisible(false);
+  }, []);
+
+  const commitSnap = useCallback((nextCorner: FaceCamCorner, x: number, y: number) => {
+    setCorner(nextCorner);
+    setPos({ x, y });
   }, []);
 
   const handleFlipCamera = useCallback(() => {
@@ -150,53 +178,95 @@ export const FaceCamBubble = memo(function FaceCamBubble({
     void openAppSettings();
   }, []);
 
+  const handleRetryPermission = useCallback(() => {
+    void requestPermission();
+  }, [requestPermission]);
+
+  const handleCameraMountError = useCallback((event: { message?: string }) => {
+    setCameraMountError(event?.message ?? 'Camera unavailable');
+  }, []);
+
+  const handlePillLayout = useCallback((event: LayoutChangeEvent) => {
+    const { width: w, height: h } = event.nativeEvent.layout;
+    setPillSize((prev) =>
+      Math.abs(w - prev.width) > 2 || Math.abs(h - prev.height) > 2
+        ? { width: w, height: h }
+        : prev,
+    );
+  }, []);
+
+  const safeBounds = useMemo(
+    () => faceCamBounds(bounds.width, bounds.height, sizePt, bottomExclusion, FACECAM_EDGE_MARGIN),
+    [bottomExclusion, bounds.height, bounds.width, sizePt],
+  );
+
   const bubbleGesture = useMemo(() => {
+    const { minX, maxX, minY, maxY } = safeBounds;
+
     const panGesture = Gesture.Pan()
       .minDistance(8)
-      .runOnJS(true)
       .onStart(() => {
-        dragStartRef.current = pos;
+        dragStartX.value = posX.value;
+        dragStartY.value = posY.value;
+        runOnJS(hideControls)();
       })
       .onUpdate((event) => {
-        setPos(
-          clampFaceCamPosition(
-            {
-              x: dragStartRef.current.x + event.translationX,
-              y: dragStartRef.current.y + event.translationY,
-            },
-            bounds.width,
-            bounds.height,
-            sizePt,
-            bottomExclusion,
-          ),
-        );
+        const rawX = dragStartX.value + event.translationX;
+        const rawY = dragStartY.value + event.translationY;
+        posX.value = Math.max(minX, Math.min(maxX, rawX));
+        posY.value = Math.max(minY, Math.min(maxY, rawY));
       })
       .onEnd((event) => {
-        const snapped = snapFaceCamToNearestCorner(
-          {
-            x: dragStartRef.current.x + event.translationX,
-            y: dragStartRef.current.y + event.translationY,
-          },
-          bounds.width,
-          bounds.height,
-          sizePt,
-          bottomExclusion,
-        );
-        setCorner(snapped.corner);
-        setPos(snapped.position);
+        const rawX = dragStartX.value + event.translationX;
+        const rawY = dragStartY.value + event.translationY;
+        const clampedX = Math.max(minX, Math.min(maxX, rawX));
+        const clampedY = Math.max(minY, Math.min(maxY, rawY));
+        const isRight = clampedX >= (minX + maxX) / 2;
+        const isBottom = clampedY >= (minY + maxY) / 2;
+        const targetX = isRight ? maxX : minX;
+        const targetY = isBottom ? maxY : minY;
+        const nextCorner: FaceCamCorner = isBottom
+          ? isRight
+            ? 'bottom-right'
+            : 'bottom-left'
+          : isRight
+            ? 'top-right'
+            : 'top-left';
+
+        if (reducedMotion) {
+          posX.value = targetX;
+          posY.value = targetY;
+        } else {
+          posX.value = withSpring(targetX, SNAP_SPRING);
+          posY.value = withSpring(targetY, SNAP_SPRING);
+        }
+        runOnJS(commitSnap)(nextCorner, targetX, targetY);
       });
 
     const tapGesture = Gesture.Tap()
       .maxDistance(8)
-      .runOnJS(true)
       .onEnd((_, success) => {
         if (success) {
-          handleToggleControls();
+          runOnJS(handleToggleControls)();
         }
       });
 
     return Gesture.Race(panGesture, tapGesture);
-  }, [bottomExclusion, bounds.height, bounds.width, handleToggleControls, pos, sizePt]);
+  }, [
+    commitSnap,
+    dragStartX,
+    dragStartY,
+    handleToggleControls,
+    hideControls,
+    posX,
+    posY,
+    reducedMotion,
+    safeBounds,
+  ]);
+
+  const bubbleAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: posX.value }, { translateY: posY.value }],
+  }));
 
   if (!visible) return null;
 
@@ -240,9 +310,7 @@ export const FaceCamBubble = memo(function FaceCamBubble({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Retry camera permission"
-              onPress={() => {
-                void requestPermission();
-              }}
+              onPress={handleRetryPermission}
               style={[
                 styles.permissionButton,
                 { backgroundColor: theme.primary, borderColor: theme.primary },
@@ -277,7 +345,7 @@ export const FaceCamBubble = memo(function FaceCamBubble({
   const CameraView = getOptionalCameraView();
   const canRenderCamera = Boolean(CameraView) && permissionStatus === 'granted' && !cameraMountError;
 
-  const pillMaxWidth = Math.min(316, Math.max(180, bounds.width - 16));
+  const pillMaxWidth = Math.min(340, Math.max(200, bounds.width - 16));
   const usableBottom = Math.max(80, bounds.height - bottomExclusion);
   const measuredW = Math.min(pillSize.width, pillMaxWidth);
   const measuredH = pillSize.height;
@@ -310,12 +378,10 @@ export const FaceCamBubble = memo(function FaceCamBubble({
   return (
     <>
       <GestureDetector gesture={bubbleGesture}>
-        <View
+        <Animated.View
           style={[
             styles.bubbleContainer,
             {
-              left: pos.x,
-              top: pos.y,
               width: sizePt,
               height: sizePt,
               borderRadius,
@@ -323,6 +389,7 @@ export const FaceCamBubble = memo(function FaceCamBubble({
               borderColor: ringColor,
               backgroundColor: theme.surface,
             },
+            bubbleAnimatedStyle,
           ]}
         >
           <View style={[styles.pressableFill, { borderRadius: Math.max(0, borderRadius - 2) }]}>
@@ -338,9 +405,7 @@ export const FaceCamBubble = memo(function FaceCamBubble({
                 facing={facing}
                 mirror={mirrored}
                 active={visible && permissionStatus === 'granted'}
-                onMountError={(event) => {
-                  setCameraMountError(event?.message ?? 'Camera unavailable');
-                }}
+                onMountError={handleCameraMountError}
               />
             ) : (
               <View
@@ -380,17 +445,12 @@ export const FaceCamBubble = memo(function FaceCamBubble({
               style={StyleSheet.absoluteFill}
             />
           </View>
-        </View>
+        </Animated.View>
       </GestureDetector>
 
       {controlsVisible && (
         <View
-          onLayout={(event) => {
-            const { width: w, height: h } = event.nativeEvent.layout;
-            if (Math.abs(w - pillSize.width) > 2 || Math.abs(h - pillSize.height) > 2) {
-              setPillSize({ width: w, height: h });
-            }
-          }}
+          onLayout={handlePillLayout}
           style={[
             styles.controlsPill,
             {

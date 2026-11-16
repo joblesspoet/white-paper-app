@@ -16,7 +16,9 @@ import {
   type PersistenceDatabase,
 } from '../src/persistence/database.ts';
 import {
+  deleteBoard,
   documentsEqual,
+  duplicateBoard,
   insertBoard,
   insertMediaAsset,
   listBoards,
@@ -584,6 +586,39 @@ async function testWriteQueueOrder(): Promise<void> {
   assert.ok(order.includes('after-failure'));
 }
 
+async function testBoardDuplicateAndDelete(): Promise<void> {
+  const { database, close } = openTestDatabase();
+  try {
+    await migrateDatabase(database);
+    await insertBoard(database, makeBoard('board-src', 'Physics Notes'));
+    await saveBoardDocument(
+      database,
+      'board-src',
+      { strokes: [stroke], objects: [stickyObject] },
+      { x: 10, y: 20, scale: 1.5 },
+    );
+
+    const copy = await duplicateBoard(database, 'board-src', 'board-copy', '2026-01-02T00:00:00.000Z');
+    assert.ok(copy);
+    assert.equal(copy.id, 'board-copy');
+    assert.equal(copy.title, 'Physics Notes (Copy)');
+    assert.equal(copy.objectCount, 2);
+
+    const copyDoc = await loadBoardDocument(database, 'board-copy');
+    assert.equal(copyDoc.document.strokes.length, 1);
+    assert.equal(copyDoc.document.objects.length, 1);
+    assert.notEqual(copyDoc.document.strokes[0].id, stroke.id);
+    assert.notEqual(copyDoc.document.objects[0].id, stickyObject.id);
+
+    await deleteBoard(database, 'board-src');
+    const boards = await listBoards(database);
+    assert.equal(boards.length, 1);
+    assert.equal(boards[0].id, 'board-copy');
+  } finally {
+    close();
+  }
+}
+
 // --------------------------------------------------------------------- main
 
 async function main(): Promise<void> {
@@ -598,6 +633,7 @@ async function main(): Promise<void> {
   await testMediaReferences();
   await testRestartRecovery();
   await testWriteQueueOrder();
+  await testBoardDuplicateAndDelete();
   testValueParsers();
   console.log('persistence checks passed');
 }

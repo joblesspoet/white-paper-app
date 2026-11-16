@@ -231,6 +231,104 @@ export async function updateBoardSettings(
   );
 }
 
+/** Delete a board and all of its pages, objects, and media metadata rows. */
+export async function deleteBoard(
+  database: PersistenceDatabase,
+  boardId: string,
+): Promise<void> {
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(`DELETE FROM media_assets WHERE board_id = ?`, [boardId]);
+    await database.runAsync(
+      `DELETE FROM canvas_objects WHERE page_id IN (SELECT id FROM board_pages WHERE board_id = ?)`,
+      [boardId],
+    );
+    await database.runAsync(`DELETE FROM board_pages WHERE board_id = ?`, [boardId]);
+    await database.runAsync(`DELETE FROM boards WHERE id = ?`, [boardId]);
+  });
+}
+
+/** Duplicate a board and all of its pages and objects with fresh IDs. */
+export async function duplicateBoard(
+  database: PersistenceDatabase,
+  sourceBoardId: string,
+  newBoardId: string,
+  now = new Date().toISOString(),
+): Promise<BoardRecord | null> {
+  const source = await getBoard(database, sourceBoardId);
+  if (!source) return null;
+
+  const pages = await listBoardPages(database, sourceBoardId);
+  const media = await listMediaAssets(database, sourceBoardId);
+  const copyTitle = `${source.title} (Copy)`;
+
+  await database.withTransactionAsync(async () => {
+    await database.runAsync(
+      `INSERT INTO boards (id, title, created_at, updated_at, settings_json, viewport_json)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        newBoardId,
+        copyTitle,
+        now,
+        now,
+        serializeBoardSettings(source.settings),
+        source.viewport ? serializeViewport(source.viewport) : null,
+      ],
+    );
+
+    if (pages.length === 0) {
+      await database.runAsync(
+        `INSERT INTO board_pages (id, board_id, name, order_index, created_at, updated_at)
+         VALUES (?, ?, ?, 0, ?, ?)`,
+        [defaultPageId(newBoardId), newBoardId, 'Page 1', now, now],
+      );
+    } else {
+      for (let i = 0; i < pages.length; i += 1) {
+        const page = pages[i];
+        const newPageId = i === 0 ? defaultPageId(newBoardId) : `${newBoardId}-page-${i + 1}-${Math.random().toString(36).slice(2, 6)}`;
+        const clonedDoc = cloneDocumentWithFreshIds(page.document);
+        await database.runAsync(
+          `INSERT INTO board_pages (id, board_id, name, order_index, viewport_json, background_asset_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            newPageId,
+            newBoardId,
+            page.name,
+            i,
+            page.viewport ? serializeViewport(page.viewport) : null,
+            page.backgroundAssetId ?? null,
+            now,
+            now,
+          ],
+        );
+        if (clonedDoc.strokes.length > 0 || clonedDoc.objects.length > 0) {
+          await writePageObjects(database, newPageId, clonedDoc, now);
+        }
+      }
+    }
+
+    for (let i = 0; i < media.length; i += 1) {
+      const asset = media[i];
+      const newAssetId = `${newBoardId}-asset-${i + 1}-${Math.random().toString(36).slice(2, 6)}`;
+      await database.runAsync(
+        `INSERT INTO media_assets (id, board_id, owner_id, storage_path, mime_type, bytes, metadata_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          newAssetId,
+          newBoardId,
+          asset.ownerId ?? null,
+          asset.storagePath,
+          asset.mimeType,
+          asset.bytes,
+          JSON.stringify(asset.metadata ?? {}),
+          now,
+        ],
+      );
+    }
+  });
+
+  return getBoard(database, newBoardId);
+}
+
 // ----------------------------------------------------------------- documents
 
 async function firstPage(

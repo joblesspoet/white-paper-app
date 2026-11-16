@@ -1,15 +1,18 @@
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ComponentRef } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ComponentRef,
+} from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  AppState,
-  BackHandler,
   Keyboard,
   Modal,
   Pressable,
-  ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
@@ -18,266 +21,104 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useBoards } from '../src/board-context';
-import { usePreferences } from '../src/settings/preferences-context';
-import { triggerHapticFeedback } from '../src/utils/haptics';
+import { createCalculatorPasteCommand } from '../src/calculator/calculator-engine';
 import {
   CANVAS_COLORS,
-  DEFAULT_STICKY_COLOR,
-  DEFAULT_STICKY_FONT_SIZE,
-  DEFAULT_TEXT_COLOR,
-  EMPTY_DOCUMENT,
-  DEFAULT_TEXT_FONT_SIZE,
   OBJECT_PADDING,
   createDocumentHistory,
-  createMathObject,
-  createStickyObject,
   createTableObject,
-  createTextObject,
   documentHasContent,
   documentReducer,
-  duplicateObject,
-  editingCommit,
   findObject,
   isMathObject,
   isTableObject,
   isTextualObject,
-  keyboardOverlap,
-  keepObjectAboveKeyboard,
   objectFill,
   objectScreenRect,
   objectTextColor,
-  tableCellAtPoint,
   tableCellRect,
   textColorKeyForValue,
   textColorValue,
   textLineHeight,
-  withObjectMath,
-  withObjectStyle,
-  withObjectText,
-  withTableCellText,
-  withTableColumnAdded,
-  withTableColumnRemoved,
-  withTableRowAdded,
-  withTableRowRemoved,
-  type CanvasDocument,
   type CanvasObject,
-  type ConnectorObject,
   type DocumentCommand,
-  type MathObject,
-  type ObjectStylePatch,
-  type ShapeKind,
-  type ShapeObject,
-  type TableObject,
-  type TextObject,
-  type TextSlant,
-  type TextWeight,
 } from '../src/canvas/document';
 import {
   createDefaultInstrument,
   type GeometryInstrumentState,
   type InstrumentKind,
 } from '../src/canvas/geometry-box';
-import { createInkStroke, type InkStroke } from '../src/canvas/ink';
-import {
-  applyMathSpanEdit,
-  getEditableMathSlots,
-  hitTestMathSlot,
-  layoutMathExpression,
-  type MathSourceSpan,
-} from '../src/canvas/math-layout';
-import { GeometryBoxOverlay } from '../src/components/GeometryBoxOverlay';
 import {
   canRedo as historyCanRedo,
   canUndo as historyCanUndo,
   nextRedoLabel,
   nextUndoLabel,
 } from '../src/canvas/history';
-import type { FreehandTool } from '../src/canvas/ink';
+import { createInkStroke, type FreehandTool } from '../src/canvas/ink';
+import type { LaserColorKey } from '../src/canvas/laser';
 import { canvasRectToScreen, selectionActionRail, selectionBounds } from '../src/canvas/selection';
 import { screenToCanvas, type Point, type Viewport } from '../src/canvas/viewport';
-import { storageErrorMessage } from '../src/persistence/errors';
-import { getLocalDatabase } from '../src/persistence/expo-store';
-import {
-  createPage,
-  DEFAULT_BOARD_SETTINGS,
-  deletePage,
-  duplicatePage,
-  listBoardPages,
-  loadBoardDocument,
-  renamePage,
-  reorderPages,
-  saveBoardDocument,
-  saveBoardViewport,
-  type BoardPageRecord,
-} from '../src/persistence/repository';
-import { enqueuePersistenceWrite } from '../src/persistence/write-queue';
+import { ACTION_ISLAND_HEIGHT, ActionIsland } from '../src/components/ActionIsland';
 import { CanvasViewport, type InkTool, type ViewportRequest } from '../src/components/CanvasViewport';
-import {
-  BroadcastIcon,
-  CalculatorIcon,
-  CheckIcon,
-  ChevronRightIcon,
-  DuplicateIcon,
-  EditIcon,
-  EraserIcon,
-  GridIcon,
-  HandIcon,
-  HighlighterIcon,
-  ImageIcon,
-  LaserIcon,
-  MoreIcon,
-  ConnectorIcon,
-  PenIcon,
-  ShapeIcon,
-  RedoIcon,
-  SelectIcon,
-  StickyIcon,
-  StyleIcon,
-  TextIcon,
-  TimerIcon,
-  TrashIcon,
-  UndoIcon,
-} from '../src/components/icons';
-import { BOARD_STYLE_OPTIONS, type BoardBackground, type BoardSettings, type BoardStyle } from '../src/persistence/schema';
-import type { LaserColorKey } from '../src/canvas/laser';
-import { createTimerPinCommand, type TimerState } from '../src/timer/timer-model';
-import { createCalculatorPasteCommand } from '../src/calculator/calculator-engine';
-import { FloatingTimer } from '../src/components/FloatingTimer';
-import { FloatingCalculator } from '../src/components/FloatingCalculator';
+import { ClassroomHud } from '../src/components/ClassroomHud';
+import { EditorInspectorPanel } from '../src/components/EditorInspectorPanel';
+import { ExportSheet } from '../src/components/ExportSheet';
 import { FaceCamBubble } from '../src/components/FaceCamBubble';
+import { FlashcardStudyModal } from '../src/components/FlashcardStudyModal';
+import { FloatingCalculator } from '../src/components/FloatingCalculator';
+import { FloatingTimer } from '../src/components/FloatingTimer';
+import { GeometryBoxOverlay } from '../src/components/GeometryBoxOverlay';
+import { ImageImportFlow } from '../src/components/ImageImportFlow';
+import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
+import { InkingQuickTray } from '../src/components/InkingQuickTray';
 import { LessonRecorderBar } from '../src/components/LessonRecorderBar';
 import { LessonReplayModal } from '../src/components/LessonReplayModal';
-import { SavedLessonsModal } from '../src/components/SavedLessonsModal';
-import { shareFile } from '../src/export/share';
-import {
-  beginCountdown,
-  completeRecording,
-  getElapsedMs,
-  pauseRecording,
-  recordDocumentChange,
-  recordPageSwitch,
-  recordViewportSample,
-  resumeRecording,
-  startRecording,
-  stopRecordingBegin,
-  createRecorderSession,
-  type LessonRecorderSession,
-  type LessonRecordingPackage,
-  type RecorderStatus,
-  type VideoQuality,
-} from '../src/recorder/lesson-recorder';
-import {
-  clearRecoveryCheckpoint,
-  deleteSavedLesson,
-  listSavedLessons,
-  loadLessonPackage,
-  saveLessonPackage,
-  saveRecoveryCheckpoint,
-  type SavedLessonSummary,
-} from '../src/recorder/lesson-store';
-import {
-  pauseNativeCapture,
-  resumeNativeCapture,
-  saveVideoToGallery,
-  startNativeCapture,
-  stopNativeCapture,
-} from '../src/recorder/native-recorder';
-import { openAppSettings, requestMicrophonePermission } from '../src/recorder/permissions';
-import { ImageImportFlow } from '../src/components/ImageImportFlow';
-import { insertMediaAsset, type MediaAssetRecord } from '../src/persistence/repository';
-import { cropMetadata } from '../src/media/asset-store';
-import type { ImageObject, StickyObject } from '../src/canvas/document';
-import { QuickBranchHandles } from '../src/components/QuickBranchHandles';
-import { PhoneStemSelectionBar } from '../src/components/PhoneStemSelectionBar';
+import { LiveClassHostSheet } from '../src/components/LiveClassHostSheet';
+import { MathKeyboardSheet } from '../src/components/MathKeyboardSheet';
+import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
+import { OcrReviewScreen } from '../src/components/OcrReviewScreen';
+import { PageNavigatorPill, PageSorterSheet } from '../src/components/PageNavigator';
+import { PdfImportModal } from '../src/components/PdfImportModal';
 import { PhoneRecallSelectionBar } from '../src/components/PhoneRecallSelectionBar';
+import { PhoneStemSelectionBar } from '../src/components/PhoneStemSelectionBar';
+import { PollOverlayModal } from '../src/components/PollOverlayModal';
+import { QuickBranchHandles } from '../src/components/QuickBranchHandles';
+import { QuickCreationSheet, type InsertToolRequest } from '../src/components/QuickCreationSheet';
+import { SavedLessonsModal } from '../src/components/SavedLessonsModal';
+import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
 import { StageCurtainOverlay } from '../src/components/StageCurtainOverlay';
 import { VoicePinBar } from '../src/components/VoicePinBar';
-import { PollOverlayModal } from '../src/components/PollOverlayModal';
-import { FlashcardStudyModal } from '../src/components/FlashcardStudyModal';
-import { useMagneticMindMap } from '../src/hooks/useMagneticMindMap';
-import { useStemGraphing } from '../src/hooks/useStemGraphing';
-import { useRevealAndCurtain } from '../src/hooks/useRevealAndCurtain';
-import { useVoicePins } from '../src/hooks/useVoicePins';
+import { BoardStyleModal } from '../src/components/editor/BoardStyleModal';
+import { EditorToolRail } from '../src/components/editor/EditorToolRail';
+import { EditorTopBar } from '../src/components/editor/EditorTopBar';
+import { InlineMathBar } from '../src/components/editor/InlineMathBar';
+import { SelectionActionRail } from '../src/components/editor/SelectionActionRail';
+import { PenIcon, StyleIcon } from '../src/components/icons';
+import { useEditorLiveClass } from '../src/hooks/editor/useEditorLiveClass';
+import { useEditorOcrAndMath } from '../src/hooks/editor/useEditorOcrAndMath';
+import { useEditorPersistence } from '../src/hooks/editor/useEditorPersistence';
+import { useEditorRecorder } from '../src/hooks/editor/useEditorRecorder';
+import { useEditorSelectionAndEditing } from '../src/hooks/editor/useEditorSelectionAndEditing';
 import { useClassroomPoll } from '../src/hooks/useClassroomPoll';
-import { InkingQuickTray } from '../src/components/InkingQuickTray';
-import { QuickCreationSheet, type InsertToolRequest } from '../src/components/QuickCreationSheet';
-import { ActionIsland, ACTION_ISLAND_HEIGHT } from '../src/components/ActionIsland';
-import { InkOptionsSheet, type InkSheetTool } from '../src/components/InkOptionsSheet';
-import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
-import { ShapeOptionsSheet } from '../src/components/ShapeOptionsSheet';
-import { ExportSheet } from '../src/components/ExportSheet';
-import { PageNavigatorPill, PageSorterSheet } from '../src/components/PageNavigator';
-import { ClassroomHud } from '../src/components/ClassroomHud';
-import { LiveClassHostSheet } from '../src/components/LiveClassHostSheet';
-import {
-  ClassroomSession,
-  type ClassroomSessionState,
-} from '../src/classroom/classroom-session';
-import { LiveKitClassroomAudioAdapter } from '../src/classroom/audio-adapter';
-import { diffDocumentsToSerializableCommand } from '../src/classroom/diff';
-import { getLiveClassEntitlement } from '../src/classroom/entitlement';
-import {
-  applySerializableCommand,
-  type EphemeralLaserPacket,
-  type EphemeralStrokePacket,
-} from '../src/classroom/protocol';
-import { PdfImportModal } from '../src/components/PdfImportModal';
-import { EditorInspectorPanel } from '../src/components/EditorInspectorPanel';
-import { MathKeyboardSheet } from '../src/components/MathKeyboardSheet';
-import { OcrReviewScreen } from '../src/components/OcrReviewScreen';
-import { deleteExportFile, renderInkStrokesToTempPng } from '../src/export/export-service';
-import { recognizeImageText } from '../src/ocr/native-ocr';
-import {
-  loadingOcrState,
-  ocrReviewStateFromError,
-  ocrReviewStateFromResult,
-  withOcrCorrection,
-  type OcrReviewState,
-} from '../src/ocr/ocr-service';
-import {
-  DOCK_TOUCH_TARGET,
-  isSoftwareKeyboardVisible,
-  resolveEditorLayout,
-} from '../src/responsive/layout';
-import { radii, spacing, touchTarget, typography, type ThemeColors } from '../src/theme';
-import { fcprobe } from '../src/dev-probe';
-
-const TOOLS = [
-  { tool: 'select', label: 'Select', Icon: SelectIcon },
-  { tool: 'pan', label: 'Pan', Icon: HandIcon },
-  { tool: 'text', label: 'Text', Icon: TextIcon },
-  { tool: 'sticky', label: 'Sticky note', Icon: StickyIcon },
-  { tool: 'shape', label: 'Shape', Icon: ShapeIcon },
-  { tool: 'connector', label: 'Connector', Icon: ConnectorIcon },
-  { tool: 'pen', label: 'Pen', Icon: PenIcon },
-  { tool: 'highlighter', label: 'Highlighter', Icon: HighlighterIcon },
-  { tool: 'eraser', label: 'Eraser', Icon: EraserIcon },
-  { tool: 'laser', label: 'Laser', Icon: LaserIcon },
-  { tool: 'image', label: 'Image', Icon: ImageIcon },
-] as const satisfies ReadonlyArray<{ tool: InkTool; label: string; Icon: typeof PenIcon }>;
+import { useMagneticMindMap } from '../src/hooks/useMagneticMindMap';
+import { useRevealAndCurtain } from '../src/hooks/useRevealAndCurtain';
+import { useStemGraphing } from '../src/hooks/useStemGraphing';
+import { useVoicePins } from '../src/hooks/useVoicePins';
+import { DEFAULT_BOARD_SETTINGS, type BoardPageRecord } from '../src/persistence/repository';
+import type { BoardSettings } from '../src/persistence/schema';
+import { isSoftwareKeyboardVisible, resolveEditorLayout } from '../src/responsive/layout';
+import { editorStyles as styles } from '../src/screens/editor.styles';
+import { usePreferences } from '../src/settings/preferences-context';
+import { colors, radii, spacing } from '../src/theme';
+import { createTimerPinCommand, type TimerState } from '../src/timer/timer-model';
+import { triggerHapticFeedback } from '../src/utils/haptics';
 
 /** Zoomed in enough that ink is comfortable under a finger. */
 const INITIAL_VIEWPORT: Viewport = { x: 150, y: -80, scale: 2 };
 /** How long viewport reports may be batched before the editor re-renders. */
 const VIEWPORT_RENDER_INTERVAL = 60;
-/** Quiet period before a document change is written to SQLite. */
-const AUTOSAVE_DELAY = 700;
-/** Panning and zooming settle before the viewport itself is written. */
-const VIEWPORT_SAVE_DELAY = 900;
-
-function sameViewport(left: Viewport, right: Viewport): boolean {
-  return (
-    Math.abs(left.x - right.x) < 0.5 &&
-    Math.abs(left.y - right.y) < 0.5 &&
-    Math.abs(left.scale - right.scale) < 0.001
-  );
-}
-
-/** The object being edited, plus whether it still needs inserting into the board. */
-type Editing = { object: CanvasObject; isNew: boolean };
 
 export default function BoardEditorScreen() {
-  
   const router = useRouter();
   const navigation = useNavigation();
   const {
@@ -293,18 +134,24 @@ export default function BoardEditorScreen() {
     displayName?: string;
     projectorMode?: string;
   }>();
+
   const isStudentRoute = liveRole === 'student' && Boolean(paramRoomCode);
   const isProjectorMode = isStudentRoute && paramProjectorMode === '1';
+
   const { boards, updateTitle, updateSettings, touchBoard } = useBoards();
-  const board = boards.find((item) => item.id === boardId);
+  const board = useMemo(
+    () => boards.find((item) => item.id === boardId),
+    [boardId, boards],
+  );
   const [title, setTitle] = useState(board?.title ?? 'Untitled board');
-  // Adopt the stored title when the board first becomes available. Autosave
-  // metadata refreshes must not overwrite a title the user is typing.
   const boardTitle = board?.title;
-  useEffect(() => { if (boardTitle) setTitle(boardTitle); }, [board?.id]);
+  useEffect(() => {
+    if (boardTitle) setTitle(boardTitle);
+  }, [board?.id, boardTitle]);
+
   const insets = useSafeAreaInsets();
   const { width, height: windowHeight } = useWindowDimensions();
-  const { preferences, updatePreference, theme, isDark } = usePreferences();
+  const { preferences, updatePreference, theme, isDark, reducedMotion } = usePreferences();
   const dark = isDark;
 
   const [history, dispatch] = useReducer(documentReducer, createDocumentHistory());
@@ -317,520 +164,34 @@ export default function BoardEditorScreen() {
   const [activeTool, setActiveTool] = useState<InkTool>('select');
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [selectedInkIds, setSelectedInkIds] = useState<string[]>([]);
-  const [mathSheetVisible, setMathSheetVisible] = useState(false);
-  const [editingMathObject, setEditingMathObject] = useState<MathObject | null>(null);
-  const mathInlineInputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
-  const [editingMathInline, setEditingMathInline] = useState<{
-    objectId: string;
-    latex: string;
-    span: MathSourceSpan | null;
-    slotText: string;
-  } | null>(null);
-  const [inkOcrSession, setInkOcrSession] = useState<{
-    uri: string;
-    bounds: { x: number; y: number; width: number; height: number };
-    strokeIds: string[];
-    state: OcrReviewState;
-  } | null>(null);
-  const [stylingObjectId, setStylingObjectId] = useState<string | null>(null);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
-  const [editing, setEditing] = useState<Editing | null>(null);
-  const editingRef = useRef<Editing | null>(null);
-
-  const selectedObjects = document.objects.filter((object) => selectedObjectIds.includes(object.id));
-  const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null;
-  const layout = resolveEditorLayout(
-    width,
-    windowHeight,
-    insets,
-    {
-      hasSelection: selectedObjects.length > 0,
-      inspectorOpen,
-      isEditingText: Boolean(editing),
-    },
-    ACTION_ISLAND_HEIGHT,
-  );
-  const tablet = layout.navigationMode === 'rail';
-
-  // Default inspector open state by tablet orientation when a new selection begins.
-  const prevSelectionCount = useRef(0);
-  useEffect(() => {
-    if (selectedObjects.length > 0 && prevSelectionCount.current === 0) {
-      setInspectorOpen(layout.profile.isTabletLandscape);
-    }
-    prevSelectionCount.current = selectedObjects.length;
-  }, [selectedObjects.length, layout.profile.isTabletLandscape]);
-
-  const [textColorKey, setTextColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
-  const [textSize, setTextSize] = useState(DEFAULT_TEXT_FONT_SIZE);
-  const [textBold, setTextBold] = useState(false);
-  const [textItalic, setTextItalic] = useState(false);
-  const [stickyColorKey, setStickyColorKey] = useState<string>(DEFAULT_STICKY_COLOR);
-  const [stickySize, setStickySize] = useState(DEFAULT_STICKY_FONT_SIZE);
-  const [stickyBold, setStickyBold] = useState(false);
-  const [stickyItalic, setStickyItalic] = useState(false);
-  const [shapeKind, setShapeKind] = useState<ShapeKind>('rectangle');
-  const [shapeShowMeasurements, setShapeShowMeasurements] = useState(false);
   const [activeInstrument, setActiveInstrument] = useState<GeometryInstrumentState | null>(null);
-  const [editingTableCell, setEditingTableCell] = useState<{
-    objectId: string;
-    row: number;
-    col: number;
-    text: string;
-  } | null>(null);
-  const [shapeColorKey, setShapeColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
-  const [shapeFillKey, setShapeFillKey] = useState<string | null>(null);
-  const [shapeStrokeWidth, setShapeStrokeWidth] = useState(4);
-  const [connectorStyle, setConnectorStyle] = useState<'line' | 'arrow' | 'elbow'>('arrow');
-  const [connectorColorKey, setConnectorColorKey] = useState<string>(DEFAULT_TEXT_COLOR);
-  const [connectorStrokeWidth, setConnectorStrokeWidth] = useState(4);
 
-  const resolveInitialColor = () => {
-    const token = CANVAS_COLORS.find(
-      (c) =>
-        c.key === preferences.defaultPenColor ||
-        c.light.toLowerCase() === preferences.defaultPenColor.toLowerCase() ||
-        c.dark.toLowerCase() === preferences.defaultPenColor.toLowerCase(),
-    );
-    if (token) return dark ? token.dark : token.light;
-    return preferences.defaultPenColor || theme.foreground;
-  };
-
-  const [color, setColor] = useState<string>(resolveInitialColor);
-  const [strokeWidth, setStrokeWidth] = useState(preferences.defaultPenWidth ?? 4);
-  const [opacity, setOpacity] = useState(1);
-  const [eraserRadius, setEraserRadius] = useState(24);
-  const [inkOptionsVisible, setInkOptionsVisible] = useState(false);
-  const [objectOptionsVisible, setObjectOptionsVisible] = useState(false);
-  const [shapeOptionsVisible, setShapeOptionsVisible] = useState(false);
-  const [exportSheetVisible, setExportSheetVisible] = useState(false);
-  const [hostSheetVisible, setHostSheetVisible] = useState(false);
-  const [startingLiveClass, setStartingLiveClass] = useState(false);
-  const [classroomState, setClassroomState] = useState<ClassroomSessionState | null>(null);
-  const [classroomNotice, setClassroomNotice] = useState<string | null>(null);
-  const [remoteActiveStroke, setRemoteActiveStroke] = useState<EphemeralStrokePacket | null>(null);
-  const [remoteLaserStroke, setRemoteLaserStroke] = useState<EphemeralLaserPacket | null>(null);
-  const [isScratchpadMode, setIsScratchpadMode] = useState(false);
-  const [followTeacherViewport, setFollowTeacherViewport] = useState(true);
-  const [voiceMicEnabled, setVoiceMicEnabled] = useState(false);
-  const [voiceAvailable, setVoiceAvailable] = useState(false);
-  const [liveBoardSettings, setLiveBoardSettings] = useState<BoardSettings | null>(null);
-  const [showcasedName, setShowcasedName] = useState<string | null>(null);
-
-  const classroomSessionRef = useRef<ClassroomSession | null>(null);
-  const audioAdapterRef = useRef<LiveKitClassroomAudioAdapter | null>(null);
-  const startingLiveClassRef = useRef(false);
-  const allowLeaveNavigationRef = useRef(false);
-  const leavingClassroomPromptRef = useRef(false);
-  const applyingRemoteCommandRef = useRef(false);
-  const prevBroadcastDocRef = useRef<CanvasDocument>(document);
-  const studentLiveDocRef = useRef<CanvasDocument>(EMPTY_DOCUMENT);
-  const studentScratchpadDocRef = useRef<CanvasDocument>(EMPTY_DOCUMENT);
-  const isScratchpadModeRef = useRef(false);
-  const followTeacherViewportRef = useRef(true);
-  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [imageFlowOpen, setImageFlowOpen] = useState(false);
-  const [imageFlowId, setImageFlowId] = useState<string | null>(null);
-  const [quickCreationOpen, setQuickCreationOpen] = useState(false);
-  const [inkTrayOpen, setInkTrayOpen] = useState(false);
-  const [lastInkingTool, setLastInkingTool] = useState<FreehandTool | 'eraser' | 'laser'>('pen');
-  const [laserColorKey, setLaserColorKey] = useState<LaserColorKey>('red');
-  const [timerVisible, setTimerVisible] = useState(false);
-  const [calculatorVisible, setCalculatorVisible] = useState(false);
-  const [faceCamVisible, setFaceCamVisible] = useState(false);
-  const [recorderBarVisible, setRecorderBarVisible] = useState(false);
-  const [recorderQuality, setRecorderQuality] = useState<VideoQuality>('720p');
-  const [recorderMic, setRecorderMic] = useState(true);
-  const [recorderStatus, setRecorderStatus] = useState<RecorderStatus>('idle');
-  const [recorderElapsedMs, setRecorderElapsedMs] = useState(0);
-  const [recorderCountdown, setRecorderCountdown] = useState(3);
-  const recorderSessionRef = useRef<LessonRecorderSession | null>(null);
-  const [replayLesson, setReplayLesson] = useState<LessonRecordingPackage | null>(null);
-  const [replayAlreadySaved, setReplayAlreadySaved] = useState(false);
-  const [replayNotice, setReplayNotice] = useState<string | null>(null);
-  const [savedLessonsVisible, setSavedLessonsVisible] = useState(false);
-  const [savedLessons, setSavedLessons] = useState<SavedLessonSummary[]>([]);
-  const [boardStyleModalVisible, setBoardStyleModalVisible] = useState(false);
-  const [pages, setPages] = useState<BoardPageRecord[]>([]);
-  const [activePageId, setActivePageId] = useState<string | null>(null);
-  const activePageIdRef = useRef<string | null>(null);
-  const [pageSorterVisible, setPageSorterVisible] = useState(false);
-  const [pdfImportVisible, setPdfImportVisible] = useState(false);
-  const [flashcardsVisible, setFlashcardsVisible] = useState(false);
-
-  const insertMediaAssetRow = useCallback(async (asset: MediaAssetRecord) => {
-    if (!boardId) return;
-    const database = await getLocalDatabase();
-    await insertMediaAsset(database, asset);
-  }, [boardId]);
-
-  const placeImageObject = useCallback((object: ImageObject, textObject?: TextObject) => {
-    if (!boardId) return;
-    const commands: DocumentCommand[] = [{ type: 'object.insert', object }];
-    if (textObject) commands.push({ type: 'object.insert', object: textObject });
-    dispatch({ type: 'commands', commands });
-    void insertMediaAssetRow({
-      id: object.originalAssetId,
-      boardId,
-      ownerId: null,
-      storagePath: object.originalStoragePath,
-      mimeType: '',
-      bytes: 0,
-      metadata: {},
-      createdAt: new Date().toISOString(),
-    });
-    void insertMediaAssetRow({
-      id: object.assetId,
-      boardId,
-      ownerId: null,
-      storagePath: object.storagePath,
-      mimeType: '',
-      bytes: 0,
-      metadata: {
-        ...cropMetadata(object.crop, object.originalAssetId, '', { width: object.sourceWidth, height: object.sourceHeight }),
-        ...(object.ocr ? { ocr: object.ocr } : {}),
-      },
-      createdAt: new Date().toISOString(),
-    });
-    setSelectedObjectIds([object.id]);
-  }, [boardId, dispatch, insertMediaAssetRow]);
-
-  const explodeImageStickyNotes = useCallback(
-    (image: ImageObject, stickyNotes: StickyObject[]) => {
-      if (!boardId) return;
-      const commands: DocumentCommand[] = [
-        { type: 'object.insert', object: image },
-        ...stickyNotes.map((note) => ({ type: 'object.insert' as const, object: note })),
-      ];
-      dispatch({ type: 'commands', commands });
-      void insertMediaAssetRow({
-        id: image.originalAssetId,
-        boardId,
-        ownerId: null,
-        storagePath: image.originalStoragePath,
-        mimeType: '',
-        bytes: 0,
-        metadata: {},
-        createdAt: new Date().toISOString(),
-      });
-      void insertMediaAssetRow({
-        id: image.assetId,
-        boardId,
-        ownerId: null,
-        storagePath: image.storagePath,
-        mimeType: '',
-        bytes: 0,
-        metadata: {
-          ...cropMetadata(image.crop, image.originalAssetId, '', {
-            width: image.sourceWidth,
-            height: image.sourceHeight,
-          }),
-          ...(image.ocr ? { ocr: image.ocr } : {}),
-        },
-        createdAt: new Date().toISOString(),
-      });
-      setActiveTool('select');
-      setSelectedObjectIds(stickyNotes.map((note) => note.id));
-    },
-    [boardId, insertMediaAssetRow],
-  );
-
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [canvasRect, setCanvasRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
-  const [sheetHeight, setSheetHeight] = useState(0);
   const canvasRef = useRef<ComponentRef<typeof View> | null>(null);
 
-  // The live viewport lives in CanvasViewport's shared values. The editor keeps
-  // an exact copy for keyboard maths and a batched copy for the text overlay.
   const viewportLive = useRef<Viewport>(INITIAL_VIEWPORT);
+  const [initialViewport, setInitialViewport] = useState<Viewport>(INITIAL_VIEWPORT);
   const [viewport, setViewport] = useState<Viewport>(INITIAL_VIEWPORT);
   const viewportFlushedAt = useRef(0);
   const viewportTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [viewportRequest, setViewportRequest] = useState<ViewportRequest | null>(null);
 
-  // Local persistence: hydration, debounced autosave, and serialized writes.
-  const [hydrated, setHydrated] = useState(false);
-  const [initialViewport, setInitialViewport] = useState<Viewport>(INITIAL_VIEWPORT);
-  const [storageError, setStorageError] = useState<string | null>(null);
-  const documentRef = useRef<CanvasDocument>(document);
-  documentRef.current = document;
-  const hydratedRef = useRef(false);
-  const lastSavedDocument = useRef<CanvasDocument | null>(null);
-  const savedViewport = useRef<Viewport | null>(null);
-  const documentSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const viewportSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canvasBounds = useMemo(
+    () => ({
+      width: canvasRect.width > 0 ? canvasRect.width : width,
+      height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
+    }),
+    [canvasRect.height, canvasRect.width, width, windowHeight],
+  );
 
-  // Keep the selected ink colour readable when the system theme changes without
-  // overwriting a custom colour that is not part of the palette.
-  useEffect(() => {
-    setColor((current) => {
-      const key = textColorKeyForValue(current);
-      return key ? textColorValue(key, dark) : current;
-    });
-  }, [dark]);
-
-  useEffect(() => () => {
-    if (viewportTimer.current) clearTimeout(viewportTimer.current);
-  }, []);
-
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardWillShow', (event) => setKeyboardHeight(event.endCoordinates.height));
-    const shown = Keyboard.addListener('keyboardDidShow', (event) => setKeyboardHeight(event.endCoordinates.height));
-    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardHeight(0));
-    const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
-    return () => {
-      show.remove();
-      shown.remove();
-      hide.remove();
-      hidden.remove();
-    };
-  }, []);
-
-  const enqueueWrite = useCallback((task: () => Promise<void>) => {
-    void enqueuePersistenceWrite(task).catch((error: unknown) => {
-      setStorageError(storageErrorMessage(error));
-    });
-  }, []);
-
-  const persistDocument = useCallback((snapshot: CanvasDocument, viewport: Viewport, pageIdOverride?: string | null) => {
-    if (!boardId) return;
-    const targetPageId = pageIdOverride ?? activePageIdRef.current ?? undefined;
-    enqueueWrite(async () => {
-      const database = await getLocalDatabase();
-      await saveBoardDocument(database, boardId, snapshot, viewport, undefined, targetPageId);
-      if (targetPageId === activePageIdRef.current) {
-        lastSavedDocument.current = snapshot;
-        savedViewport.current = viewport;
-      }
-      setStorageError(null);
-      touchBoard(boardId, snapshot.strokes.length + snapshot.objects.length);
-    });
-  }, [boardId, enqueueWrite, touchBoard]);
-
-  /**
-   * Write the newest document and viewport right now. Used when the app leaves
-   * the foreground or the editor closes, so a debounce window cannot lose work.
-   */
-  const flushPendingSaves = useCallback(() => {
-    if (!boardId || !hydratedRef.current) return;
-    if (documentSaveTimer.current) {
-      clearTimeout(documentSaveTimer.current);
-      documentSaveTimer.current = null;
-    }
-    if (viewportSaveTimer.current) {
-      clearTimeout(viewportSaveTimer.current);
-      viewportSaveTimer.current = null;
-    }
-    const snapshot = documentRef.current;
-    const viewport = viewportLive.current;
-    const targetPageId = activePageIdRef.current ?? undefined;
-    const documentDirty = lastSavedDocument.current !== snapshot;
-    const viewportDirty = !savedViewport.current || !sameViewport(savedViewport.current, viewport);
-    if (!documentDirty && !viewportDirty) return;
-
-    enqueueWrite(async () => {
-      const database = await getLocalDatabase();
-      if (documentDirty) {
-        await saveBoardDocument(database, boardId, snapshot, viewport, undefined, targetPageId);
-        if (targetPageId === activePageIdRef.current) {
-          lastSavedDocument.current = snapshot;
-          savedViewport.current = viewport;
-        }
-        touchBoard(boardId, snapshot.strokes.length + snapshot.objects.length);
-      } else {
-        await saveBoardViewport(database, boardId, viewport, targetPageId);
-        if (targetPageId === activePageIdRef.current) {
-          savedViewport.current = viewport;
-        }
-      }
-      setStorageError(null);
-    });
-  }, [boardId, enqueueWrite, touchBoard]);
-
-  const scheduleViewportSave = useCallback((next: Viewport) => {
-    if (!boardId || !hydratedRef.current) return;
-    if (savedViewport.current && sameViewport(savedViewport.current, next)) return;
-    if (viewportSaveTimer.current) clearTimeout(viewportSaveTimer.current);
-    viewportSaveTimer.current = setTimeout(() => {
-      viewportSaveTimer.current = null;
-      const viewport = viewportLive.current;
-      const targetPageId = activePageIdRef.current ?? undefined;
-      if (!boardId || !hydratedRef.current) return;
-      if (savedViewport.current && sameViewport(savedViewport.current, viewport)) return;
-      enqueueWrite(async () => {
-        const database = await getLocalDatabase();
-        await saveBoardViewport(database, boardId, viewport, targetPageId);
-        if (targetPageId === activePageIdRef.current) {
-          savedViewport.current = viewport;
-        }
-        setStorageError(null);
-      });
-    }, VIEWPORT_SAVE_DELAY);
-  }, [boardId, enqueueWrite]);
-
-  // Load the saved board pages once. Rendering the canvas only after this finishes
-  // keeps CanvasViewport's initial viewport and the document in agreement.
-  useEffect(() => {
-    let cancelled = false;
-    hydratedRef.current = false;
-    setHydrated(false);
-    if (!boardId) {
-      hydratedRef.current = true;
-      lastSavedDocument.current = documentRef.current;
-      setHydrated(true);
-      return () => { cancelled = true; };
-    }
-    (async () => {
-      try {
-        const database = await getLocalDatabase();
-        let loadedPages = await listBoardPages(database, boardId);
-        if (loadedPages.length === 0) {
-          const snapshot = await loadBoardDocument(database, boardId);
-          loadedPages = [
-            {
-              id: snapshot.pageId ?? `${boardId}:page:0`,
-              boardId,
-              name: 'Page 1',
-              orderIndex: 0,
-              document: snapshot.document,
-              viewport: snapshot.viewport,
-              backgroundAssetId: null,
-              createdAt: '',
-              updatedAt: '',
-            },
-          ];
-        }
-        if (cancelled) return;
-        const firstPage = loadedPages[0];
-        setPages(loadedPages);
-        activePageIdRef.current = firstPage.id;
-        setActivePageId(firstPage.id);
-        dispatch({ type: 'hydrate', document: firstPage.document });
-        lastSavedDocument.current = firstPage.document;
-        const saved = firstPage.viewport ?? INITIAL_VIEWPORT;
-        viewportLive.current = saved;
-        savedViewport.current = saved;
-        setInitialViewport(saved);
-        setViewport(saved);
-        setStorageError(null);
-      } catch (error) {
-        if (cancelled) return;
-        // A failed read must not block editing: keep the in-memory board and
-        // surface the problem while the next edit retries the store.
-        setStorageError(storageErrorMessage(error));
-        lastSavedDocument.current = documentRef.current;
-        savedViewport.current = viewportLive.current;
-      } finally {
-        if (!cancelled) {
-          hydratedRef.current = true;
-          setHydrated(true);
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [boardId]);
-
-  // Debounced autosave. Reference equality is enough because every mutation
-  // produces a new document only when something actually changed.
-  useEffect(() => {
-    if (!hydrated || !boardId) return;
-    if (lastSavedDocument.current === document) return;
-    if (documentSaveTimer.current) clearTimeout(documentSaveTimer.current);
-    documentSaveTimer.current = setTimeout(() => {
-      documentSaveTimer.current = null;
-      persistDocument(documentRef.current, viewportLive.current);
-    }, AUTOSAVE_DELAY);
-    return () => {
-      if (documentSaveTimer.current) {
-        clearTimeout(documentSaveTimer.current);
-        documentSaveTimer.current = null;
-      }
-    };
-  }, [document, hydrated, boardId, persistDocument]);
-
-  useEffect(() => {
-    if (tablet) return;
-    let active = true;
-    void (async () => {
-      try {
-        const ScreenOrientation = await import('expo-screen-orientation');
-        if (active) {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        }
-      } catch {
-        // Ignore if screen orientation native module is unavailable in this build.
-      }
-    })();
-    return () => {
-      active = false;
-      void (async () => {
-        try {
-          const ScreenOrientation = await import('expo-screen-orientation');
-          await ScreenOrientation.unlockAsync();
-        } catch {
-          // Ignore cleanup errors.
-        }
-      })();
-    };
-  }, [tablet]);
-
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'background' || state === 'inactive') {
-        flushPendingSaves();
-        const session = recorderSessionRef.current;
-        if (session && session.status === 'recording') {
-          const paused = pauseRecording(session, Date.now());
-          recorderSessionRef.current = paused;
-          setRecorderStatus('paused');
-          setRecorderElapsedMs(getElapsedMs(paused, Date.now()));
-          void pauseNativeCapture();
-          const { pkg } = completeRecording(paused, Date.now());
-          void saveRecoveryCheckpoint(pkg);
-        }
-      }
-    });
-    return () => subscription.remove();
-  }, [flushPendingSaves]);
-
-  useEffect(() => () => flushPendingSaves(), [flushPendingSaves]);
-
-  const reportViewport = useCallback((next: Viewport) => {
-    viewportLive.current = next;
-    scheduleViewportSave(next);
-    if (recorderSessionRef.current?.status === 'recording' && activePageIdRef.current) {
-      recorderSessionRef.current = recordViewportSample(
-        recorderSessionRef.current,
-        activePageIdRef.current,
-        next,
-        Date.now(),
-      );
-    }
-    const liveState = classroomSessionRef.current?.getState();
-    if (liveState?.active && liveState.role === 'teacher') {
-      classroomSessionRef.current?.updateHostViewport(next);
-      if (liveState.roomInfo?.followTeacherViewport) {
-        void classroomSessionRef.current?.sendEphemeral({
-          pageId: activePageIdRef.current || 'page-1',
-          viewport: next,
-        });
-      }
-    }
-    const now = Date.now();
-    if (now - viewportFlushedAt.current >= VIEWPORT_RENDER_INTERVAL) {
-      viewportFlushedAt.current = now;
-      setViewport(next);
-      return;
-    }
-    // A trailing update keeps the overlay aligned with the final gesture value.
-    if (viewportTimer.current) return;
-    viewportTimer.current = setTimeout(() => {
-      viewportTimer.current = null;
-      viewportFlushedAt.current = Date.now();
-      setViewport(viewportLive.current);
-    }, VIEWPORT_RENDER_INTERVAL);
-  }, [scheduleViewportSave]);
+  const getViewportCenterPoint = useCallback(
+    () =>
+      screenToCanvas(
+        { x: canvasBounds.width / 2, y: canvasBounds.height / 2 },
+        viewport,
+      ),
+    [canvasBounds.height, canvasBounds.width, viewport],
+  );
 
   const requestViewport = useCallback((next: Viewport) => {
     if (
@@ -847,23 +208,256 @@ export default function BoardEditorScreen() {
     setViewportRequest((current) => ({ key: (current?.key ?? 0) + 1, viewport: next }));
   }, []);
 
+  const selectedObjects = useMemo(
+    () => document.objects.filter((object) => selectedObjectIds.includes(object.id)),
+    [document.objects, selectedObjectIds],
+  );
+  const selectedObject = selectedObjects.length === 1 ? selectedObjects[0] : null;
+
+  // Tool preferences (ink)
+  const [color, setColor] = useState<string>(() => {
+    const token = CANVAS_COLORS.find(
+      (c) =>
+        c.key === preferences.defaultPenColor ||
+        c.light.toLowerCase() === preferences.defaultPenColor.toLowerCase() ||
+        c.dark.toLowerCase() === preferences.defaultPenColor.toLowerCase(),
+    );
+    if (token) return dark ? token.dark : token.light;
+    return preferences.defaultPenColor || theme.foreground;
+  });
+  const [strokeWidth, setStrokeWidth] = useState(preferences.defaultPenWidth ?? 4);
+  const [opacity, setOpacity] = useState(1);
+  const [eraserRadius, setEraserRadius] = useState(24);
+  const [inkOptionsVisible, setInkOptionsVisible] = useState(false);
+  const [inkTrayOpen, setInkTrayOpen] = useState(false);
+  const [lastInkingTool, setLastInkingTool] = useState<FreehandTool | 'eraser' | 'laser'>('pen');
+  const [laserColorKey, setLaserColorKey] = useState<LaserColorKey>('red');
+
+  const [exportSheetVisible, setExportSheetVisible] = useState(false);
+  const [quickCreationOpen, setQuickCreationOpen] = useState(false);
+  const [imageFlowOpen, setImageFlowOpen] = useState(false);
+  const [imageFlowId, setImageFlowId] = useState<string | null>(null);
+  const [timerVisible, setTimerVisible] = useState(false);
+  const [calculatorVisible, setCalculatorVisible] = useState(false);
+  const [faceCamVisible, setFaceCamVisible] = useState(false);
+  const [boardStyleModalVisible, setBoardStyleModalVisible] = useState(false);
+  const [pageSorterVisible, setPageSorterVisible] = useState(false);
+  const [pdfImportVisible, setPdfImportVisible] = useState(false);
+  const [flashcardsVisible, setFlashcardsVisible] = useState(false);
+
+  // Keep ink colour legible when theme changes
+  useEffect(() => {
+    setColor((current) => {
+      const key = textColorKeyForValue(current);
+      return key ? textColorValue(key, dark) : current;
+    });
+  }, [dark]);
+
+  useEffect(
+    () => () => {
+      if (viewportTimer.current) clearTimeout(viewportTimer.current);
+    },
+    [],
+  );
+
+  // Preliminary tablet classification for hook coordination
+  const prelimTablet = useMemo(() => {
+    const prelim = resolveEditorLayout(width, windowHeight, insets);
+    return {
+      tablet: prelim.navigationMode === 'rail',
+      isTabletLandscape: prelim.profile.isTabletLandscape,
+    };
+  }, [insets, width, windowHeight]);
+
+  // Ref-forwarded callbacks so persistence/selection hooks integrate cleanly with math/recorder/live
+  const onBeforePageSwitchRef = useRef<
+    ((target: BoardPageRecord, index: number, vp: Viewport) => void) | null
+  >(null);
+
+  const ocrAndMath = useEditorOcrAndMath({
+    boardId,
+    document,
+    haptics: preferences.haptics,
+    textColorKey: 'ink',
+    textSize: 16,
+    selectedInkIds,
+    getViewportCenterPoint,
+    dispatch,
+    setSelectedObjectIds,
+    setSelectedInkIds,
+    setActiveTool,
+  });
+
+  const selectionEditing = useEditorSelectionAndEditing({
+    document,
+    viewportLive,
+    canvasRect,
+    windowHeight,
+    tablet: prelimTablet.tablet,
+    isTabletLandscape: prelimTablet.isTabletLandscape,
+    selectedObjectIds,
+    setSelectedObjectIds,
+    dispatch,
+    requestViewport,
+    editingMathInline: ocrAndMath.editingMathInline,
+    setEditingMathInline: ocrAndMath.setEditingMathInline,
+    mathInlineInputRef: ocrAndMath.mathInlineInputRef,
+    commitInlineMath: ocrAndMath.commitInlineMath,
+    setMathSheetVisible: ocrAndMath.setMathSheetVisible,
+    setEditingMathObject: ocrAndMath.setEditingMathObject,
+  });
+
+  const layout = useMemo(
+    () =>
+      resolveEditorLayout(
+        width,
+        windowHeight,
+        insets,
+        {
+          hasSelection: selectedObjects.length > 0,
+          inspectorOpen: selectionEditing.inspectorOpen,
+          isEditingText: Boolean(selectionEditing.editing),
+        },
+        ACTION_ISLAND_HEIGHT,
+      ),
+    [
+      insets,
+      selectedObjects.length,
+      selectionEditing.editing,
+      selectionEditing.inspectorOpen,
+      width,
+      windowHeight,
+    ],
+  );
+  const tablet = layout.navigationMode === 'rail';
+
+  const persistence = useEditorPersistence({
+    boardId,
+    initialDefaultViewport: INITIAL_VIEWPORT,
+    document,
+    viewport,
+    viewportLive,
+    dispatch,
+    touchBoard,
+    setInitialViewport,
+    setViewport,
+    commitEditing: selectionEditing.commitEditing,
+    setSelectedObjectIds,
+    setSelectedInkIds,
+    setActiveTool,
+    onBeforePageSwitch: useCallback(
+      (target: BoardPageRecord, idx: number, nextVp: Viewport) =>
+        onBeforePageSwitchRef.current?.(target, idx, nextVp),
+      [],
+    ),
+  });
+
+  const recorder = useEditorRecorder({
+    boardId,
+    title,
+    document,
+    pages: persistence.pages,
+    activePageIdRef: persistence.activePageIdRef,
+    viewportLive,
+    initialDefaultViewport: INITIAL_VIEWPORT,
+    canvasRect,
+  });
+
+  const liveClass = useEditorLiveClass({
+    boardId,
+    boardSettings: board?.settings,
+    title,
+    setTitle,
+    isStudentRoute,
+    isProjectorMode,
+    paramRoomCode,
+    paramDisplayName,
+    document,
+    documentRef: persistence.documentRef,
+    pages: persistence.pages,
+    activePageId: persistence.activePageId,
+    activePageIdRef: persistence.activePageIdRef,
+    viewportLive,
+    dispatch,
+    requestViewport,
+    setActiveInstrument,
+    router,
+    navigation,
+  });
+
+  onBeforePageSwitchRef.current = (target, targetIndex, nextViewport) => {
+    recorder.recordPageSwitchIfActive(target.id, targetIndex, target.document, nextViewport);
+    liveClass.broadcastHostPageSwitchIfActive(target, nextViewport);
+  };
+
+  // Phone landscape orientation lock
+  useEffect(() => {
+    if (tablet) return;
+    let active = true;
+    void (async () => {
+      try {
+        const ScreenOrientation = await import('expo-screen-orientation');
+        if (active) {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        }
+      } catch {
+        // Ignore if unavailable in build
+      }
+    })();
+    return () => {
+      active = false;
+      void (async () => {
+        try {
+          const ScreenOrientation = await import('expo-screen-orientation');
+          await ScreenOrientation.unlockAsync();
+        } catch {
+          // Ignore cleanup errors
+        }
+      })();
+    };
+  }, [tablet]);
+
+  const reportViewport = useCallback(
+    (next: Viewport) => {
+      viewportLive.current = next;
+      persistence.scheduleViewportSave(next);
+      recorder.recordViewportIfActive(next);
+      liveClass.broadcastHostViewportIfActive(next);
+
+      const now = Date.now();
+      if (now - viewportFlushedAt.current >= VIEWPORT_RENDER_INTERVAL) {
+        viewportFlushedAt.current = now;
+        setViewport(next);
+        return;
+      }
+      if (viewportTimer.current) return;
+      viewportTimer.current = setTimeout(() => {
+        viewportTimer.current = null;
+        viewportFlushedAt.current = Date.now();
+        setViewport(viewportLive.current);
+      }, VIEWPORT_RENDER_INTERVAL);
+    },
+    [liveClass, persistence, recorder],
+  );
+
   const measureCanvas = useCallback(() => {
     canvasRef.current?.measureInWindow((x, y, measuredWidth, measuredHeight) => {
       setCanvasRect({ x, y, width: measuredWidth, height: measuredHeight });
     });
   }, []);
 
-  // Re-measure canvas window coordinates when orientation or docked panels change.
   useEffect(() => {
-    if (!hydrated) return;
+    if (!persistence.hydrated) return;
     const timer = setTimeout(measureCanvas, 32);
     return () => clearTimeout(timer);
-  }, [hydrated, width, windowHeight, layout.navigationMode, layout.inspectorPresentation, measureCanvas]);
-
-  const setEditingState = useCallback((next: Editing | null) => {
-    editingRef.current = next;
-    setEditing(next);
-  }, []);
+  }, [
+    persistence.hydrated,
+    width,
+    windowHeight,
+    layout.navigationMode,
+    layout.inspectorPresentation,
+    measureCanvas,
+  ]);
 
   const runCommand = useCallback((command: DocumentCommand, transient?: boolean) => {
     dispatch({ type: 'command', command, transient });
@@ -875,888 +469,68 @@ export default function BoardEditorScreen() {
     dispatch({ type: 'measure', id, height });
   }, []);
   const commitPending = useCallback(() => dispatch({ type: 'commit' }), []);
-  const closeObjectOptions = useCallback(() => setObjectOptionsVisible(false), []);
 
-  // ---------------------------------------------------------------- Live Classroom
-
-  const showClassroomNotice = useCallback((message: string) => {
-    setClassroomNotice(message);
-    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-    noticeTimerRef.current = setTimeout(() => {
-      setClassroomNotice(null);
-    }, 3500);
-  }, []);
-
-  const routerRef = useRef(router);
-  routerRef.current = router;
-
-  const ensureClassroomSession = useCallback(() => {
-    if (classroomSessionRef.current) return classroomSessionRef.current;
-    const session = new ClassroomSession();
-    const audio = new LiveKitClassroomAudioAdapter();
-    audio.setOnStateChange((st) => {
-      setVoiceAvailable(st.available);
-      setVoiceMicEnabled(st.micEnabled);
-    });
-    audioAdapterRef.current = audio;
-    setVoiceAvailable(audio.getState().available);
-
-    session.setCallbacks({
-      onSnapshot: (snapshot) => {
-        studentLiveDocRef.current = snapshot.document;
-        setLiveBoardSettings(snapshot.boardSettings);
-        setTitle(snapshot.roomInfo.boardTitle || 'Live Class');
-        if (typeof snapshot.roomInfo.followTeacherViewport === 'boolean') {
-          followTeacherViewportRef.current = snapshot.roomInfo.followTeacherViewport;
-          setFollowTeacherViewport(snapshot.roomInfo.followTeacherViewport);
+  const pressTool = useCallback(
+    (tool: InkTool) => {
+      void triggerHapticFeedback('selection', preferences.haptics);
+      if (selectionEditing.editingRef.current) selectionEditing.commitEditing();
+      selectionEditing.setStylingObjectId(null);
+      if (tool !== 'select') setSelectedObjectIds([]);
+      if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser' || tool === 'laser') {
+        selectionEditing.setObjectOptionsVisible(false);
+        selectionEditing.setShapeOptionsVisible(false);
+        setLastInkingTool(tool);
+        const retap = activeTool === tool;
+        setActiveTool(tool);
+        if (tablet) {
+          setInkTrayOpen(false);
+          setInkOptionsVisible((v) => (retap ? !v : true));
+        } else {
+          setInkOptionsVisible(false);
+          setInkTrayOpen((open) => (retap ? !open : true));
         }
-        if (!isScratchpadModeRef.current) {
-          applyingRemoteCommandRef.current = true;
-          dispatch({ type: 'hydrate', document: snapshot.document });
-          prevBroadcastDocRef.current = snapshot.document;
-          if (followTeacherViewportRef.current) {
-            requestViewport(snapshot.viewport);
-          }
-          setTimeout(() => {
-            applyingRemoteCommandRef.current = false;
-          }, 0);
-        }
-      },
-      onRemoteCommand: (pageId, command) => {
-        if (session.getState().role === 'student') {
-          const nextLive = applySerializableCommand(studentLiveDocRef.current, command);
-          studentLiveDocRef.current = nextLive;
-          if (!isScratchpadModeRef.current) {
-            applyingRemoteCommandRef.current = true;
-            dispatch({ type: 'hydrate', document: nextLive });
-            prevBroadcastDocRef.current = nextLive;
-            setTimeout(() => {
-              applyingRemoteCommandRef.current = false;
-            }, 0);
-          }
-          return;
-        }
-        // Teacher receives command from a student who has `can-draw`
-        if (pageId === activePageIdRef.current) {
-          const nextDoc = applySerializableCommand(documentRef.current, command);
-          applyingRemoteCommandRef.current = true;
-          dispatch({ type: 'hydrate', document: nextDoc });
-          prevBroadcastDocRef.current = nextDoc;
-          setTimeout(() => {
-            applyingRemoteCommandRef.current = false;
-          }, 0);
-        }
-      },
-      onEphemeral: (eph) => {
-        if (eph.activeStroke) {
-          setRemoteActiveStroke(eph.activeStroke.isDone ? null : eph.activeStroke);
-        }
-        if (eph.laser) {
-          setRemoteLaserStroke(eph.laser.active ? eph.laser : null);
-        }
-        if (eph.geometryInstrument !== undefined && !isScratchpadModeRef.current) {
-          setActiveInstrument(eph.geometryInstrument);
-        }
-        if (eph.viewport && followTeacherViewportRef.current && !isScratchpadModeRef.current) {
-          requestViewport(eph.viewport);
-        }
-      },
-      onShowcase: (showcase) => {
-        if (!showcase.studentPeerId || !showcase.document) {
-          setShowcasedName(null);
-          if (session.getState().role === 'student' && !isScratchpadModeRef.current) {
-            applyingRemoteCommandRef.current = true;
-            dispatch({ type: 'hydrate', document: studentLiveDocRef.current });
-            prevBroadcastDocRef.current = studentLiveDocRef.current;
-            setTimeout(() => {
-              applyingRemoteCommandRef.current = false;
-            }, 0);
-          }
-          return;
-        }
-        setShowcasedName(showcase.studentName ?? 'Student');
-        if (session.getState().role === 'student' && !isScratchpadModeRef.current) {
-          applyingRemoteCommandRef.current = true;
-          dispatch({ type: 'hydrate', document: showcase.document });
-          prevBroadcastDocRef.current = showcase.document;
-          if (showcase.viewport) requestViewport(showcase.viewport);
-          setTimeout(() => {
-            applyingRemoteCommandRef.current = false;
-          }, 0);
-        }
-      },
-      onFollowTeacherViewport: (follow, vp) => {
-        followTeacherViewportRef.current = follow;
-        setFollowTeacherViewport(follow);
-        if (follow && vp && !isScratchpadModeRef.current) {
-          requestViewport(vp);
-        }
-      },
-      onNotice: (msg) => showClassroomNotice(msg),
-      onKicked: () => {
-        allowLeaveNavigationRef.current = true;
-        void audioAdapterRef.current?.disconnect();
-        Alert.alert('Removed from class', 'The teacher removed you from this live session.');
-        routerRef.current.back();
-      },
-      onClassEnded: () => {
-        allowLeaveNavigationRef.current = true;
-        void audioAdapterRef.current?.disconnect();
-        Alert.alert('Live class ended', 'The teacher ended the live class.');
-        routerRef.current.back();
-      },
-    });
-
-    session.subscribe((nextState) => {
-      setClassroomState(nextState);
-      if (nextState.role === 'student') {
-        void audioAdapterRef.current?.setCanPublish(nextState.myCanSpeak);
-      }
-    });
-
-    classroomSessionRef.current = session;
-    return session;
-  }, [requestViewport, showClassroomNotice]);
-
-  // Auto-join when opened via Student Join route
-  useEffect(() => {
-    if (!isStudentRoute || !paramRoomCode) return;
-    const session = ensureClassroomSession();
-    let cancelled = false;
-    void (async () => {
-      try {
-        await session.joinAsStudent({
-          roomCode: paramRoomCode,
-          displayName: paramDisplayName || (isProjectorMode ? 'Classroom Projector' : 'Student'),
-        });
-        if (cancelled) return;
-        const audio = audioAdapterRef.current;
-        if (audio) {
-          const st = await audio.connect({
-            roomCode: paramRoomCode,
-            peerId: session.getState().peerId,
-            displayName: session.getState().displayName,
-            role: 'student',
-            canPublish: false,
-          });
-          setVoiceAvailable(st.available);
-          setVoiceMicEnabled(st.micEnabled);
-          if (!st.connected && st.reason) {
-            showClassroomNotice(st.reason);
-          }
-        }
-      } catch (error) {
-        if (!cancelled) {
-          Alert.alert(
-            'Unable to join class',
-            error instanceof Error ? error.message : 'Check the 6-digit code and try again.',
-          );
-          allowLeaveNavigationRef.current = true;
-          routerRef.current.back();
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      void audioAdapterRef.current?.disconnect();
-      void session.endOrLeave();
-    };
-  }, [ensureClassroomSession, isProjectorMode, isStudentRoute, paramDisplayName, paramRoomCode]);
-
-  // Resumable foreground reconnect for Live Classroom
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active') {
-        void classroomSessionRef.current?.resume();
-        if (classroomSessionRef.current?.getState().active) {
-          void audioAdapterRef.current?.resume();
-        }
-      }
-    });
-    return () => sub.remove();
-  }, []);
-
-  const confirmLeaveActiveClassroom = useCallback(
-    (onConfirmLeave: () => void) => {
-      const session = classroomSessionRef.current;
-      const st = session?.getState();
-      if (!session || !st?.active) {
-        onConfirmLeave();
         return;
       }
-      if (leavingClassroomPromptRef.current) return;
-      leavingClassroomPromptRef.current = true;
-      const isTeacher = st.role === 'teacher';
-      Alert.alert(
-        isTeacher ? 'End Live Class?' : 'Leave Live Class?',
-        isTeacher
-          ? 'An active live class session is running. Do you want to end it and leave?'
-          : 'You are currently in a live class. Do you want to leave the session?',
-        [
-          {
-            text: 'Stay',
-            style: 'cancel',
-            onPress: () => {
-              leavingClassroomPromptRef.current = false;
-            },
-          },
-          {
-            text: isTeacher ? 'End & Leave' : 'Leave Class',
-            style: 'destructive',
-            onPress: () => {
-              allowLeaveNavigationRef.current = true;
-              leavingClassroomPromptRef.current = false;
-              setHostSheetVisible(false);
-              void audioAdapterRef.current?.disconnect();
-              void session.endOrLeave().finally(() => {
-                onConfirmLeave();
-              });
-            },
-          },
-        ],
-        {
-          cancelable: true,
-          onDismiss: () => {
-            leavingClassroomPromptRef.current = false;
-          },
-        },
-      );
-    },
-    [],
-  );
-
-  // Intercept iOS swipe-back / header navigation back while Live Classroom is active
-  useEffect(() => {
-    const nav = navigation as unknown as {
-      addListener: (
-        event: 'beforeRemove',
-        cb: (e: {
-          preventDefault: () => void;
-          data: { action: Parameters<typeof navigation.dispatch>[0] };
-        }) => void,
-      ) => () => void;
-    };
-    const unsubscribe = nav.addListener('beforeRemove', (event) => {
-      if (allowLeaveNavigationRef.current) return;
-      if (!classroomSessionRef.current?.getState().active) return;
-      event.preventDefault();
-      confirmLeaveActiveClassroom(() => {
-        navigation.dispatch(event.data.action);
-      });
-    });
-    return unsubscribe;
-  }, [confirmLeaveActiveClassroom, navigation]);
-
-  // Intercept Android hardware back press while Live Classroom is active
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (hostSheetVisible) {
-        setHostSheetVisible(false);
-        return true;
-      }
-      if (classroomSessionRef.current?.getState().active) {
-        confirmLeaveActiveClassroom(() => {
-          routerRef.current.back();
-        });
-        return true;
-      }
-      return false;
-    });
-    return () => sub.remove();
-  }, [confirmLeaveActiveClassroom, hostSheetVisible]);
-
-  // Keep the host sheet in sync with the session: never leave it on screen once
-  // the classroom has ended (or a start attempt failed and rolled back).
-  useEffect(() => {
-    if (!classroomState?.active && hostSheetVisible) {
-      setHostSheetVisible(false);
-    }
-  }, [classroomState?.active, hostSheetVisible]);
-
-  // Ensure any active LiveKit + Realtime session is cleaned up if the editor unmounts
-  useEffect(() => {
-    return () => {
-      void audioAdapterRef.current?.disconnect();
-      if (classroomSessionRef.current?.getState().active) {
-        void classroomSessionRef.current.endOrLeave();
-      }
-    };
-  }, []);
-
-  // Broadcast committed local document mutations when hosting or when granted `can-draw`
-  useEffect(() => {
-    const session = classroomSessionRef.current;
-    const prevDoc = prevBroadcastDocRef.current;
-    prevBroadcastDocRef.current = document;
-    fcprobe(`broadcast effect active=${classroomState?.active} sameDoc=${prevDoc === document}`);
-    if (!session || !classroomState?.active) return;
-    if (applyingRemoteCommandRef.current) return;
-
-    if (classroomState.role === 'student' && isScratchpadMode) {
-      studentScratchpadDocRef.current = document;
-      void session.sendStudentScratchpad(document, viewportLive.current);
-      return;
-    }
-
-    const cmd = diffDocumentsToSerializableCommand(prevDoc, document);
-    if (!cmd) return;
-
-    if (classroomState.role === 'teacher') {
-      const currentPage = pages.find((p) => p.id === activePageId);
-      session.updateHostSnapshot({
-        pageId: activePageId || 'page-1',
-        pageName: currentPage?.name ?? 'Page 1',
-        pageOrderIndex: currentPage?.orderIndex ?? 0,
-        boardSettings: board?.settings ?? DEFAULT_BOARD_SETTINGS,
-        document,
-        viewport: viewportLive.current,
-      });
-      void session.broadcastCommand(activePageId || 'page-1', cmd);
-    } else if (classroomState.myPermission === 'can-draw' && !classroomState.roomInfo?.isLocked) {
-      studentLiveDocRef.current = document;
-      void session.broadcastCommand(activePageId || 'page-1', cmd);
-    }
-  }, [activePageId, board?.settings, classroomState, document, isScratchpadMode, pages]);
-
-  const handleStartOrOpenLiveClass = useCallback(async () => {
-    if (isStudentRoute) return;
-
-    // Ignore extra taps while a start attempt is in flight. This also prevents
-    // the sheet from opening before the classroom transport has connected,
-    // because `startAsTeacher` marks the session active before it awaits.
-    if (startingLiveClassRef.current) {
-      return;
-    }
-
-    const session = ensureClassroomSession();
-    if (session.getState().active) {
-      setHostSheetVisible(true);
-      return;
-    }
-
-    const entitlement = getLiveClassEntitlement();
-    if (!entitlement.canHost) {
-      Alert.alert('Teacher Pro Required', entitlement.reason ?? 'Upgrade to host Live Classes.');
-      return;
-    }
-
-    startingLiveClassRef.current = true;
-    setStartingLiveClass(true);
-    setHostSheetVisible(false);
-    try {
-      fcprobe('start: requesting mic');
-      const micPerm = await requestMicrophonePermission();
-      fcprobe(`start: mic resolved granted=${micPerm.granted}`);
-      if (!micPerm.granted) {
-        Alert.alert(
-          'Microphone Permission Required',
-          'Allow microphone access before starting a live class so students can hear your voice.',
-          micPerm.canAskAgain
-            ? [{ text: 'OK' }]
-            : [
-                { text: 'Not Now', style: 'cancel' },
-                { text: 'Open Settings', onPress: () => void openAppSettings() },
-              ],
-        );
+      setInkTrayOpen(false);
+      setInkOptionsVisible(false);
+      if (tool === 'shape' || tool === 'connector') {
+        selectionEditing.setObjectOptionsVisible(false);
+        selectionEditing.setShapeOptionsVisible((v) => (activeTool === tool ? !v : true));
+      } else if (tool === 'text' || tool === 'sticky') {
+        selectionEditing.setObjectOptionsVisible((v) => (activeTool === tool ? !v : true));
+      } else if (tool === 'image') {
+        setImageFlowId(`${boardId}-${Date.now()}`);
+        setImageFlowOpen(true);
         return;
       }
-
-      const currentPage = pages.find((p) => p.id === activePageId);
-      fcprobe('start: calling startAsTeacher');
-      const roomInfo = await session.startAsTeacher({
-        boardId: boardId ?? 'local-board',
-        boardTitle: title,
-        pageId: activePageId || 'page-1',
-        pageName: currentPage?.name ?? 'Page 1',
-        pageOrderIndex: currentPage?.orderIndex ?? 0,
-        boardSettings: board?.settings ?? DEFAULT_BOARD_SETTINGS,
-        document: documentRef.current,
-        viewport: viewportLive.current,
-        displayName: 'Teacher',
-      });
-
-      fcprobe('start: startAsTeacher resolved');
-      // The realtime session is connected now, so it is safe to reveal the sheet.
-      setHostSheetVisible(true);
-
-      const audio = audioAdapterRef.current;
-      fcprobe(`start: audio present=${Boolean(audio)}`);
-      if (audio) {
-        void (async () => {
-          const st = await audio.connect({
-            roomCode: roomInfo.roomCode,
-            peerId: session.getState().peerId,
-            displayName: 'Teacher',
-            role: 'teacher',
-            canPublish: true,
-          });
-          setVoiceAvailable(st.available);
-          setVoiceMicEnabled(st.micEnabled);
-          if (st.reason) {
-            showClassroomNotice(st.reason);
-          }
-        })();
-      }
-    } catch (error) {
-      setHostSheetVisible(false);
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : 'Could not connect to the Live Classroom server. Check your internet connection and try again.';
-      Alert.alert('Unable to Start Live Class', message);
-    } finally {
-      startingLiveClassRef.current = false;
-      setStartingLiveClass(false);
-    }
-  }, [activePageId, board?.settings, boardId, ensureClassroomSession, isStudentRoute, pages, showClassroomNotice, title]);
-
-  const handleToggleScratchpad = useCallback(() => {
-    const next = !isScratchpadModeRef.current;
-    isScratchpadModeRef.current = next;
-    setIsScratchpadMode(next);
-    applyingRemoteCommandRef.current = true;
-    if (next) {
-      dispatch({ type: 'hydrate', document: studentScratchpadDocRef.current });
-      prevBroadcastDocRef.current = studentScratchpadDocRef.current;
-      showClassroomNotice('Switched to My Scratchpad');
-    } else {
-      dispatch({ type: 'hydrate', document: studentLiveDocRef.current });
-      prevBroadcastDocRef.current = studentLiveDocRef.current;
-      showClassroomNotice('Returned to Live Board');
-    }
-    setTimeout(() => {
-      applyingRemoteCommandRef.current = false;
-    }, 0);
-  }, [showClassroomNotice]);
-
-  const handleToggleFollowTeacher = useCallback(() => {
-    const next = !followTeacherViewportRef.current;
-    followTeacherViewportRef.current = next;
-    setFollowTeacherViewport(next);
-  }, []);
-
-  const handleLiveStrokeSample = useCallback(
-    (sample: Omit<EphemeralStrokePacket, 'authorPeerId'>) => {
-      const session = classroomSessionRef.current;
-      if (!session || !classroomState?.active) return;
-      if (classroomState.role === 'student' && isScratchpadModeRef.current) return;
-      void session.sendEphemeral({
-        pageId: activePageIdRef.current || 'page-1',
-        activeStroke: { ...sample, authorPeerId: session.getState().peerId },
-      });
-    },
-    [classroomState?.active, classroomState?.role],
-  );
-
-  const handleLiveLaserSample = useCallback(
-    (sample: Omit<EphemeralLaserPacket, 'authorPeerId'>) => {
-      const session = classroomSessionRef.current;
-      if (!session || !classroomState?.active) return;
-      if (classroomState.role === 'student' && isScratchpadModeRef.current) return;
-      void session.sendEphemeral({
-        pageId: activePageIdRef.current || 'page-1',
-        laser: { ...sample, authorPeerId: session.getState().peerId },
-      });
-    },
-    [classroomState?.active, classroomState?.role],
-  );
-
-  /**
-   * One commit path for every exit: Done, outside tap, tool change, back, and
-   * blur. An empty object is discarded rather than committed, so tapping the
-   * canvas and changing your mind leaves no object and no undo step behind.
-   */
-  const commitEditing = useCallback(() => {
-    const current = editingRef.current;
-    if (!current) return;
-    editingRef.current = null;
-    setEditing(null);
-    setObjectOptionsVisible(false);
-    setSheetHeight(0);
-    Keyboard.dismiss();
-    const command = editingCommit(current.object, current.isNew);
-    if (!command) {
-      setSelectedObjectIds([]);
-      return;
-    }
-    dispatch({ type: 'command', command });
-    setSelectedObjectIds(command.type === 'object.delete' ? [] : [current.object.id]);
-  }, []);
-
-  const updateDraft = useCallback((patch: { text?: string; colorKey?: string; fontSize?: number; fontWeight?: TextWeight; fontStyle?: TextSlant }) => {
-    const current = editingRef.current;
-    if (!current) return;
-    let object = current.object;
-    if (patch.text !== undefined) object = withObjectText(object, patch.text);
-    object = withObjectStyle(object, {
-      colorKey: patch.colorKey,
-      fontSize: patch.fontSize,
-      fontWeight: patch.fontWeight,
-      fontStyle: patch.fontStyle,
-    });
-    setEditingState({ object, isNew: current.isNew });
-  }, [setEditingState]);
-
-  const startNewObject = useCallback((type: 'text' | 'sticky', point: Point) => {
-    // The first tap outside an open editor commits it instead of adding another object.
-    if (editingRef.current) {
-      commitEditing();
-      return;
-    }
-    const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const object = type === 'sticky'
-      ? createStickyObject({
-          id,
-          point,
-          colorKey: stickyColorKey,
-          fontSize: stickySize,
-          fontWeight: stickyBold ? 'bold' : 'normal',
-          fontStyle: stickyItalic ? 'italic' : 'normal',
-        })
-      : createTextObject({
-          id,
-          point,
-          colorKey: textColorKey,
-          fontSize: textSize,
-          fontWeight: textBold ? 'bold' : 'normal',
-          fontStyle: textItalic ? 'italic' : 'normal',
-        });
-    setSelectedObjectIds([]);
-    setObjectOptionsVisible(false);
-    setStylingObjectId(null);
-    setEditingState({ object, isNew: true });
-  }, [commitEditing, setEditingState, stickyBold, stickyColorKey, stickyItalic, stickySize, textBold, textColorKey, textItalic, textSize]);
-
-  const commitTableCell = useCallback(() => {
-    if (!editingTableCell) return;
-    const obj = findObject(document, editingTableCell.objectId);
-    if (obj && isTableObject(obj)) {
-      const updated = withTableCellText(
-        obj,
-        editingTableCell.row,
-        editingTableCell.col,
-        editingTableCell.text,
-      );
-      if (updated !== obj) {
-        dispatch({
-          type: 'command',
-          command: {
-            type: 'object.update',
-            id: obj.id,
-            table: { cells: updated.cells },
-          },
-        });
-      }
-    }
-    setEditingTableCell(null);
-  }, [document, editingTableCell]);
-
-  const advanceTableCell = useCallback(() => {
-    if (!editingTableCell) return;
-    const obj = findObject(document, editingTableCell.objectId);
-    if (!obj || !isTableObject(obj)) {
-      commitTableCell();
-      return;
-    }
-    const updated = withTableCellText(
-      obj,
-      editingTableCell.row,
-      editingTableCell.col,
-      editingTableCell.text,
-    );
-    if (updated !== obj) {
-      dispatch({
-        type: 'command',
-        command: {
-          type: 'object.update',
-          id: obj.id,
-          table: { cells: updated.cells },
-        },
-      });
-    }
-    let nextCol = editingTableCell.col + 1;
-    let nextRow = editingTableCell.row;
-    if (nextCol >= obj.columns) {
-      nextCol = 0;
-      nextRow += 1;
-    }
-    if (nextRow >= obj.rows) {
-      setEditingTableCell(null);
-      return;
-    }
-    const nextCellText = updated.cells[nextRow * obj.columns + nextCol]?.text ?? '';
-    setEditingTableCell({
-      objectId: obj.id,
-      row: nextRow,
-      col: nextCol,
-      text: nextCellText,
-    });
-  }, [commitTableCell, document, editingTableCell]);
-
-  const handleTableAction = useCallback(
-    (id: string, action: 'add-row' | 'remove-row' | 'add-col' | 'remove-col') => {
-      const obj = findObject(document, id);
-      if (!obj || !isTableObject(obj)) return;
-      const next =
-        action === 'add-row'
-          ? withTableRowAdded(obj)
-          : action === 'remove-row'
-            ? withTableRowRemoved(obj)
-            : action === 'add-col'
-              ? withTableColumnAdded(obj)
-              : withTableColumnRemoved(obj);
-      if (next === obj) return;
-      dispatch({
-        type: 'command',
-        command: {
-          type: 'object.update',
-          id: obj.id,
-          table: {
-            rows: next.rows,
-            columns: next.columns,
-            columnRatios: next.columnRatios,
-            cells: next.cells,
-            width: next.width,
-            height: next.height,
-          },
-        },
-      });
-    },
-    [document],
-  );
-
-function mathSpanAtPoint(
-  object: MathObject,
-  latex: string,
-  point: { x: number; y: number },
-): MathSourceSpan | null {
-  let wx = point.x;
-  let wy = point.y;
-  if (object.rotation !== 0) {
-    const cx = object.x + object.width / 2;
-    const cy = object.y + object.height / 2;
-    const rad = (-object.rotation * Math.PI) / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-    const dx = point.x - cx;
-    const dy = point.y - cy;
-    wx = cx + dx * cos - dy * sin;
-    wy = cy + dx * sin + dy * cos;
-  }
-  const layout = layoutMathExpression(latex, object.fontSize);
-  const availW = Math.max(12, object.width - OBJECT_PADDING * 2);
-  const availH = Math.max(16, object.height - OBJECT_PADDING * 2);
-  const contentScale = Math.min(
-    availW / Math.max(1, layout.width),
-    availH / Math.max(1, layout.height),
-  );
-  const originX = object.x + OBJECT_PADDING + (availW - layout.width * contentScale) / 2;
-  const originY = object.y + OBJECT_PADDING + (availH - layout.height * contentScale) / 2;
-  const localX = (wx - originX) / Math.max(0.01, contentScale);
-  const localY = (wy - originY) / Math.max(0.01, contentScale);
-  return hitTestMathSlot(layout, localX, localY)?.span ?? null;
-}
-
-  const startEditingExisting = useCallback((id: string, point?: { x: number; y: number }) => {
-    const object = findObject(document, id);
-    if (!object) return;
-    if (isTableObject(object)) {
-      const cellPos = (point ? tableCellAtPoint(object, point) : null) ?? { row: 0, col: 0 };
-      const existingText = object.cells[cellPos.row * object.columns + cellPos.col]?.text ?? '';
-      setSelectedObjectIds([id]);
-      setObjectOptionsVisible(false);
-      setStylingObjectId(null);
-      setSheetHeight(0);
-      setEditingTableCell({
-        objectId: id,
-        row: cellPos.row,
-        col: cellPos.col,
-        text: existingText,
-      });
-      return;
-    }
-    if (isMathObject(object)) {
-      const span = point ? mathSpanAtPoint(object, object.latex, point) : null;
-      const slotText = span ? object.latex.slice(span.start, span.end) : object.latex;
-      setSelectedObjectIds([id]);
-      setObjectOptionsVisible(false);
-      setStylingObjectId(null);
-      setSheetHeight(0);
-      setEditingMathInline({ objectId: id, latex: object.latex, span, slotText });
-      return;
-    }
-    // Capability check: only text, sticky notes, tables, and math own editable content.
-    if (!isTextualObject(object)) return;
-    setSelectedObjectIds([id]);
-    setObjectOptionsVisible(false);
-    setStylingObjectId(null);
-    setSheetHeight(0);
-    setEditingState({ object, isNew: false });
-  }, [document, setEditingState]);
-
-  const deleteSelected = useCallback(() => {
-    const ids = selectedObjectIds.filter((id) => findObject(document, id));
-    if (ids.length === 0) return;
-    const commands: DocumentCommand[] = ids.map((id) => ({ type: 'object.delete', id }));
-    dispatch({
-      type: 'commands',
-      commands,
-    });
-    setSelectedObjectIds([]);
-    setStylingObjectId(null);
-  }, [document, selectedObjectIds]);
-
-  /**
-   * Copies every selected object at a fresh id, offset so the copies are
-   * immediately visible. One `commands` action keeps a multi-duplicate as a
-   * single undo step.
-   */
-  const duplicateSelected = useCallback(() => {
-    const originals = selectedObjectIds
-      .map((id) => findObject(document, id))
-      .filter((object): object is CanvasObject => Boolean(object));
-    if (originals.length === 0) return;
-    const stamp = Date.now();
-    const copies = originals.map((object, index) => duplicateObject(
-      object,
-      `${object.type}-${stamp}-${index}-${Math.random().toString(36).slice(2, 7)}`,
-    ));
-    dispatch({
-      type: 'commands',
-      commands: copies.map((object) => ({ type: 'object.insert' as const, object })),
-    });
-    setSelectedObjectIds(copies.map((object) => object.id));
-    setStylingObjectId(null);
-  }, [document, selectedObjectIds]);
-
-  /** Style is available for one selected object at a time, ink excepted. */
-  const toggleStyleSheet = useCallback(() => {
-    if (selectedObjectIds.length !== 1) return;
-    if (tablet) {
-      setInspectorOpen((open) => !open);
-      return;
-    }
-    const id = selectedObjectIds[0];
-    setStylingObjectId((current) => (current === id ? null : id));
-  }, [selectedObjectIds, tablet]);
-
-  const updateObjectStyleById = useCallback((id: string, patch: ObjectStylePatch) => {
-    dispatch({ type: 'command', command: { type: 'object.update', id, ...patch } });
-  }, []);
-
-  const updateStyledObject = useCallback((patch: ObjectStylePatch) => {
-    if (!stylingObjectId) return;
-    dispatch({ type: 'command', command: { type: 'object.update', id: stylingObjectId, ...patch } });
-  }, [stylingObjectId]);
-
-  // A style sheet belongs to the one object it was opened for.
-  useEffect(() => {
-    if (stylingObjectId && (selectedObjectIds.length !== 1 || selectedObjectIds[0] !== stylingObjectId)) {
-      setStylingObjectId(null);
-    }
-  }, [selectedObjectIds, stylingObjectId]);
-  useEffect(() => {
-    if (stylingObjectId && !findObject(document, stylingObjectId)) setStylingObjectId(null);
-  }, [document, stylingObjectId]);
-
-  // The keyboard must never cover the object being edited. Only the viewport
-  // moves; the object keeps its board position.
-  const editingId = editing?.object.id ?? null;
-  const editingObjectHeight = editing?.object.height ?? 0;
-  useEffect(() => {
-    const current = editingRef.current;
-    if (!current || !isSoftwareKeyboardVisible(keyboardHeight) || canvasRect.width === 0) return;
-    const rect = objectScreenRect(current.object, viewportLive.current);
-    const next = keepObjectAboveKeyboard({
-      object: {
-        x: canvasRect.x + rect.x,
-        y: canvasRect.y + rect.y,
-        width: rect.width,
-        height: rect.height,
-      },
-      canvas: canvasRect,
-      viewport: viewportLive.current,
-      // The style sheet sits above the keyboard and covers the canvas too.
-      bottomInset: keyboardOverlap(keyboardHeight, canvasRect, windowHeight) + sheetHeight + spacing.sm,
-    });
-    if (next.x !== viewportLive.current.x || next.y !== viewportLive.current.y) requestViewport(next);
-  }, [editingId, editingObjectHeight, keyboardHeight, sheetHeight, canvasRect, windowHeight, requestViewport]);
-
-  // A selection can vanish through undo, redo, or a delete from elsewhere.
-  useEffect(() => {
-    setSelectedObjectIds((current) => {
-      const next = current.filter((id) => findObject(document, id));
-      return next.length === current.length ? current : next;
-    });
-  }, [document]);
-
-  const isInkingTool =
-    activeTool === 'pen' ||
-    activeTool === 'highlighter' ||
-    activeTool === 'eraser' ||
-    activeTool === 'laser';
-
-  const pressTool = useCallback((tool: InkTool) => {
-    void triggerHapticFeedback('selection', preferences.haptics);
-    if (editingRef.current) commitEditing();
-    setStylingObjectId(null);
-    if (tool !== 'select') setSelectedObjectIds([]);
-    if (tool === 'pen' || tool === 'highlighter' || tool === 'eraser' || tool === 'laser') {
-      setObjectOptionsVisible(false);
-      setShapeOptionsVisible(false);
-      setLastInkingTool(tool);
-      // The phone gets the compact tray under the Draw anchor; the tablet has
-      // no island, so its rail opens the full ink sheet instead (except laser).
-      const retap = activeTool === tool;
       setActiveTool(tool);
-      if (tablet) {
-        setInkTrayOpen(false);
-        if (retap) setInkOptionsVisible((visible) => !visible);
-        else setInkOptionsVisible(true);
-      } else {
-        setInkOptionsVisible(false);
-        if (retap) setInkTrayOpen((open) => !open);
-        else setInkTrayOpen(true);
-      }
-      return;
-    }
-    setInkTrayOpen(false);
-    setInkOptionsVisible(false);
-    if (tool === 'shape' || tool === 'connector') {
-      setObjectOptionsVisible(false);
-      setShapeOptionsVisible((visible) => (activeTool === tool ? !visible : true));
-    } else if (tool === 'text' || tool === 'sticky') {
-      setObjectOptionsVisible((visible) => (activeTool === tool ? !visible : true));
-    } else if (tool === 'image') {
-      setImageFlowId(`${boardId}-${Date.now()}`);
-      setImageFlowOpen(true);
-      return;
-    }
-    setActiveTool(tool);
-  }, [activeTool, boardId, commitEditing, preferences.haptics, tablet]);
+    },
+    [activeTool, boardId, preferences.haptics, selectionEditing, tablet],
+  );
 
   const toggleInking = useCallback(() => {
     void triggerHapticFeedback('selection', preferences.haptics);
-    if (editingRef.current) commitEditing();
-    setStylingObjectId(null);
+    if (selectionEditing.editingRef.current) selectionEditing.commitEditing();
+    selectionEditing.setStylingObjectId(null);
     setSelectedObjectIds([]);
-    setObjectOptionsVisible(false);
-    setShapeOptionsVisible(false);
-    if (activeTool === 'pen' || activeTool === 'highlighter' || activeTool === 'eraser' || activeTool === 'laser') {
+    selectionEditing.setObjectOptionsVisible(false);
+    selectionEditing.setShapeOptionsVisible(false);
+    if (
+      activeTool === 'pen' ||
+      activeTool === 'highlighter' ||
+      activeTool === 'eraser' ||
+      activeTool === 'laser'
+    ) {
       setInkTrayOpen((open) => !open);
     } else {
       setActiveTool(lastInkingTool);
       setInkTrayOpen(true);
     }
-  }, [activeTool, commitEditing, lastInkingTool, preferences.haptics]);
+  }, [activeTool, lastInkingTool, preferences.haptics, selectionEditing]);
 
   const handleSwitchInstrument = useCallback((kind: InstrumentKind) => {
     setActiveInstrument((prev) =>
-      createDefaultInstrument(kind, {
-        x: prev?.x ?? 0,
-        y: prev?.y ?? 0,
-      }),
+      createDefaultInstrument(kind, { x: prev?.x ?? 0, y: prev?.y ?? 0 }),
     );
   }, []);
 
@@ -1783,685 +557,50 @@ function mathSpanAtPoint(
     setActiveInstrument(null);
   }, []);
 
-  const commitInlineMath = useCallback(() => {
-    if (!editingMathInline) return;
-    const trimmed = editingMathInline.latex.trim();
-    if (trimmed.length === 0) {
-      dispatch({ type: 'command', command: { type: 'object.delete', id: editingMathInline.objectId } });
-    } else {
-      dispatch({ type: 'commit' });
-    }
-    setEditingMathInline(null);
-  }, [editingMathInline]);
-
-  const handleCanvasTouch = useCallback((point?: { x: number; y: number }) => {
-    if (editingMathInline && point) {
-      const mathObj = findObject(document, editingMathInline.objectId);
-      if (mathObj && isMathObject(mathObj)) {
-        const margin = 12;
-        const inside =
-          point.x >= mathObj.x - margin &&
-          point.x <= mathObj.x + mathObj.width + margin &&
-          point.y >= mathObj.y - margin &&
-          point.y <= mathObj.y + mathObj.height + margin;
-        if (inside) {
-          const nextSpan = mathSpanAtPoint(mathObj, editingMathInline.latex, point);
-          if (nextSpan) {
-            setEditingMathInline({
-              ...editingMathInline,
-              span: nextSpan,
-              slotText: editingMathInline.latex.slice(nextSpan.start, nextSpan.end),
-            });
-            mathInlineInputRef.current?.focus();
-            return;
-          }
-        }
-      }
-    }
-    commitEditing();
-    commitTableCell();
-    commitInlineMath();
-  }, [commitEditing, commitInlineMath, commitTableCell, document, editingMathInline]);
-
-  const refreshSavedLessons = useCallback(async () => {
-    const list = await listSavedLessons();
-    setSavedLessons(list);
-  }, []);
-
-  useEffect(() => {
-    if (recorderBarVisible || savedLessonsVisible) {
-      void refreshSavedLessons();
-    }
-  }, [recorderBarVisible, refreshSavedLessons, savedLessonsVisible]);
-
-  // Capture any document mutation (ink, shapes, math, tables, undo/redo) while recording.
-  useEffect(() => {
-    const session = recorderSessionRef.current;
-    const pageId = activePageIdRef.current;
-    if (!session || session.status !== 'recording' || !pageId) return;
-    recorderSessionRef.current = recordDocumentChange(session, pageId, document, Date.now());
-  }, [document]);
-
-  // Countdown timer -> starts recording & native capture when it reaches 0.
-  useEffect(() => {
-    if (recorderStatus !== 'countdown') return;
-    if (recorderCountdown <= 0) {
-      const session = recorderSessionRef.current;
-      if (!session) return;
-      const started = startRecording(session, Date.now());
-      recorderSessionRef.current = started;
-      setRecorderStatus('recording');
-      setRecorderElapsedMs(0);
-      const hasCanvasRect = canvasRect.width > 0 && canvasRect.height > 0;
-      const aspect = hasCanvasRect
-        ? canvasRect.width / canvasRect.height
-        : 16 / 9;
-      void startNativeCapture({
-        quality: started.quality,
-        includeMic: started.includeMic,
-        aspectRatio: aspect,
-        cropRect: hasCanvasRect ? canvasRect : undefined,
-      });
-      return;
-    }
-    const timer = setTimeout(() => {
-      setRecorderCountdown((c) => c - 1);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [canvasRect, recorderCountdown, recorderStatus]);
-
-  // Update MM:SS elapsed display while recording.
-  useEffect(() => {
-    if (recorderStatus !== 'recording') return;
-    const id = setInterval(() => {
-      const session = recorderSessionRef.current;
-      if (session) setRecorderElapsedMs(getElapsedMs(session, Date.now()));
-    }, 250);
-    return () => clearInterval(id);
-  }, [recorderStatus]);
-
-  const handleStartRecording = useCallback(async () => {
-    if (!boardId) return;
-    if (recorderMic) {
-      await requestMicrophonePermission();
-    }
-    const initialPages =
-      pages.length > 0
-        ? pages.map((p) => ({
-            id: p.id,
-            title: p.name,
-            document: p.id === activePageIdRef.current ? document : p.document,
-            viewport: p.id === activePageIdRef.current ? viewportLive.current : (p.viewport ?? INITIAL_VIEWPORT),
-          }))
-        : [
-            {
-              id: activePageIdRef.current ?? 'page-1',
-              title: 'Page 1',
-              document,
-              viewport: viewportLive.current,
-            },
-          ];
-
-    const session = createRecorderSession({
-      id: `lesson-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      boardId,
-      title: title.trim() || 'Whiteboard Lesson',
-      quality: recorderQuality,
-      includeMic: recorderMic,
-      initialPageId: activePageIdRef.current ?? initialPages[0].id,
-      pages: initialPages,
-    });
-    recorderSessionRef.current = beginCountdown(session, 3);
-    setRecorderCountdown(3);
-    setRecorderElapsedMs(0);
-    setRecorderStatus('countdown');
-  }, [boardId, document, pages, recorderMic, recorderQuality, title]);
-
-  const handleCancelCountdown = useCallback(() => {
-    recorderSessionRef.current = null;
-    setRecorderStatus('idle');
-    setRecorderCountdown(3);
-  }, []);
-
-  const handlePauseResumeRecording = useCallback(() => {
-    const session = recorderSessionRef.current;
-    if (!session) return;
-    if (session.status === 'recording') {
-      const paused = pauseRecording(session, Date.now());
-      recorderSessionRef.current = paused;
-      setRecorderStatus('paused');
-      setRecorderElapsedMs(getElapsedMs(paused, Date.now()));
-      void pauseNativeCapture();
-    } else if (session.status === 'paused') {
-      const resumed = resumeRecording(session, Date.now());
-      recorderSessionRef.current = resumed;
-      setRecorderStatus('recording');
-      void resumeNativeCapture();
-    }
-  }, []);
-
-  const handleStopRecording = useCallback(async () => {
-    const session = recorderSessionRef.current;
-    if (!session) return;
-    const stopping = stopRecordingBegin(session, Date.now());
-    recorderSessionRef.current = stopping;
-    setRecorderStatus('stopping');
-    const nativeResult = await stopNativeCapture();
-    const { pkg } = completeRecording(stopping, Date.now(), {
-      videoUri: nativeResult.videoUri,
-      audioUri: nativeResult.audioUri,
-    });
-    recorderSessionRef.current = null;
-    setRecorderStatus('idle');
-    setRecorderElapsedMs(0);
-    await clearRecoveryCheckpoint();
-    setReplayLesson(pkg);
-    setReplayAlreadySaved(false);
-    setReplayNotice(
-      nativeResult.videoUri
-        ? 'Recorded MP4 video + 60 FPS FlowCanvas replay.'
-        : nativeResult.audioUri
-          ? 'Recorded voice audio + 60 FPS FlowCanvas replay.'
-          : 'Recorded as an interactive 60 FPS FlowCanvas replay (.flowlesson.json).',
-    );
-  }, []);
-
-  const handleSaveReplayLesson = useCallback(
-    async (lesson: LessonRecordingPackage) => {
-      if (lesson.videoUri) {
-        const galleryResult = await saveVideoToGallery(lesson.videoUri);
-        if (galleryResult.saved) {
-          setReplayAlreadySaved(true);
-          setReplayNotice('Video saved to your device Gallery.');
-          return;
-        }
-        setReplayNotice(galleryResult.message ?? 'Could not save video to Gallery.');
-        return;
-      }
-      await saveLessonPackage(lesson);
-      setReplayAlreadySaved(true);
-      setReplayNotice('Saved to your in-app Saved Lessons library.');
-      void refreshSavedLessons();
-    },
-    [refreshSavedLessons],
-  );
-
-  const handleShareReplayLesson = useCallback(async (lesson: LessonRecordingPackage) => {
-    let uriToShare = lesson.videoUri;
-    let mimeType = 'video/mp4';
-    if (!uriToShare) {
-      const saved = await saveLessonPackage(lesson);
-      uriToShare = saved.lessonUri;
-      mimeType = 'application/json';
-      setReplayAlreadySaved(true);
-      void refreshSavedLessons();
-    }
-    const result = await shareFile({
-      uri: uriToShare,
-      mimeType,
-      dialogTitle: `Share ${lesson.title}`,
-    });
-    if (result.outcome === 'unavailable') {
-      setReplayNotice('System share sheet is unavailable on this device.');
-    } else if (result.outcome === 'failed') {
-      setReplayNotice(result.message ?? 'Could not open the share sheet.');
-    } else if (result.outcome === 'shared') {
-      setReplayNotice('Lesson shared.');
-    }
-  }, [refreshSavedLessons]);
-
-  const handlePlaySavedLesson = useCallback(async (item: SavedLessonSummary) => {
-    const pkg = await loadLessonPackage(item.lessonUri);
-    if (!pkg) return;
-    setSavedLessonsVisible(false);
-    setReplayLesson(pkg);
-    setReplayAlreadySaved(true);
-    setReplayNotice(null);
-  }, []);
-
-  const handleShareSavedLesson = useCallback(async (item: SavedLessonSummary) => {
-    await shareFile({
-      uri: item.videoUri ?? item.lessonUri,
-      mimeType: item.videoUri ? 'video/mp4' : 'application/json',
-      dialogTitle: `Share ${item.title}`,
-    });
-  }, []);
-
-  const handleDeleteSavedLesson = useCallback(
-    async (item: SavedLessonSummary) => {
-      await deleteSavedLesson(item);
-      void refreshSavedLessons();
-    },
-    [refreshSavedLessons],
-  );
-
-  const activePageIndex = useMemo(() => {
-    if (!activePageId || pages.length === 0) return 0;
-    const found = pages.findIndex((page) => page.id === activePageId);
-    return found >= 0 ? found : 0;
-  }, [activePageId, pages]);
-
-  const switchToPage = useCallback(
-    (targetPageId: string, overridePages?: readonly BoardPageRecord[]) => {
-      const sourcePages = overridePages ?? pages;
-      if (targetPageId === activePageIdRef.current) return;
-      const target = sourcePages.find((p) => p.id === targetPageId);
-      if (!target) return;
-
-      commitEditing();
-      flushPendingSaves();
-
-      const outgoingId = activePageIdRef.current;
-      const outgoingDoc = documentRef.current;
-      const outgoingViewport = viewportLive.current;
-
-      setPages((prev) =>
-        (overridePages ? [...overridePages] : prev).map((p) =>
-          p.id === outgoingId
-            ? { ...p, document: outgoingDoc, viewport: outgoingViewport }
-            : p,
-        ),
-      );
-
-      activePageIdRef.current = target.id;
-      setActivePageId(target.id);
-      setSelectedObjectIds([]);
-      setSelectedInkIds([]);
-      dispatch({ type: 'hydrate', document: target.document });
-      lastSavedDocument.current = target.document;
-      const nextViewport = target.viewport ?? INITIAL_VIEWPORT;
-      if (recorderSessionRef.current?.status === 'recording') {
-        const targetIndex = sourcePages.findIndex((p) => p.id === target.id);
-        recorderSessionRef.current = recordPageSwitch(
-          recorderSessionRef.current,
-          target.id,
-          targetIndex >= 0 ? targetIndex : 0,
-          target.document,
-          nextViewport,
-          Date.now(),
-        );
-      }
-      viewportLive.current = nextViewport;
-      savedViewport.current = nextViewport;
-      setInitialViewport(nextViewport);
-      setViewport(nextViewport);
-      const liveState = classroomSessionRef.current?.getState();
-      if (liveState?.active && liveState.role === 'teacher') {
-        void classroomSessionRef.current?.broadcastPageSwitch({
-          pageId: target.id,
-          pageName: target.name,
-          pageOrderIndex: target.orderIndex,
-          boardSettings: board?.settings ?? DEFAULT_BOARD_SETTINGS,
-          document: target.document,
-          viewport: nextViewport,
-        });
-      }
-    },
-    [board?.settings, commitEditing, flushPendingSaves, pages],
-  );
-
-  const handlePrevPage = useCallback(() => {
-    if (activePageIndex <= 0) return;
-    const target = pages[activePageIndex - 1];
-    if (target) switchToPage(target.id);
-  }, [activePageIndex, pages, switchToPage]);
-
-  const handleNextPage = useCallback(() => {
-    if (activePageIndex >= pages.length - 1) return;
-    const target = pages[activePageIndex + 1];
-    if (target) switchToPage(target.id);
-  }, [activePageIndex, pages, switchToPage]);
-
-  const handleAddPage = useCallback(async () => {
-    if (!boardId) return;
-    commitEditing();
-    flushPendingSaves();
-    try {
-      const database = await getLocalDatabase();
-      const created = await createPage(database, boardId, {
-        insertAtIndex: activePageIndex + 1,
-      });
-      const updatedPages = await listBoardPages(database, boardId);
-      setPages(updatedPages);
-      switchToPage(created.id, updatedPages);
-    } catch (error) {
-      setStorageError(storageErrorMessage(error));
-    }
-  }, [activePageIndex, boardId, commitEditing, flushPendingSaves, switchToPage]);
-
-  const handleDuplicatePage = useCallback(
-    async (pageId: string) => {
-      if (!boardId) return;
-      commitEditing();
-      flushPendingSaves();
-      try {
-        const database = await getLocalDatabase();
-        const created = await duplicatePage(database, boardId, pageId);
-        const updatedPages = await listBoardPages(database, boardId);
-        setPages(updatedPages);
-        switchToPage(created.id, updatedPages);
-      } catch (error) {
-        setStorageError(storageErrorMessage(error));
-      }
-    },
-    [boardId, commitEditing, flushPendingSaves, switchToPage],
-  );
-
-  const handleRenamePage = useCallback(
-    async (pageId: string, name: string) => {
-      if (!boardId) return;
-      try {
-        const database = await getLocalDatabase();
-        await renamePage(database, boardId, pageId, name);
-        setPages((prev) =>
-          prev.map((p) => (p.id === pageId ? { ...p, name: name.trim() || 'Page' } : p)),
-        );
-      } catch (error) {
-        setStorageError(storageErrorMessage(error));
-      }
-    },
-    [boardId],
-  );
-
-  const handleMovePage = useCallback(
-    async (pageId: string, direction: -1 | 1) => {
-      if (!boardId) return;
-      const index = pages.findIndex((p) => p.id === pageId);
-      const targetIndex = index + direction;
-      if (index < 0 || targetIndex < 0 || targetIndex >= pages.length) return;
-      const nextOrder = [...pages];
-      const [moved] = nextOrder.splice(index, 1);
-      nextOrder.splice(targetIndex, 0, moved);
-      const reindexed = nextOrder.map((p, idx) => ({ ...p, orderIndex: idx }));
-      setPages(reindexed);
-      try {
-        const database = await getLocalDatabase();
-        await reorderPages(
-          database,
-          boardId,
-          reindexed.map((p) => p.id),
-        );
-      } catch (error) {
-        setStorageError(storageErrorMessage(error));
-      }
-    },
-    [boardId, pages],
-  );
-
-  const handleDeletePage = useCallback(
-    async (pageId: string) => {
-      if (!boardId || pages.length <= 1) return;
-      commitEditing();
-      flushPendingSaves();
-      try {
-        const database = await getLocalDatabase();
-        const result = await deletePage(database, boardId, pageId);
-        setPages(result.remainingPages);
-        if (activePageIdRef.current === pageId && result.remainingPages.length > 0) {
-          switchToPage(result.remainingPages[0].id, result.remainingPages);
-        }
-      } catch (error) {
-        setStorageError(storageErrorMessage(error));
-      }
-    },
-    [boardId, commitEditing, flushPendingSaves, pages.length, switchToPage],
-  );
-
-  const handleImportedPdfPages = useCallback(
-    async (createdPages: BoardPageRecord[]) => {
-      if (!boardId || createdPages.length === 0) return;
-      try {
-        const database = await getLocalDatabase();
-        const updatedPages = await listBoardPages(database, boardId);
-        setPages(updatedPages);
-        switchToPage(createdPages[0].id, updatedPages);
-      } catch (error) {
-        setStorageError(storageErrorMessage(error));
-      }
-    },
-    [boardId, switchToPage],
-  );
-
-  const activeBackgroundPdfObject = useMemo(() => {
-    const activePage = pages[activePageIndex];
-    return (
-      document.objects.find(
-        (obj): obj is ImageObject =>
-          obj.type === 'image' &&
-          (obj.id.startsWith('pdf-bg-') ||
-            (Boolean(activePage?.backgroundAssetId) && obj.assetId === activePage?.backgroundAssetId)),
-      ) ?? null
-    );
-  }, [activePageIndex, document.objects, pages]);
-
-  const handleToggleBackgroundLock = useCallback(() => {
-    if (!activeBackgroundPdfObject) return;
-    const nextLocked = !activeBackgroundPdfObject.locked;
-    dispatch({
-      type: 'command',
-      command: {
-        type: 'object.update',
-        id: activeBackgroundPdfObject.id,
-        locked: nextLocked,
-      },
-    });
-    if (nextLocked) {
-      setSelectedObjectIds((prev) => prev.filter((id) => id !== activeBackgroundPdfObject.id));
-    } else {
-      setActiveTool('select');
-      setSelectedObjectIds([activeBackgroundPdfObject.id]);
-    }
-  }, [activeBackgroundPdfObject]);
-
-  const exportPages = useMemo(() => {
-    const currentId = activePageIdRef.current;
-    return pages.map((page) =>
-      page.id === currentId
-        ? {
-            id: page.id,
-            name: page.name,
-            orderIndex: page.orderIndex,
-            document,
-            viewport,
-            backgroundAssetId: page.backgroundAssetId,
-          }
-        : {
-            id: page.id,
-            name: page.name,
-            orderIndex: page.orderIndex,
-            document: page.document,
-            viewport: page.viewport,
-            backgroundAssetId: page.backgroundAssetId,
-          },
-    );
-  }, [document, pages, viewport]);
-
   const selectInkTool = useCallback((tool: FreehandTool) => {
     setActiveTool(tool);
     setInkOptionsVisible(true);
   }, []);
 
-  const handleSnapStrokeToShape = useCallback(
-    (stroke: InkStroke, shape: ShapeObject | ConnectorObject) => {
-      void triggerHapticFeedback('impact', preferences.haptics);
-      dispatch({ type: 'command', command: { type: 'ink.add', stroke } });
-      dispatch({
-        type: 'commands',
-        commands: [
-          { type: 'ink.delete', id: stroke.id },
-          { type: 'object.insert', object: shape },
-        ],
-      });
-      setSelectedObjectIds([shape.id]);
-    },
-    [preferences.haptics],
-  );
-
-  const handleSubmitMath = useCallback(
-    (latex: string) => {
-      if (editingMathObject) {
-        if (latex !== editingMathObject.latex) {
-          dispatch({
-            type: 'command',
-            command: { type: 'object.update', id: editingMathObject.id, latex },
-          });
-        }
-        setMathSheetVisible(false);
-        setEditingMathObject(null);
-        return;
-      }
-      const center = screenToCanvas(
-        {
-          x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
-          y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
-        },
-        viewport,
-      );
-      const mathObj = createMathObject({
-        id: `math-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        point: center,
-        latex,
-        colorKey: textColorKey,
-      });
-      dispatch({ type: 'command', command: { type: 'object.insert', object: mathObj } });
-      setSelectedObjectIds([mathObj.id]);
-      setActiveTool('select');
-      setMathSheetVisible(false);
-    },
-    [canvasRect.height, canvasRect.width, editingMathObject, textColorKey, viewport, width, windowHeight],
-  );
-
-  const runInkOcr = useCallback(async (uri: string) => {
-    try {
-      const result = await recognizeImageText(uri);
-      setInkOcrSession((prev) =>
-        prev && prev.uri === uri ? { ...prev, state: ocrReviewStateFromResult(result) } : prev,
-      );
-    } catch (error) {
-      setInkOcrSession((prev) =>
-        prev && prev.uri === uri ? { ...prev, state: ocrReviewStateFromError(error) } : prev,
-      );
-    }
-  }, []);
-
-  const handleConvertInkToText = useCallback(async () => {
-    const targetStrokes = document.strokes.filter((s) => selectedInkIds.includes(s.id));
-    if (targetStrokes.length === 0) return;
-    const rendered = await renderInkStrokesToTempPng(targetStrokes);
-    if (!rendered) return;
-    setInkOcrSession({
-      uri: rendered.uri,
-      bounds: rendered.bounds,
-      strokeIds: targetStrokes.map((s) => s.id),
-      state: loadingOcrState(),
-    });
-    void runInkOcr(rendered.uri);
-  }, [document.strokes, runInkOcr, selectedInkIds]);
-
-  const handleCloseInkOcr = useCallback(() => {
-    setInkOcrSession((prev) => {
-      if (prev) void deleteExportFile(prev.uri);
-      return null;
-    });
-  }, []);
-
-  const handleCommitInkOcrText = useCallback(() => {
-    if (!inkOcrSession) return;
-    const text = inkOcrSession.state.text.trim();
-    if (!text) return;
-    const targetStrokes = document.strokes.filter((s) =>
-      inkOcrSession.strokeIds.includes(s.id),
-    );
-    const created = createTextObject({
-      id: `text-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      point: {
-        x: inkOcrSession.bounds.x + inkOcrSession.bounds.width / 2,
-        y: inkOcrSession.bounds.y + inkOcrSession.bounds.height / 2,
-      },
-      colorKey: textColorKey,
-      fontSize: textSize,
-    });
-    const textObj = withObjectText(
-      {
-        ...created,
-        x: Math.round(inkOcrSession.bounds.x),
-        y: Math.round(inkOcrSession.bounds.y),
-        width: Math.max(120, Math.round(inkOcrSession.bounds.width)),
-      },
-      text,
-    );
-    const commands: DocumentCommand[] = [
-      ...targetStrokes.map((stroke): DocumentCommand => ({ type: 'ink.delete', id: stroke.id })),
-      { type: 'object.insert', object: textObj },
-    ];
-    dispatch({
-      type: 'commands',
-      commands,
-    });
-    setSelectedInkIds([]);
-    setSelectedObjectIds([textObj.id]);
-    handleCloseInkOcr();
-  }, [document.strokes, handleCloseInkOcr, inkOcrSession, textColorKey, textSize]);
-
-  /** An open edit is committed first; it is not the thing undo should remove. */
   const undo = useCallback(() => {
     void triggerHapticFeedback('selection', preferences.haptics);
-    if (editingRef.current) {
-      commitEditing();
+    if (selectionEditing.editingRef.current) {
+      selectionEditing.commitEditing();
       return;
     }
     dispatch({ type: 'undo' });
-  }, [commitEditing, preferences.haptics]);
+  }, [preferences.haptics, selectionEditing]);
+
   const redo = useCallback(() => {
     void triggerHapticFeedback('selection', preferences.haptics);
-    if (editingRef.current) {
-      commitEditing();
+    if (selectionEditing.editingRef.current) {
+      selectionEditing.commitEditing();
       return;
     }
     dispatch({ type: 'redo' });
-  }, [commitEditing, preferences.haptics]);
+  }, [preferences.haptics, selectionEditing]);
 
-  const sheetTool: InkSheetTool =
-    activeTool === 'eraser'
-      ? 'eraser'
-      : activeTool === 'highlighter'
-        ? 'highlighter'
-        : activeTool === 'laser'
-          ? 'laser'
-          : 'pen';
-  const islandBottom = layout.islandBottom;
-  const optionsBottom = layout.optionsBottom;
-  const showGuidance = !documentHasContent(document) && !editing;
-  const editingTextObject = editing && isTextualObject(editing.object) ? editing.object : null;
-  const overlayRect = editingTextObject ? objectScreenRect(editingTextObject, viewport) : null;
-  const overlayFill = editingTextObject ? objectFill(editingTextObject) : undefined;
-  const overlayTextColor = editingTextObject ? objectTextColor(editingTextObject, dark) : theme.foreground;
-  const overlayLineHeight = editingTextObject ? textLineHeight(editingTextObject.fontSize) : 0;
   const isCanvasReadOnly = Boolean(
-    Boolean(showcasedName) ||
-      (classroomState?.active &&
-        classroomState.role === 'student' &&
-        !isScratchpadMode &&
+    Boolean(liveClass.showcasedName) ||
+      (liveClass.classroomState?.active &&
+        liveClass.classroomState.role === 'student' &&
+        !liveClass.isScratchpadMode &&
         (isProjectorMode ||
-          classroomState.myPermission !== 'can-draw' ||
-          classroomState.roomInfo?.isLocked)),
+          liveClass.classroomState.myPermission !== 'can-draw' ||
+          liveClass.classroomState.roomInfo?.isLocked)),
   );
 
-  const {
-    quickBranchTarget,
-    canTidySelection,
-    handleQuickBranch,
-    handleTidyLayout,
-  } = useMagneticMindMap({
-    document,
-    selectedObjects,
-    editing: Boolean(editing),
-    isReadOnly: isCanvasReadOnly,
-    connectorColorKey,
-    dispatchCommand: runCommand,
-    dispatchBatchCommands: runBatchCommands,
-    setSelectedIds: setSelectedObjectIds,
-  });
+  const { quickBranchTarget, canTidySelection, handleQuickBranch, handleTidyLayout } =
+    useMagneticMindMap({
+      document,
+      selectedObjects,
+      editing: Boolean(selectionEditing.editing),
+      isReadOnly: isCanvasReadOnly,
+      connectorColorKey: selectionEditing.connectorColorKey,
+      dispatchCommand: runCommand,
+      dispatchBatchCommands: runBatchCommands,
+      setSelectedIds: setSelectedObjectIds,
+    });
 
   const {
     plottableMath,
@@ -2481,16 +620,6 @@ function mathSpanAtPoint(
     commitPending,
     setSelectedIds: setSelectedObjectIds,
   });
-
-  const getViewportCenterPoint = useCallback(() => {
-    return screenToCanvas(
-      {
-        x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
-        y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
-      },
-      viewport,
-    );
-  }, [canvasRect.height, canvasRect.width, viewport, width, windowHeight]);
 
   const {
     stageOverlayVisible,
@@ -2553,8 +682,8 @@ function mathSpanAtPoint(
     handleClearPoll,
     handleInsertChartOnBoard: handleInsertPollChartOnBoard,
   } = useClassroomPoll({
-    classroomSession: classroomSessionRef.current,
-    classroomState,
+    classroomSession: liveClass.classroomSessionRef.current,
+    classroomState: liveClass.classroomState,
     getViewportCenterPoint,
     dispatchCommand: runCommand,
     setSelectedIds: setSelectedObjectIds,
@@ -2568,92 +697,101 @@ function mathSpanAtPoint(
     [handleInsertRevealTapeAt],
   );
 
-  const handleSelectInsert = useCallback((request: InsertToolRequest) => {
-    if (request.type === 'sticky') {
-      if (request.colorKey) setStickyColorKey(request.colorKey);
-      pressTool('sticky');
-    } else if (request.type === 'text') {
-      if (request.colorKey) setTextColorKey(request.colorKey);
-      pressTool('text');
-    } else if (request.type === 'shape') {
-      setShapeKind(request.shape);
-      pressTool('shape');
-    } else if (request.type === 'connector') {
-      setConnectorStyle(request.style);
-      pressTool('connector');
-    } else if (request.type === 'table') {
-      const center = getViewportCenterPoint();
-      const table = createTableObject({
-        id: `table-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        point: center,
-        rows: request.rows,
-        columns: request.columns,
-      });
-      dispatch({ type: 'command', command: { type: 'object.insert', object: table } });
-      setSelectedObjectIds([table.id]);
-      setActiveTool('select');
-    } else if (request.type === 'geometry') {
-      const center = getViewportCenterPoint();
-      setActiveInstrument(createDefaultInstrument(request.instrument, center));
-      if (activeTool === 'select') {
-        setActiveTool('pen');
+  const handleSelectInsert = useCallback(
+    (request: InsertToolRequest) => {
+      if (request.type === 'sticky') {
+        if (request.colorKey) selectionEditing.setStickyColorKey(request.colorKey);
+        pressTool('sticky');
+      } else if (request.type === 'text') {
+        if (request.colorKey) selectionEditing.setTextColorKey(request.colorKey);
+        pressTool('text');
+      } else if (request.type === 'shape') {
+        selectionEditing.setShapeKind(request.shape);
+        pressTool('shape');
+      } else if (request.type === 'connector') {
+        selectionEditing.setConnectorStyle(request.style);
+        pressTool('connector');
+      } else if (request.type === 'table') {
+        const center = getViewportCenterPoint();
+        const table = createTableObject({
+          id: `table-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          point: center,
+          rows: request.rows,
+          columns: request.columns,
+        });
+        dispatch({ type: 'command', command: { type: 'object.insert', object: table } });
+        setSelectedObjectIds([table.id]);
+        setActiveTool('select');
+      } else if (request.type === 'geometry') {
+        const center = getViewportCenterPoint();
+        setActiveInstrument(createDefaultInstrument(request.instrument, center));
+        if (activeTool === 'select') setActiveTool('pen');
+      } else if (request.type === 'math') {
+        ocrAndMath.setEditingMathObject(null);
+        ocrAndMath.setMathSheetVisible(true);
+      } else if (request.type === 'image') {
+        if (!boardId) return;
+        setImageFlowId(`${boardId}-${Date.now()}`);
+        setImageFlowOpen(true);
+      } else if (request.type === 'pdf') {
+        if (!boardId) return;
+        setPdfImportVisible(true);
+      } else if (request.type === 'timer') {
+        setTimerVisible(true);
+      } else if (request.type === 'calculator') {
+        setCalculatorVisible(true);
+      } else if (request.type === 'facecam') {
+        setFaceCamVisible((prev) => !prev);
+      } else if (request.type === 'recorder') {
+        recorder.setRecorderBarVisible(true);
+      } else if (request.type === 'saved-lessons') {
+        recorder.setSavedLessonsVisible(true);
+      } else if (request.type === 'reveal-tape') {
+        pressTool('reveal-tape');
+      } else if (request.type === 'voice-pin') {
+        void handleStartVoicePinAt();
+      } else if (request.type === 'curtain') {
+        handleOpenStageOverlay('curtain');
+      } else if (request.type === 'spotlight') {
+        handleOpenStageOverlay('spotlight');
+      } else if (request.type === 'flashcards') {
+        setFlashcardsVisible(true);
       }
-    } else if (request.type === 'math') {
-      setEditingMathObject(null);
-      setMathSheetVisible(true);
-    } else if (request.type === 'image') {
-      if (!boardId) return;
-      setImageFlowId(`${boardId}-${Date.now()}`);
-      setImageFlowOpen(true);
-    } else if (request.type === 'pdf') {
-      if (!boardId) return;
-      setPdfImportVisible(true);
-    } else if (request.type === 'timer') {
-      setTimerVisible(true);
-    } else if (request.type === 'calculator') {
-      setCalculatorVisible(true);
-    } else if (request.type === 'facecam') {
-      setFaceCamVisible((prev) => !prev);
-    } else if (request.type === 'recorder') {
-      setRecorderBarVisible(true);
-    } else if (request.type === 'saved-lessons') {
-      setSavedLessonsVisible(true);
-    } else if (request.type === 'reveal-tape') {
-      pressTool('reveal-tape');
-    } else if (request.type === 'voice-pin') {
-      void handleStartVoicePinAt();
-    } else if (request.type === 'curtain') {
-      handleOpenStageOverlay('curtain');
-    } else if (request.type === 'spotlight') {
-      handleOpenStageOverlay('spotlight');
-    } else if (request.type === 'flashcards') {
-      setFlashcardsVisible(true);
-    }
-  }, [
-    activeTool,
-    boardId,
-    getViewportCenterPoint,
-    handleOpenStageOverlay,
-    handleStartVoicePinAt,
-    pressTool,
-  ]);
+    },
+    [
+      activeTool,
+      boardId,
+      getViewportCenterPoint,
+      handleOpenStageOverlay,
+      handleStartVoicePinAt,
+      ocrAndMath,
+      pressTool,
+      recorder,
+      selectionEditing,
+    ],
+  );
 
-  const selectedBounds = selectionBounds(selectedObjects);
-  const selectedRect = selectedBounds && !editing ? canvasRectToScreen(selectedBounds, viewport) : null;
-  // Only text and sticky notes have editable text. Shapes and connectors
-  // expose duplicate, style, and delete, so the Edit action is capability-driven.
+  // Derived selection metrics
+  const selectedBounds = useMemo(() => selectionBounds(selectedObjects), [selectedObjects]);
+  const selectedRect = useMemo(
+    () =>
+      selectedBounds && !selectionEditing.editing
+        ? canvasRectToScreen(selectedBounds, viewport)
+        : null,
+    [selectedBounds, selectionEditing.editing, viewport],
+  );
   const selectedIsTextual = selectedObject ? isTextualObject(selectedObject) : false;
   const selectedIsMath = selectedObject ? isMathObject(selectedObject) : false;
   const selectedIsImage = selectedObject?.type === 'image';
   const selectedIsTable = selectedObject?.type === 'table';
   const selectedIsStemDiagram =
     selectedObject?.type === 'function-plot' || selectedObject?.type === 'chart';
-  // The rail is vertical and sits beside the selection, so it never covers the
-  // rotate handle above the selection. Its action count decides its height.
-  const selectionActionCount = selectedObjects.length === 0
-    ? 0
-    : selectedObject
-      ? (selectedIsTextual
+
+  const selectionActionCount =
+    selectedObjects.length === 0
+      ? 0
+      : selectedObject
+        ? selectedIsTextual
           ? 4
           : selectedIsMath
             ? plottableMath
@@ -2663,19 +801,22 @@ function mathSpanAtPoint(
               ? 4
               : selectedIsImage || selectedIsStemDiagram
                 ? 2
-                : 3)
-      : canTidySelection
-        ? 5
-        : 2;
+                : 3
+        : canTidySelection
+          ? 5
+          : 2;
+
   const canvasBorder = 1;
-  const rawActionRail = selectedRect && !editing && canvasRect.width > 0
-    ? selectionActionRail(
-      selectedRect,
-      selectionActionCount,
-      canvasRect.width - canvasBorder * 2,
-      canvasRect.height - canvasBorder * 2,
-    )
-    : null;
+  const rawActionRail =
+    selectedRect && !selectionEditing.editing && canvasRect.width > 0
+      ? selectionActionRail(
+          selectedRect,
+          selectionActionCount,
+          canvasRect.width - canvasBorder * 2,
+          canvasRect.height - canvasBorder * 2,
+        )
+      : null;
+
   const actionRail = useMemo(() => {
     if (!rawActionRail || !selectedRect) return rawActionRail;
     const isRotatedSideways =
@@ -2695,153 +836,207 @@ function mathSpanAtPoint(
           : rawActionRail.y;
     return { ...rawActionRail, y: nextY };
   }, [canvasRect.height, rawActionRail, selectedObject, selectedRect]);
-  const selectionLabel = selectedObjects.length === 1
-    ? `${selectedObjects[0].type} selected`
-    : `${selectedObjects.length} objects selected`;
-  const stylingObject = stylingObjectId ? findObject(document, stylingObjectId) : null;
-  const stylingTextObject = stylingObject && isTextualObject(stylingObject) ? stylingObject : null;
-  const stylingGeometricObject = stylingObject && (stylingObject.type === 'shape' || stylingObject.type === 'connector') ? stylingObject : null;
+
+  const selectionLabel =
+    selectedObjects.length === 1
+      ? `${selectedObjects[0].type} selected`
+      : `${selectedObjects.length} objects selected`;
+
+  const stylingObject = selectionEditing.stylingObjectId
+    ? findObject(document, selectionEditing.stylingObjectId)
+    : null;
+  const stylingTextObject =
+    stylingObject && isTextualObject(stylingObject) ? stylingObject : null;
+  const stylingGeometricObject =
+    stylingObject && (stylingObject.type === 'shape' || stylingObject.type === 'connector')
+      ? stylingObject
+      : null;
+
+  const sheetTool: InkSheetTool =
+    activeTool === 'eraser'
+      ? 'eraser'
+      : activeTool === 'highlighter'
+        ? 'highlighter'
+        : activeTool === 'laser'
+          ? 'laser'
+          : 'pen';
+  const isInkingTool =
+    activeTool === 'pen' ||
+    activeTool === 'highlighter' ||
+    activeTool === 'eraser' ||
+    activeTool === 'laser';
+  const islandBottom = layout.islandBottom;
+  const optionsBottom = layout.optionsBottom;
+  const showGuidance = !documentHasContent(document) && !selectionEditing.editing;
+
+  const editingTextObject =
+    selectionEditing.editing && isTextualObject(selectionEditing.editing.object)
+      ? selectionEditing.editing.object
+      : null;
+  const overlayRect = editingTextObject ? objectScreenRect(editingTextObject, viewport) : null;
+  const overlayFill = editingTextObject ? objectFill(editingTextObject) : undefined;
+  const overlayTextColor = editingTextObject
+    ? objectTextColor(editingTextObject, dark)
+    : theme.foreground;
+  const overlayLineHeight = editingTextObject ? textLineHeight(editingTextObject.fontSize) : 0;
+
+  const editingMathSpan = useMemo(
+    () =>
+      ocrAndMath.editingMathInline?.span
+        ? {
+            objectId: ocrAndMath.editingMathInline.objectId,
+            span: ocrAndMath.editingMathInline.span,
+          }
+        : null,
+    [ocrAndMath.editingMathInline],
+  );
+
+  // Stable UI callbacks
+  const handleBack = useCallback(() => {
+    selectionEditing.commitEditing();
+    router.back();
+  }, [router, selectionEditing]);
+
+  const handleChangeTitle = useCallback(
+    (value: string) => {
+      setTitle(value);
+      if (boardId) updateTitle(boardId, value);
+    },
+    [boardId, updateTitle],
+  );
+
+  const handleOpenBoardStyle = useCallback(() => {
+    selectionEditing.commitEditing();
+    setBoardStyleModalVisible(true);
+  }, [selectionEditing]);
+
+  const handlePressLiveClass = useCallback(() => {
+    selectionEditing.commitEditing();
+    liveClass.handlePressLiveClassButton();
+  }, [liveClass, selectionEditing]);
+
+  const handleOpenExportMenu = useCallback(() => {
+    selectionEditing.commitEditing();
+    setExportSheetVisible(true);
+  }, [selectionEditing]);
+
+  const handleToggleGeometryBox = useCallback(() => {
+    setActiveInstrument((prev) =>
+      prev ? null : createDefaultInstrument('ruler', { x: 0, y: 0 }),
+    );
+  }, []);
+
+  const handleOpenMathSheet = useCallback(() => {
+    ocrAndMath.setEditingMathObject(null);
+    ocrAndMath.setMathSheetVisible(true);
+  }, [ocrAndMath]);
+
+  const handleOpenPdfImport = useCallback(() => {
+    selectionEditing.commitEditing();
+    setPdfImportVisible(true);
+  }, [selectionEditing]);
+
+  const handleToggleTimer = useCallback(() => setTimerVisible((v) => !v), []);
+  const handleToggleCalculator = useCallback(() => setCalculatorVisible((v) => !v), []);
+  const handleToggleFaceCam = useCallback(() => setFaceCamVisible((v) => !v), []);
+  const handleToggleRecorder = useCallback(
+    () => recorder.setRecorderBarVisible((v) => !v),
+    [recorder],
+  );
+  const handleOpenSavedLessons = useCallback(
+    () => recorder.setSavedLessonsVisible(true),
+    [recorder],
+  );
+  const handleStartVoicePinFromRail = useCallback(() => {
+    void handleStartVoicePinAt();
+  }, [handleStartVoicePinAt]);
+  const handleStartVoicePinAtPoint = useCallback(
+    (pt: Point) => {
+      void handleStartVoicePinAt(pt);
+      setActiveTool('select');
+    },
+    [handleStartVoicePinAt],
+  );
+  const handleOpenFlashcards = useCallback(() => setFlashcardsVisible(true), []);
+
+  const handlePinTimerToBoard = useCallback(
+    (timerState: TimerState) => {
+      const center = getViewportCenterPoint();
+      const id = `timer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const cmd = createTimerPinCommand(
+        timerState,
+        center,
+        id,
+        selectionEditing.stickyColorKey,
+      );
+      runCommand(cmd, false);
+      if (cmd.type === 'object.insert') setSelectedObjectIds([cmd.object.id]);
+    },
+    [getViewportCenterPoint, runCommand, selectionEditing.stickyColorKey],
+  );
+
+  const handlePasteCalcToBoard = useCallback(
+    (expr: string, res: string) => {
+      const center = getViewportCenterPoint();
+      const id = `calc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const cmd = createCalculatorPasteCommand(
+        expr,
+        res,
+        center,
+        id,
+        selectionEditing.textColorKey,
+      );
+      runCommand(cmd, false);
+      if (cmd.type === 'object.insert') setSelectedObjectIds([cmd.object.id]);
+    },
+    [getViewportCenterPoint, runCommand, selectionEditing.textColorKey],
+  );
+
+  const handleChangeBoardSettings = useCallback(
+    (next: BoardSettings) => {
+      if (boardId) updateSettings(boardId, next);
+    },
+    [boardId, updateSettings],
+  );
+
+  const effectiveBoardSettings =
+    liveClass.liveBoardSettings ?? board?.settings ?? DEFAULT_BOARD_SETTINGS;
 
   return (
     <View style={[styles.root, { backgroundColor: theme.background, paddingTop: insets.top }]}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View
-        style={[
-          styles.topBar,
-          {
-            minHeight: layout.topBarHeight,
-            borderBottomColor: theme.border,
-            paddingLeft: spacing.sm + insets.left,
-            paddingRight: spacing.sm + insets.right,
-          },
-        ]}
-      >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back to boards"
-          onPress={() => { commitEditing(); router.back(); }}
-          style={styles.iconButton}
-        >
-          <ChevronRightIcon color={theme.foreground} />
-        </Pressable>
-        <TextInput
-          accessibilityLabel="Board title"
-          value={title}
-          onChangeText={(value) => { setTitle(value); if (boardId) updateTitle(boardId, value); }}
-          onFocus={commitEditing}
-          style={[styles.title, { color: theme.foreground }]}
-        />
-        <View style={styles.actions}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Undo" accessibilityHint={canUndo ? (undoLabel ? `Undo ${undoLabel}` : 'Reverts the last change') : 'Nothing to undo'} accessibilityState={{ disabled: !canUndo }} disabled={!canUndo} onPress={undo} style={[styles.action, !canUndo && styles.actionDisabled]}><UndoIcon size={22} color={theme.foreground} /></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Redo" accessibilityHint={canRedo ? (redoLabel ? `Redo ${redoLabel}` : 'Reapplies the last undone change') : 'Nothing to redo'} accessibilityState={{ disabled: !canRedo }} disabled={!canRedo} onPress={redo} style={[styles.action, !canRedo && styles.actionDisabled]}><RedoIcon size={22} color={theme.foreground} /></Pressable>
-          {(hasPrivateObjects || hidePrivatePreview) && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={hidePrivatePreview ? 'Show presenter notes' : 'Hide presenter notes'}
-              accessibilityState={{ selected: hidePrivatePreview }}
-              onPress={handleToggleHidePrivatePreview}
-              style={{
-                minHeight: 34,
-                paddingHorizontal: 8,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: hidePrivatePreview ? theme.primary : theme.border,
-                backgroundColor: hidePrivatePreview ? theme.muted : theme.surface,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 11,
-                  fontWeight: '700',
-                  color: hidePrivatePreview ? theme.primary : theme.foreground,
-                }}
-              >
-                {hidePrivatePreview ? 'Notes Off' : 'Presenter'}
-              </Text>
-            </Pressable>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Board background style"
-            onPress={() => { commitEditing(); setBoardStyleModalVisible(true); }}
-            style={styles.iconButton}
-          >
-            <GridIcon size={20} color={theme.foreground} />
-          </Pressable>
-          {!isStudentRoute && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{
-                disabled: startingLiveClass && !classroomState?.active,
-                busy: startingLiveClass && !classroomState?.active,
-              }}
-              disabled={startingLiveClass && !classroomState?.active}
-              accessibilityLabel={
-                startingLiveClass && !classroomState?.active
-                  ? 'Starting live class'
-                  : classroomState?.active
-                    ? hostSheetVisible
-                      ? 'Hide live classroom controls'
-                      : 'Open live classroom controls'
-                    : 'Start live class'
-              }
-              onPress={() => {
-                commitEditing();
-                if (startingLiveClassRef.current) return;
-                if (classroomState?.active) {
-                  setHostSheetVisible((prev) => !prev);
-                } else {
-                  void handleStartOrOpenLiveClass();
-                }
-              }}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                minHeight: 34,
-                paddingHorizontal: 8,
-                borderRadius: 10,
-                borderWidth: 1,
-                borderColor: classroomState?.active ? '#DC2626' : theme.primary,
-                backgroundColor: classroomState?.active
-                  ? (dark ? '#7F1D1D33' : '#FEE2E2')
-                  : theme.surface,
-                opacity: startingLiveClass && !classroomState?.active ? 0.65 : 1,
-              }}
-            >
-              {startingLiveClass && !classroomState?.active ? (
-                <ActivityIndicator size="small" color={theme.primary} />
-              ) : (
-                <BroadcastIcon
-                  size={16}
-                  color={classroomState?.active ? '#DC2626' : theme.primary}
-                />
-              )}
-              <Text
-                style={{
-                  fontSize: 12,
-                  fontWeight: '700',
-                  color: classroomState?.active ? '#DC2626' : theme.primary,
-                }}
-              >
-                Live
-              </Text>
-            </Pressable>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Export and board options"
-            onPress={() => { commitEditing(); setExportSheetVisible(true); }}
-            style={styles.iconButton}
-          >
-            <MoreIcon color={theme.foreground} />
-          </Pressable>
-        </View>
-      </View>
 
-      {storageError && (
+      <EditorTopBar
+        title={title}
+        theme={theme}
+        isDark={dark}
+        isTablet={tablet}
+        topBarHeight={layout.topBarHeight}
+        leftInset={insets.left}
+        rightInset={insets.right}
+        saveStatus={persistence.saveStatus}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        undoLabel={undoLabel}
+        redoLabel={redoLabel}
+        showPresenterButton={hasPrivateObjects || hidePrivatePreview}
+        hidePrivatePreview={hidePrivatePreview}
+        isStudentRoute={isStudentRoute}
+        startingLiveClass={liveClass.startingLiveClass}
+        liveClassActive={Boolean(liveClass.classroomState?.active)}
+        hostSheetVisible={liveClass.hostSheetVisible}
+        onBack={handleBack}
+        onChangeTitle={handleChangeTitle}
+        onFocusTitle={selectionEditing.commitEditing}
+        onUndo={undo}
+        onRedo={redo}
+        onTogglePresenter={handleToggleHidePrivatePreview}
+        onOpenBoardStyle={handleOpenBoardStyle}
+        onPressLiveClass={handlePressLiveClass}
+        onOpenExportMenu={handleOpenExportMenu}
+      />
+
+      {persistence.storageError && (
         <View
           accessibilityRole="alert"
           style={[
@@ -2855,7 +1050,8 @@ function mathSpanAtPoint(
           ]}
         >
           <Text style={[styles.storageBannerText, { color: theme.destructive }]}>
-            Not saved: {storageError} The board stays editable and the next change retries the save.
+            Not saved: {persistence.storageError} The board stays editable and the next change
+            retries the save.
           </Text>
         </View>
       )}
@@ -2863,14 +1059,11 @@ function mathSpanAtPoint(
       <View
         style={[
           styles.workspace,
-          {
-            paddingLeft: insets.left,
-            paddingRight: insets.right,
-          },
+          { paddingLeft: insets.left, paddingRight: insets.right },
         ]}
       >
         {tablet && (
-          <ToolRail
+          <EditorToolRail
             theme={theme}
             activeTool={activeTool}
             bottomInset={insets.bottom}
@@ -2878,38 +1071,31 @@ function mathSpanAtPoint(
             calculatorVisible={calculatorVisible}
             geometryActive={Boolean(activeInstrument)}
             faceCamVisible={faceCamVisible}
-            recorderBarVisible={recorderBarVisible}
-            onToolPress={pressTool}
-            onToggleGeometryBox={() => {
-              setActiveInstrument((prev) =>
-                prev ? null : createDefaultInstrument('ruler', { x: 0, y: 0 }),
-              );
-            }}
-            onOpenMath={() => {
-              setEditingMathObject(null);
-              setMathSheetVisible(true);
-            }}
-            onOpenPdfImport={() => {
-              commitEditing();
-              setPdfImportVisible(true);
-            }}
-            onToggleTimer={() => setTimerVisible((v) => !v)}
-            onToggleCalculator={() => setCalculatorVisible((v) => !v)}
-            onToggleFaceCam={() => setFaceCamVisible((v) => !v)}
-            onToggleRecorder={() => setRecorderBarVisible((v) => !v)}
-            onOpenSavedLessons={() => setSavedLessonsVisible(true)}
+            recorderBarVisible={recorder.recorderBarVisible}
             stageOverlayVisible={stageOverlayVisible}
             stageOverlayMode={stageOverlayMode}
             voicePinRecording={voicePinRecording}
-            onStartVoicePin={() => void handleStartVoicePinAt()}
+            onToolPress={pressTool}
+            onToggleGeometryBox={handleToggleGeometryBox}
+            onOpenMath={handleOpenMathSheet}
+            onOpenPdfImport={handleOpenPdfImport}
+            onToggleTimer={handleToggleTimer}
+            onToggleCalculator={handleToggleCalculator}
+            onToggleFaceCam={handleToggleFaceCam}
+            onToggleRecorder={handleToggleRecorder}
+            onOpenSavedLessons={handleOpenSavedLessons}
+            onStartVoicePin={handleStartVoicePinFromRail}
             onOpenStageOverlay={handleOpenStageOverlay}
-            onOpenFlashcards={() => setFlashcardsVisible(true)}
+            onOpenFlashcards={handleOpenFlashcards}
           />
         )}
-        {!hydrated ? (
+
+        {!persistence.hydrated ? (
           <View style={styles.editorLoading}>
             <ActivityIndicator color={theme.primary} />
-            <Text style={[styles.editorLoadingText, { color: theme.foreground }]}>Opening board…</Text>
+            <Text style={[styles.editorLoadingText, { color: theme.foreground }]}>
+              Opening board…
+            </Text>
           </View>
         ) : (
           <View
@@ -2927,53 +1113,33 @@ function mathSpanAtPoint(
             <View style={styles.canvasClip}>
               <CanvasViewport
                 dark={dark}
-                boardBackground={
-                  liveBoardSettings?.background ??
-                  board?.settings.background ??
-                  DEFAULT_BOARD_SETTINGS.background
-                }
-                boardStyle={
-                  liveBoardSettings?.style ??
-                  board?.settings.style ??
-                  DEFAULT_BOARD_SETTINGS.style
-                }
+                boardBackground={effectiveBoardSettings.background}
+                boardStyle={effectiveBoardSettings.style}
                 initialViewport={initialViewport}
-                readOnly={
-                  Boolean(showcasedName) ||
-                  (classroomState?.active &&
-                    classroomState.role === 'student' &&
-                    !isScratchpadMode &&
-                    (isProjectorMode ||
-                      classroomState.myPermission !== 'can-draw' ||
-                      classroomState.roomInfo?.isLocked))
-                }
-                remoteActiveStroke={remoteActiveStroke}
-                remoteLaserStroke={remoteLaserStroke}
-                onLiveStrokeSample={handleLiveStrokeSample}
-                onLiveLaserSample={handleLiveLaserSample}
+                readOnly={isCanvasReadOnly}
+                remoteActiveStroke={liveClass.remoteActiveStroke}
+                remoteLaserStroke={liveClass.remoteLaserStroke}
+                onLiveStrokeSample={liveClass.handleLiveStrokeSample}
+                onLiveLaserSample={liveClass.handleLiveLaserSample}
                 activeTool={activeTool}
                 color={color}
                 width={strokeWidth}
                 opacity={opacity}
                 eraserRadius={eraserRadius}
                 laserColorKey={laserColorKey}
-                shapeKind={shapeKind}
-                shapeColorKey={shapeColorKey}
-                shapeFillKey={shapeFillKey}
-                shapeStrokeWidth={shapeStrokeWidth}
-                connectorStyle={connectorStyle}
-                connectorColorKey={connectorColorKey}
-                connectorStrokeWidth={connectorStrokeWidth}
+                shapeKind={selectionEditing.shapeKind}
+                shapeColorKey={selectionEditing.shapeColorKey}
+                shapeFillKey={selectionEditing.shapeFillKey}
+                shapeStrokeWidth={selectionEditing.shapeStrokeWidth}
+                connectorStyle={selectionEditing.connectorStyle}
+                connectorColorKey={selectionEditing.connectorColorKey}
+                connectorStrokeWidth={selectionEditing.connectorStrokeWidth}
                 document={document}
                 selectedObjectIds={selectedObjectIds}
-                editingObjectId={editingId}
-                editingTableCell={editingTableCell}
-                editingMath={Boolean(editingMathInline)}
-                editingMathSpan={
-                  editingMathInline?.span
-                    ? { objectId: editingMathInline.objectId, span: editingMathInline.span }
-                    : null
-                }
+                editingObjectId={selectionEditing.editingId}
+                editingTableCell={selectionEditing.editingTableCell}
+                editingMath={Boolean(ocrAndMath.editingMathInline)}
+                editingMathSpan={editingMathSpan}
                 viewportRequest={viewportRequest}
                 activeInstrument={activeInstrument}
                 stylusOnlyDrawing={preferences.stylusOnlyDrawing}
@@ -2984,23 +1150,21 @@ function mathSpanAtPoint(
                 onViewportChange={reportViewport}
                 onCommand={runCommand}
                 onCommitPending={commitPending}
-                onObjectCreate={startNewObject}
+                onObjectCreate={selectionEditing.startNewObject}
                 onSelectionChange={setSelectedObjectIds}
                 onInkSelectionChange={setSelectedInkIds}
-                onSnapStrokeToShape={handleSnapStrokeToShape}
-                onObjectEdit={startEditingExisting}
+                onSnapStrokeToShape={ocrAndMath.handleSnapStrokeToShape}
+                onObjectEdit={selectionEditing.startEditingExisting}
                 onObjectMeasure={measureObject}
-                onCanvasTouch={handleCanvasTouch}
+                onCanvasTouch={selectionEditing.handleCanvasTouch}
                 hidePrivatePreview={hidePrivatePreview}
                 playingVoicePinId={playingVoicePinId}
                 onToggleRevealTape={handleToggleRevealTape}
                 onToggleVoicePinPlay={handleTogglePlayVoicePinById}
                 onInsertRevealTapeAt={handlePlaceRevealTapeAt}
-                onStartVoicePinAt={(pt) => {
-                  void handleStartVoicePinAt(pt);
-                  setActiveTool('select');
-                }}
+                onStartVoicePinAt={handleStartVoicePinAtPoint}
               />
+
               <StageCurtainOverlay
                 visible={stageOverlayVisible}
                 mode={stageOverlayMode}
@@ -3009,159 +1173,75 @@ function mathSpanAtPoint(
                 onChangeMode={setStageOverlayMode}
                 onClose={handleCloseStageOverlay}
               />
-              {classroomState?.active && classroomState.roomInfo && (
+
+              {liveClass.classroomState?.active && liveClass.classroomState.roomInfo && (
                 <ClassroomHud
-                  role={classroomState.role}
-                  status={classroomState.status}
-                  hasSnapshot={classroomState.hasSnapshot}
-                  roomCode={classroomState.roomInfo.roomCode}
+                  role={liveClass.classroomState.role}
+                  status={liveClass.classroomState.status}
+                  hasSnapshot={liveClass.classroomState.hasSnapshot}
+                  roomCode={liveClass.classroomState.roomInfo.roomCode}
                   studentCount={
-                    classroomState.participants.filter((p) => p.role === 'student').length
+                    liveClass.classroomState.participants.filter((p) => p.role === 'student')
+                      .length
                   }
                   raisedHandsCount={
-                    classroomState.participants.filter((p) => p.handRaised).length
+                    liveClass.classroomState.participants.filter((p) => p.handRaised).length
                   }
-                  myPermission={classroomState.myPermission}
-                  myHandRaised={classroomState.myHandRaised}
-                  myCanSpeak={classroomState.myCanSpeak}
-                  teacherMuted={classroomState.roomInfo.teacherMuted}
-                  voiceAvailable={voiceAvailable}
-                  micEnabled={voiceMicEnabled}
-                  isScratchpadMode={isScratchpadMode}
+                  myPermission={liveClass.classroomState.myPermission}
+                  myHandRaised={liveClass.classroomState.myHandRaised}
+                  myCanSpeak={liveClass.classroomState.myCanSpeak}
+                  teacherMuted={liveClass.classroomState.roomInfo.teacherMuted}
+                  voiceAvailable={liveClass.voiceAvailable}
+                  micEnabled={liveClass.voiceMicEnabled}
+                  isScratchpadMode={liveClass.isScratchpadMode}
                   projectorMode={isProjectorMode}
-                  followTeacherViewport={followTeacherViewport}
-                  showcasedName={showcasedName}
-                  notice={classroomNotice}
+                  followTeacherViewport={liveClass.followTeacherViewport}
+                  showcasedName={liveClass.showcasedName}
+                  notice={liveClass.classroomNotice}
                   hasActivePoll={Boolean(activePoll)}
                   theme={theme}
                   onOpenPoll={handleOpenPollModal}
-                  onOpenHostSheet={() => {
-                    // Don't let the HUD open the sheet until the classroom
-                    // transport has finished connecting.
-                    if (startingLiveClassRef.current) return;
-                    setHostSheetVisible(true);
-                  }}
-                  onRequestSync={() => {
-                    void classroomSessionRef.current?.requestSync();
-                  }}
-                  onToggleTeacherMute={() => {
-                    if (!voiceAvailable) {
-                      showClassroomNotice(
-                        audioAdapterRef.current?.getState().reason ??
-                          'Voice requires a dev build with @livekit/react-native.',
-                      );
-                      return;
-                    }
-                    const nextMuted = !classroomState.roomInfo?.teacherMuted;
-                    if (!nextMuted) {
-                      void requestMicrophonePermission().then((micPerm) => {
-                        if (!micPerm.granted) {
-                          Alert.alert(
-                            'Microphone Permission Required',
-                            'Allow microphone access to unmute your voice in the live class.',
-                            micPerm.canAskAgain
-                              ? [{ text: 'OK' }]
-                              : [
-                                  { text: 'Not Now', style: 'cancel' },
-                                  { text: 'Open Settings', onPress: () => void openAppSettings() },
-                                ],
-                          );
-                          return;
-                        }
-                        void classroomSessionRef.current?.setTeacherMuted(false);
-                        void audioAdapterRef.current?.setMicEnabled(true).then((st) => {
-                          setVoiceMicEnabled(st.micEnabled);
-                          if (st.reason && !st.micEnabled) {
-                            showClassroomNotice(st.reason);
-                          }
-                        });
-                      });
-                      return;
-                    }
-                    void classroomSessionRef.current?.setTeacherMuted(true);
-                    void audioAdapterRef.current?.setMicEnabled(false).then((st) => {
-                      setVoiceMicEnabled(st.micEnabled);
-                    });
-                  }}
-                  onToggleRaiseHand={() => {
-                    if (classroomState.myHandRaised) {
-                      void classroomSessionRef.current?.lowerHand();
-                    } else {
-                      void classroomSessionRef.current?.raiseHand();
-                    }
-                  }}
-                  onToggleScratchpad={handleToggleScratchpad}
-                  onToggleFollowTeacher={handleToggleFollowTeacher}
-                  onToggleStudentMic={() => {
-                    const nextEnabled = !voiceMicEnabled;
-                    if (nextEnabled) {
-                      void requestMicrophonePermission().then((micPerm) => {
-                        if (!micPerm.granted) {
-                          Alert.alert(
-                            'Microphone Permission Required',
-                            'Allow microphone access to speak in the live class.',
-                            micPerm.canAskAgain
-                              ? [{ text: 'OK' }]
-                              : [
-                                  { text: 'Not Now', style: 'cancel' },
-                                  { text: 'Open Settings', onPress: () => void openAppSettings() },
-                                ],
-                          );
-                          return;
-                        }
-                        void audioAdapterRef.current?.setMicEnabled(true).then((st) => {
-                          setVoiceMicEnabled(st.micEnabled);
-                          if (st.reason && !st.micEnabled) {
-                            showClassroomNotice(st.reason);
-                          }
-                        });
-                      });
-                      return;
-                    }
-                    void audioAdapterRef.current?.setMicEnabled(false).then((st) => {
-                      setVoiceMicEnabled(st.micEnabled);
-                    });
-                  }}
-                  onLeaveClass={() => {
-                    allowLeaveNavigationRef.current = true;
-                    void audioAdapterRef.current?.disconnect();
-                    void classroomSessionRef.current?.endOrLeave().then(() => {
-                      router.back();
-                    });
-                  }}
+                  onOpenHostSheet={liveClass.handlePressLiveClassButton}
+                  onRequestSync={() => void liveClass.classroomSessionRef.current?.requestSync()}
+                  onToggleTeacherMute={liveClass.handleToggleTeacherMute}
+                  onToggleRaiseHand={liveClass.handleToggleRaiseHand}
+                  onToggleScratchpad={liveClass.handleToggleScratchpad}
+                  onToggleFollowTeacher={liveClass.handleToggleFollowTeacher}
+                  onToggleStudentMic={liveClass.handleToggleStudentMic}
+                  onLeaveClass={liveClass.handleLeaveClass}
                 />
               )}
-              {hydrated && pages.length > 0 && !editing && !isProjectorMode && (
-                <View
-                  style={{
-                    position: 'absolute',
-                    top: spacing.sm,
-                    left: spacing.sm,
-                    zIndex: 20,
-                  }}
-                >
-                  <PageNavigatorPill
-                    theme={theme}
-                    currentIndex={activePageIndex}
-                    totalPages={pages.length}
-                    compact={!tablet}
-                    canDeleteCurrentPage={pages.length > 1}
-                    hasBackgroundImage={Boolean(activeBackgroundPdfObject)}
-                    isBackgroundLocked={Boolean(activeBackgroundPdfObject?.locked)}
-                    onPrevPage={handlePrevPage}
-                    onNextPage={handleNextPage}
-                    onAddPage={handleAddPage}
-                    onDeleteCurrentPage={() => {
-                      if (activePageId) void handleDeletePage(activePageId);
-                    }}
-                    onToggleBackgroundLock={handleToggleBackgroundLock}
-                    onOpenSorter={() => {
-                      commitEditing();
-                      setPageSorterVisible(true);
-                    }}
-                  />
-                </View>
-              )}
+
+              {persistence.hydrated &&
+                persistence.pages.length > 0 &&
+                !selectionEditing.editing &&
+                !isProjectorMode && (
+                  <View style={styles.pageNavigatorWrap}>
+                    <PageNavigatorPill
+                      theme={theme}
+                      currentIndex={persistence.activePageIndex}
+                      totalPages={persistence.pages.length}
+                      compact={!tablet}
+                      canDeleteCurrentPage={persistence.pages.length > 1}
+                      hasBackgroundImage={Boolean(persistence.activeBackgroundPdfObject)}
+                      isBackgroundLocked={Boolean(persistence.activeBackgroundPdfObject?.locked)}
+                      onPrevPage={persistence.handlePrevPage}
+                      onNextPage={persistence.handleNextPage}
+                      onAddPage={persistence.handleAddPage}
+                      onDeleteCurrentPage={() => {
+                        if (persistence.activePageId) {
+                          void persistence.handleDeletePage(persistence.activePageId);
+                        }
+                      }}
+                      onToggleBackgroundLock={persistence.handleToggleBackgroundLock}
+                      onOpenSorter={() => {
+                        selectionEditing.commitEditing();
+                        setPageSorterVisible(true);
+                      }}
+                    />
+                  </View>
+                )}
+
               {activeInstrument ? (
                 <GeometryBoxOverlay
                   instrument={activeInstrument}
@@ -3175,32 +1255,35 @@ function mathSpanAtPoint(
                   onClose={handleCloseGeometryBox}
                 />
               ) : null}
-              {editingTableCell ? (() => {
-                const tbl = findObject(document, editingTableCell.objectId);
+
+              {selectionEditing.editingTableCell ? (() => {
+                const tbl = findObject(document, selectionEditing.editingTableCell.objectId);
                 if (!tbl || !isTableObject(tbl)) return null;
-                const cellRect = tableCellRect(tbl, editingTableCell.row, editingTableCell.col);
-                const left = cellRect.x * viewport.scale + viewport.x;
-                const top = cellRect.y * viewport.scale + viewport.y;
-                const w = cellRect.width * viewport.scale;
-                const h = cellRect.height * viewport.scale;
+                const cellRect = tableCellRect(
+                  tbl,
+                  selectionEditing.editingTableCell.row,
+                  selectionEditing.editingTableCell.col,
+                );
                 return (
                   <TextInput
                     autoFocus
-                    value={editingTableCell.text}
+                    value={selectionEditing.editingTableCell.text}
                     onChangeText={(text) =>
-                      setEditingTableCell((prev) => (prev ? { ...prev, text } : null))
+                      selectionEditing.setEditingTableCell((prev) =>
+                        prev ? { ...prev, text } : null,
+                      )
                     }
-                    onSubmitEditing={advanceTableCell}
-                    onBlur={commitTableCell}
+                    onSubmitEditing={selectionEditing.advanceTableCell}
+                    onBlur={selectionEditing.commitTableCell}
                     returnKeyType="next"
                     blurOnSubmit={false}
                     style={[
                       styles.tableCellInput,
                       {
-                        left,
-                        top,
-                        width: Math.max(44, w),
-                        height: Math.max(32, h),
+                        left: cellRect.x * viewport.scale + viewport.x,
+                        top: cellRect.y * viewport.scale + viewport.y,
+                        width: Math.max(44, cellRect.width * viewport.scale),
+                        height: Math.max(32, cellRect.height * viewport.scale),
                         color: textColorValue(tbl.colorKey, dark),
                         backgroundColor: theme.surface,
                         borderColor: theme.primary,
@@ -3210,358 +1293,132 @@ function mathSpanAtPoint(
                   />
                 );
               })() : null}
-              {editingMathInline ? (() => {
-                const mathObj = findObject(document, editingMathInline.objectId);
+
+              {ocrAndMath.editingMathInline ? (() => {
+                const mathObj = findObject(document, ocrAndMath.editingMathInline.objectId);
                 if (!mathObj || !isMathObject(mathObj)) return null;
-                const rect = objectScreenRect(mathObj, viewport);
-                const canvasW = canvasRect.width > 0 ? canvasRect.width : width;
-                const canvasH = canvasRect.height > 0 ? canvasRect.height : windowHeight - 120;
-                const isSlotMode = editingMathInline.span !== null;
-                const editableSlots = getEditableMathSlots(
-                  layoutMathExpression(editingMathInline.latex, mathObj.fontSize),
-                );
-                const activeSlot = editingMathInline.span
-                  ? editableSlots.find(
-                      (s) =>
-                        s.span.start === editingMathInline.span!.start &&
-                        s.span.end === editingMathInline.span!.end,
-                    )
-                  : undefined;
-                const editorW = Math.min(isSlotMode ? 360 : 380, Math.max(250, canvasW - 24));
-                const left = Math.max(12, Math.min(canvasW - editorW - 12, rect.x));
-                const placeAbove = rect.y + rect.height + 64 > canvasH;
-                const top = placeAbove
-                  ? Math.max(12, rect.y - 56)
-                  : Math.min(canvasH - 56, rect.y + rect.height + 8);
-                const stepSlot = (delta: 1 | -1) => {
-                  if (editableSlots.length === 0) return;
-                  const cur = editingMathInline.span;
-                  const currentIdx = cur
-                    ? editableSlots.findIndex(
-                        (s) => s.span.start === cur.start && s.span.end === cur.end,
-                      )
-                    : -1;
-                  const baseIdx = currentIdx >= 0 ? currentIdx : 0;
-                  const nextIdx =
-                    (baseIdx + delta + editableSlots.length) % editableSlots.length;
-                  const nextSlot = editableSlots[nextIdx];
-                  setEditingMathInline({
-                    ...editingMathInline,
-                    span: nextSlot.span,
-                    slotText: editingMathInline.latex.slice(
-                      nextSlot.span.start,
-                      nextSlot.span.end,
-                    ),
-                  });
-                  mathInlineInputRef.current?.focus();
-                };
                 return (
-                  <View
-                    style={{
-                      position: 'absolute',
-                      left,
-                      top,
-                      width: editorW,
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 5,
-                      paddingHorizontal: 8,
-                      paddingVertical: 6,
-                      borderRadius: 10,
-                      borderWidth: 1.5,
-                      borderColor: theme.primary,
-                      backgroundColor: theme.surface,
-                      zIndex: 40,
+                  <InlineMathBar
+                    mathObj={mathObj}
+                    editingState={ocrAndMath.editingMathInline}
+                    viewport={viewport}
+                    canvasWidth={canvasBounds.width}
+                    canvasHeight={canvasBounds.height}
+                    theme={theme}
+                    inputRef={ocrAndMath.mathInlineInputRef}
+                    onChangeState={ocrAndMath.setEditingMathInline}
+                    onTransientLatex={ocrAndMath.handleTransientMathLatex}
+                    onOpenKeypad={() => {
+                      dispatch({ type: 'commit' });
+                      const currentLatex = ocrAndMath.editingMathInline?.latex ?? mathObj.latex;
+                      ocrAndMath.setEditingMathInline(null);
+                      ocrAndMath.setEditingMathObject({ ...mathObj, latex: currentLatex });
+                      ocrAndMath.setMathSheetVisible(true);
                     }}
-                  >
-                    {activeSlot?.label ? (
-                      <Text
-                        style={{
-                          fontSize: 11,
-                          fontWeight: '700',
-                          color: theme.primary,
-                        }}
-                      >
-                        {activeSlot.label}
-                      </Text>
-                    ) : null}
-                    <TextInput
-                      ref={mathInlineInputRef}
-                      autoFocus
-                      accessibilityLabel={
-                        isSlotMode ? 'Inline math token input' : 'Inline math formula input'
-                      }
-                      value={isSlotMode ? editingMathInline.slotText : editingMathInline.latex}
-                      onChangeText={(nextValue) => {
-                        let nextLatex = nextValue;
-                        let nextSpan: MathSourceSpan | null = null;
-                        if (editingMathInline.span) {
-                          const edited = applyMathSpanEdit(
-                            editingMathInline.latex,
-                            editingMathInline.span,
-                            nextValue,
-                          );
-                          nextLatex = edited.latex;
-                          nextSpan = edited.span;
-                        }
-                        setEditingMathInline((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                latex: nextLatex,
-                                span: nextSpan,
-                                slotText: nextValue,
-                              }
-                            : null,
-                        );
-                        dispatch({
-                          type: 'command',
-                          command: {
-                            type: 'object.update',
-                            id: mathObj.id,
-                            latex: nextLatex,
-                          },
-                          transient: true,
-                        });
-                      }}
-                      onSubmitEditing={() => {
-                        if (isSlotMode && editableSlots.length > 1) {
-                          stepSlot(1);
-                        } else {
-                          commitInlineMath();
-                        }
-                      }}
-                      returnKeyType={isSlotMode && editableSlots.length > 1 ? 'next' : 'done'}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      placeholder={isSlotMode ? 'Value…' : 'Type LaTeX…'}
-                      placeholderTextColor={theme.foreground + '70'}
-                      style={{
-                        flex: 1,
-                        minHeight: 34,
-                        fontSize: 14,
-                        color: theme.foreground,
-                        backgroundColor: theme.background,
-                        borderRadius: 6,
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                      }}
-                    />
-                    {editableSlots.length > 1 ? (
-                      <>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Previous formula slot"
-                          onPress={() => stepSlot(-1)}
-                          style={{
-                            minHeight: 34,
-                            paddingHorizontal: 7,
-                            borderRadius: 6,
-                            borderWidth: 1,
-                            borderColor: theme.border,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                          }}
-                        >
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: theme.foreground }}>
-                            ←
-                          </Text>
-                        </Pressable>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Next formula slot"
-                          onPress={() => stepSlot(1)}
-                          style={{
-                            minHeight: 34,
-                            paddingHorizontal: 7,
-                            borderRadius: 6,
-                            borderWidth: 1,
-                            borderColor: theme.border,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                          }}
-                        >
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: theme.foreground }}>
-                            →
-                          </Text>
-                        </Pressable>
-                      </>
-                    ) : null}
-                    {isSlotMode ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Edit full formula"
-                        onPress={() =>
-                          setEditingMathInline((prev) =>
-                            prev ? { ...prev, span: null, slotText: prev.latex } : null,
-                          )
-                        }
-                        style={{
-                          minHeight: 34,
-                          paddingHorizontal: 8,
-                          borderRadius: 6,
-                          borderWidth: 1,
-                          borderColor: theme.border,
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <Text style={{ fontSize: 12, fontWeight: '600', color: theme.foreground }}>
-                          Full
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Open math keypad"
-                      onPress={() => {
-                        dispatch({ type: 'commit' });
-                        setEditingMathInline(null);
-                        setEditingMathObject({ ...mathObj, latex: editingMathInline.latex });
-                        setMathSheetVisible(true);
-                      }}
-                      style={{
-                        minHeight: 34,
-                        paddingHorizontal: 10,
-                        borderRadius: 6,
-                        borderWidth: 1,
-                        borderColor: theme.border,
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <Text style={{ fontSize: 12, fontWeight: '600', color: theme.foreground }}>
-                        ∑
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Done editing formula"
-                      onPress={commitInlineMath}
-                      style={{
-                        minHeight: 34,
-                        paddingHorizontal: 10,
-                        borderRadius: 6,
-                        backgroundColor: theme.primary,
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: theme.surface }}>
-                        Done
-                      </Text>
-                    </Pressable>
-                  </View>
+                    onDone={ocrAndMath.commitInlineMath}
+                  />
                 );
               })() : null}
+
               {showGuidance && (
                 <View pointerEvents="none" style={styles.canvasGuidance}>
-                  <Text style={[styles.canvasTitle, { color: theme.foreground }]}>Your canvas is ready</Text>
-                  <Text style={[styles.canvasBody, { color: theme.foreground }]}>
-                    Draw with a pen, or tap the text and sticky-note tools to add a note.
+                  <View
+                    style={[
+                      styles.guidanceIconBadge,
+                      { backgroundColor: theme.background, borderColor: theme.border },
+                    ]}
+                  >
+                    <PenIcon size={24} color={theme.primary} />
+                  </View>
+                  <Text style={[styles.canvasTitle, { color: theme.foreground }]}>
+                    Your canvas awaits
                   </Text>
+                  <Text style={[styles.canvasBody, { color: theme.foreground }]}>
+                    Capture thoughts freely. Draw with a pen, or add a sticky note or formula.
+                  </Text>
+                  <View
+                    style={[
+                      styles.guidanceHintPill,
+                      { backgroundColor: theme.background, borderColor: theme.border },
+                    ]}
+                  >
+                    <Text style={[styles.guidanceHintText, { color: theme.primary }]}>
+                      {tablet ? 'Pick a tool on the left rail' : 'Pick a tool below to begin'}
+                    </Text>
+                  </View>
                 </View>
               )}
+
               <FloatingTimer
                 visible={timerVisible}
                 theme={theme}
                 haptics={preferences.haptics}
-                bounds={{
-                  width: canvasRect.width > 0 ? canvasRect.width : width,
-                  height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
-                }}
-                onPinToBoard={(timerState: TimerState) => {
-                  const center = screenToCanvas(
-                    {
-                      x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
-                      y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
-                    },
-                    viewport,
-                  );
-                  const id = `timer-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-                  const cmd = createTimerPinCommand(timerState, center, id, stickyColorKey);
-                  runCommand(cmd, false);
-                  if (cmd.type === 'object.insert') setSelectedObjectIds([cmd.object.id]);
-                }}
-                onClose={() => setTimerVisible(false)}
+                bounds={canvasBounds}
+                onPinToBoard={handlePinTimerToBoard}
+                onClose={handleToggleTimer}
               />
+
               <FloatingCalculator
                 visible={calculatorVisible}
                 theme={theme}
                 haptics={preferences.haptics}
                 isTablet={tablet}
-                bounds={{
-                  width: canvasRect.width > 0 ? canvasRect.width : width,
-                  height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
-                }}
-                onPasteToBoard={(expr, res) => {
-                  const center = screenToCanvas(
-                    {
-                      x: (canvasRect.width > 0 ? canvasRect.width : width) / 2,
-                      y: (canvasRect.height > 0 ? canvasRect.height : windowHeight - 120) / 2,
-                    },
-                    viewport,
-                  );
-                  const id = `calc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-                  const cmd = createCalculatorPasteCommand(expr, res, center, id, textColorKey);
-                  runCommand(cmd, false);
-                  if (cmd.type === 'object.insert') setSelectedObjectIds([cmd.object.id]);
-                }}
-                onClose={() => setCalculatorVisible(false)}
+                bounds={canvasBounds}
+                onPasteToBoard={handlePasteCalcToBoard}
+                onClose={handleToggleCalculator}
               />
+
               <LessonRecorderBar
-                visible={recorderBarVisible}
-                status={recorderStatus}
-                elapsedMs={recorderElapsedMs}
-                countdownRemaining={recorderCountdown}
-                quality={recorderQuality}
-                includeMic={recorderMic}
+                visible={recorder.recorderBarVisible}
+                status={recorder.recorderStatus}
+                elapsedMs={recorder.recorderElapsedMs}
+                countdownRemaining={recorder.recorderCountdown}
+                quality={recorder.recorderQuality}
+                includeMic={recorder.recorderMic}
                 theme={theme}
                 isTablet={tablet}
-                bounds={{
-                  width: canvasRect.width > 0 ? canvasRect.width : width,
-                  height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
-                }}
+                bounds={canvasBounds}
                 bottomExclusion={tablet ? 0 : ACTION_ISLAND_HEIGHT}
-                onSelectQuality={setRecorderQuality}
-                onToggleMic={() => setRecorderMic((v) => !v)}
-                onStart={() => {
-                  void handleStartRecording();
-                }}
-                onCancelCountdown={handleCancelCountdown}
-                onPauseResume={handlePauseResumeRecording}
-                onStop={() => {
-                  void handleStopRecording();
-                }}
-                onClose={() => setRecorderBarVisible(false)}
+                onSelectQuality={recorder.setRecorderQuality}
+                onToggleMic={() => recorder.setRecorderMic((v) => !v)}
+                onStart={() => void recorder.handleStartRecording()}
+                onCancelCountdown={recorder.handleCancelCountdown}
+                onPauseResume={recorder.handlePauseResumeRecording}
+                onStop={() => void recorder.handleStopRecording()}
+                onClose={() => recorder.setRecorderBarVisible(false)}
               />
+
               <FaceCamBubble
                 visible={faceCamVisible}
-                isRecording={recorderStatus === 'recording'}
+                isRecording={recorder.recorderStatus === 'recording'}
                 theme={theme}
                 haptics={preferences.haptics}
-                bounds={{
-                  width: canvasRect.width > 0 ? canvasRect.width : width,
-                  height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
-                }}
+                bounds={canvasBounds}
                 bottomExclusion={tablet ? 0 : ACTION_ISLAND_HEIGHT}
                 onClose={() => setFaceCamVisible(false)}
               />
+
               {editingTextObject && overlayRect && (
                 <TextInput
                   multiline
                   autoFocus
                   returnKeyType="done"
                   submitBehavior="blurAndSubmit"
-                  accessibilityLabel={editingTextObject.type === 'sticky' ? 'Sticky note editor' : 'Canvas text editor'}
+                  accessibilityLabel={
+                    editingTextObject.type === 'sticky'
+                      ? 'Sticky note editor'
+                      : 'Canvas text editor'
+                  }
                   value={editingTextObject.text}
-                  onChangeText={(text) => updateDraft({ text })}
+                  onChangeText={(text) => selectionEditing.updateDraft({ text })}
                   onSubmitEditing={() => {
-                    commitEditing();
+                    selectionEditing.commitEditing();
                     Keyboard.dismiss();
                   }}
-                  onBlur={commitEditing}
-                  placeholder={editingTextObject.type === 'sticky' ? 'Write a note' : 'Type something'}
+                  onBlur={selectionEditing.commitEditing}
+                  placeholder={
+                    editingTextObject.type === 'sticky' ? 'Write a note' : 'Type something'
+                  }
                   placeholderTextColor={`${overlayTextColor}80`}
                   selectionColor={theme.primary}
                   style={[
@@ -3587,158 +1444,33 @@ function mathSpanAtPoint(
             </View>
 
             {selectedObjects.length > 0 && actionRail && (
-              <View
-                accessibilityLabel={selectionLabel}
-                style={[
-                  styles.selectionRail,
-                  {
-                    left: actionRail.x,
-                    top: actionRail.y,
-                    width: actionRail.width,
-                    height: actionRail.height,
-                    backgroundColor: theme.surface,
-                    borderColor: theme.border,
-                  },
-                ]}
-              >
-                {(selectedIsTextual || selectedIsMath) && selectedObject && (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Edit selected object"
-                    accessibilityHint={selectedIsMath ? 'Opens the math formula builder' : "Opens the object's text editor"}
-                    onPress={() => startEditingExisting(selectedObject.id)}
-                    style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
-                  >
-                    <EditIcon size={18} color={theme.foreground} />
-                  </Pressable>
-                )}
-                {selectedObject && !selectedIsImage && !selectedIsTable && !selectedIsMath && !selectedIsStemDiagram && (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Style selected object"
-                    accessibilityHint="Opens the object's style options"
-                    onPress={toggleStyleSheet}
-                    style={({ pressed }) => [
-                      styles.selectionAction,
-                      selectedIsTextual && styles.selectionActionSeparator,
-                      { borderTopColor: theme.border },
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <StyleIcon size={18} color={theme.foreground} />
-                  </Pressable>
-                )}
-                {plottableMath && (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Plot graph"
-                    accessibilityHint="Plots this math function onto 2D coordinate axes"
-                    onPress={handlePlotMathObject}
-                    style={({ pressed }) => [
-                      styles.selectionAction,
-                      styles.selectionActionSeparator,
-                      { borderTopColor: theme.border },
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <Text style={[styles.railTextAction, { color: theme.primary }]}>Plot</Text>
-                  </Pressable>
-                )}
-                {canTidySelection && (
-                  <>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Tidy grid"
-                      onPress={() => handleTidyLayout('grid')}
-                      style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
-                    >
-                      <Text style={[styles.railTextAction, { color: theme.primary }]}>Grid</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Align row"
-                      onPress={() => handleTidyLayout('row')}
-                      style={({ pressed }) => [
-                        styles.selectionAction,
-                        styles.selectionActionSeparator,
-                        { borderTopColor: theme.border },
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={[styles.railTextAction, { color: theme.foreground }]}>Row</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Align column"
-                      onPress={() => handleTidyLayout('column')}
-                      style={({ pressed }) => [
-                        styles.selectionAction,
-                        styles.selectionActionSeparator,
-                        { borderTopColor: theme.border },
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={[styles.railTextAction, { color: theme.foreground }]}>Col</Text>
-                    </Pressable>
-                  </>
-                )}
-                {selectedIsTable && selectedObject && (
-                  <>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Add table row"
-                      onPress={() => handleTableAction(selectedObject.id, 'add-row')}
-                      style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
-                    >
-                      <Text style={[styles.railTextAction, { color: theme.foreground }]}>+R</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Add table column"
-                      onPress={() => handleTableAction(selectedObject.id, 'add-col')}
-                      style={({ pressed }) => [
-                        styles.selectionAction,
-                        styles.selectionActionSeparator,
-                        { borderTopColor: theme.border },
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={[styles.railTextAction, { color: theme.foreground }]}>+C</Text>
-                    </Pressable>
-                  </>
-                )}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={selectedObjects.length === 1 ? 'Duplicate selected object' : 'Duplicate selected objects'}
-                  accessibilityHint="Creates an offset copy in the same undo step"
-                  onPress={duplicateSelected}
-                  style={({ pressed }) => [
-                    styles.selectionAction,
-                    (selectedObject || canTidySelection) && styles.selectionActionSeparator,
-                    { borderTopColor: theme.border },
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <DuplicateIcon size={18} color={theme.foreground} />
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={selectedObjects.length === 1 ? 'Delete selected object' : 'Delete selected objects'}
-                  accessibilityHint="Removes the selection; undo restores it"
-                  onPress={deleteSelected}
-                  style={({ pressed }) => [
-                    styles.selectionAction,
-                    styles.selectionActionSeparator,
-                    { borderTopColor: theme.border },
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <TrashIcon size={18} color={theme.destructive} />
-                </Pressable>
-              </View>
+              <SelectionActionRail
+                theme={theme}
+                x={actionRail.x}
+                y={actionRail.y}
+                width={actionRail.width}
+                height={actionRail.height}
+                selectionLabel={selectionLabel}
+                selectedObjectsCount={selectedObjects.length}
+                selectedObject={selectedObject}
+                selectedIsTextual={selectedIsTextual}
+                selectedIsMath={selectedIsMath}
+                selectedIsImage={selectedIsImage}
+                selectedIsTable={selectedIsTable}
+                selectedIsStemDiagram={selectedIsStemDiagram}
+                plottableMath={Boolean(plottableMath)}
+                canTidySelection={canTidySelection}
+                onEditObject={selectionEditing.startEditingExisting}
+                onToggleStyleSheet={selectionEditing.toggleStyleSheet}
+                onPlotMath={handlePlotMathObject}
+                onTidyLayout={handleTidyLayout}
+                onTableAction={selectionEditing.handleTableAction}
+                onDuplicate={selectionEditing.duplicateSelected}
+                onDelete={selectionEditing.deleteSelected}
+              />
             )}
 
-            {quickBranchTarget && activeTool === 'select' && !editing && (
+            {quickBranchTarget && activeTool === 'select' && !selectionEditing.editing && (
               <QuickBranchHandles
                 object={quickBranchTarget}
                 viewport={viewport}
@@ -3749,7 +1481,7 @@ function mathSpanAtPoint(
               />
             )}
 
-            {!tablet && !editing && selectedObjects.length > 0 && (
+            {!tablet && !selectionEditing.editing && selectedObjects.length > 0 && (
               <>
                 <PhoneStemSelectionBar
                   theme={theme}
@@ -3773,7 +1505,9 @@ function mathSpanAtPoint(
                     ACTION_ISLAND_HEIGHT +
                     spacing.sm +
                     islandBottom +
-                    (canTidySelection || plottableMath || numericTable || selectedFunctionPlot ? 56 : 0)
+                    (canTidySelection || plottableMath || numericTable || selectedFunctionPlot
+                      ? 56
+                      : 0)
                   }
                   selectedObjects={selectedObjects}
                   canCoverWithTape={canCoverWithTape}
@@ -3785,6 +1519,7 @@ function mathSpanAtPoint(
                 />
               </>
             )}
+
             <VoicePinBar
               isRecording={voicePinRecording}
               recordingMs={voicePinRecordingMs}
@@ -3801,23 +1536,15 @@ function mathSpanAtPoint(
               onDismissError={handleDismissVoicePinError}
             />
 
-            {activeTool === 'reveal-tape' && !editing && (
+            {activeTool === 'reveal-tape' && !selectionEditing.editing && (
               <View
                 pointerEvents="none"
-                style={{
-                  position: 'absolute',
-                  top: spacing.md + 52,
-                  alignSelf: 'center',
-                  backgroundColor: theme.surface,
-                  borderColor: theme.primary,
-                  borderWidth: 1,
-                  borderRadius: 999,
-                  paddingHorizontal: spacing.md,
-                  paddingVertical: spacing.xs,
-                  zIndex: 16,
-                }}
+                style={[
+                  styles.revealTapeBanner,
+                  { backgroundColor: theme.surface, borderColor: theme.primary },
+                ]}
               >
-                <Text style={{ ...typography.caption, fontWeight: '600', color: theme.primary }}>
+                <Text style={[styles.revealTapeBannerText, { color: theme.primary }]}>
                   Tap or drag on the board to place Reveal Tape
                 </Text>
               </View>
@@ -3838,29 +1565,43 @@ function mathSpanAtPoint(
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Text style options"
-                  onPress={() => setObjectOptionsVisible((v) => !v)}
+                  onPress={() => selectionEditing.setObjectOptionsVisible((v) => !v)}
                   style={({ pressed }) => [
                     styles.editingBarButton,
-                    objectOptionsVisible && { backgroundColor: theme.primary + '1F' },
+                    selectionEditing.objectOptionsVisible && {
+                      backgroundColor: `${theme.primary}1F`,
+                    },
                     pressed && styles.pressed,
                   ]}
                 >
-                  <StyleIcon size={16} color={objectOptionsVisible ? theme.primary : theme.foreground} />
-                  <Text style={[styles.editingBarLabel, { color: objectOptionsVisible ? theme.primary : theme.foreground }]}>
+                  <StyleIcon
+                    size={16}
+                    color={selectionEditing.objectOptionsVisible ? theme.primary : theme.foreground}
+                  />
+                  <Text
+                    style={[
+                      styles.editingBarLabel,
+                      {
+                        color: selectionEditing.objectOptionsVisible
+                          ? theme.primary
+                          : theme.foreground,
+                      },
+                    ]}
+                  >
                     Style
                   </Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Done editing text"
-                  onPress={commitEditing}
+                  onPress={selectionEditing.commitEditing}
                   style={({ pressed }) => [
                     styles.editingBarButton,
                     { backgroundColor: theme.primary },
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Text style={[styles.editingBarLabel, { color: '#FFFFFF', fontWeight: '700' }]}>
+                  <Text style={[styles.editingBarLabel, { color: colors.onPrimary, fontWeight: '700' }]}>
                     Done
                   </Text>
                 </Pressable>
@@ -3870,7 +1611,7 @@ function mathSpanAtPoint(
         )}
 
         {tablet &&
-          !editing &&
+          !selectionEditing.editing &&
           selectedObjects.length > 0 &&
           (layout.inspectorPresentation === 'docked' ||
             layout.inspectorPresentation === 'overlay' ||
@@ -3881,12 +1622,12 @@ function mathSpanAtPoint(
               presentation={layout.inspectorPresentation}
               width={layout.inspectorWidth}
               selectedObjects={selectedObjects}
-              onToggleOpen={() => setInspectorOpen((open) => !open)}
-              onEditTextObject={startEditingExisting}
-              onDuplicateSelected={duplicateSelected}
-              onDeleteSelected={deleteSelected}
-              onUpdateObjectStyle={updateObjectStyleById}
-              onTableAction={handleTableAction}
+              onToggleOpen={() => selectionEditing.setInspectorOpen((open) => !open)}
+              onEditTextObject={selectionEditing.startEditingExisting}
+              onDuplicateSelected={selectionEditing.duplicateSelected}
+              onDeleteSelected={selectionEditing.deleteSelected}
+              onUpdateObjectStyle={selectionEditing.updateObjectStyleById}
+              onTableAction={selectionEditing.handleTableAction}
               canTidySelection={canTidySelection}
               canPlotMath={Boolean(plottableMath)}
               canChartTable={Boolean(numericTable)}
@@ -3909,7 +1650,7 @@ function mathSpanAtPoint(
           )}
       </View>
 
-      {editingTextObject && objectOptionsVisible && (
+      {editingTextObject && selectionEditing.objectOptionsVisible && (
         <ObjectOptionsSheet
           theme={theme}
           dark={dark}
@@ -3919,8 +1660,8 @@ function mathSpanAtPoint(
           fontWeight={editingTextObject.fontWeight ?? 'normal'}
           fontStyle={editingTextObject.fontStyle ?? 'normal'}
           bottomOffset={
-            isSoftwareKeyboardVisible(keyboardHeight)
-              ? keyboardHeight + spacing.xs
+            isSoftwareKeyboardVisible(selectionEditing.keyboardHeight)
+              ? selectionEditing.keyboardHeight + spacing.xs
               : optionsBottom
           }
           variant={layout.toolOptionsVariant}
@@ -3930,78 +1671,110 @@ function mathSpanAtPoint(
           doneLabel="Close"
           doneHint="Closes text style options while keeping the editor active"
           showScrim={false}
-          onHeightChange={setSheetHeight}
-          onColorChange={(key) => updateDraft({ colorKey: key })}
-          onFontSizeChange={(size) => updateDraft({ fontSize: size })}
-          onFontWeightChange={(weight) => updateDraft({ fontWeight: weight })}
-          onFontStyleChange={(style) => updateDraft({ fontStyle: style })}
-          onDone={closeObjectOptions}
+          onHeightChange={selectionEditing.setSheetHeight}
+          onColorChange={(key) => selectionEditing.updateDraft({ colorKey: key })}
+          onFontSizeChange={(size) => selectionEditing.updateDraft({ fontSize: size })}
+          onFontWeightChange={(weight) => selectionEditing.updateDraft({ fontWeight: weight })}
+          onFontStyleChange={(style) => selectionEditing.updateDraft({ fontStyle: style })}
+          onDone={selectionEditing.closeObjectOptions}
         />
       )}
 
-      {!editing && objectOptionsVisible && (activeTool === 'text' || activeTool === 'sticky') && (
-        <ObjectOptionsSheet
-          theme={theme}
-          dark={dark}
-          kind={activeTool}
-          colorKey={activeTool === 'sticky' ? stickyColorKey : textColorKey}
-          fontSize={activeTool === 'sticky' ? stickySize : textSize}
-          fontWeight={activeTool === 'sticky' ? (stickyBold ? 'bold' : 'normal') : (textBold ? 'bold' : 'normal')}
-          fontStyle={activeTool === 'sticky' ? (stickyItalic ? 'italic' : 'normal') : (textItalic ? 'italic' : 'normal')}
-          bottomOffset={optionsBottom}
-          variant={layout.toolOptionsVariant}
-          leftOffset={layout.toolPopoverLeft}
-          topOffset={layout.toolPopoverTop}
-          maxWidth={layout.toolPopoverMaxWidth}
-          doneLabel="Done"
-          doneHint="Closes the style options"
-          // Selecting the tool opens this sheet, so a full-screen scrim would
-          // swallow the next canvas tap and the object would never be placed.
-          showScrim={false}
-          onColorChange={(key) => (activeTool === 'sticky' ? setStickyColorKey(key) : setTextColorKey(key))}
-          onFontSizeChange={(size) => (activeTool === 'sticky' ? setStickySize(size) : setTextSize(size))}
-          onFontWeightChange={(weight) => {
-            if (activeTool === 'sticky') setStickyBold(weight === 'bold');
-            else setTextBold(weight === 'bold');
-          }}
-          onFontStyleChange={(style) => {
-            if (activeTool === 'sticky') setStickyItalic(style === 'italic');
-            else setTextItalic(style === 'italic');
-          }}
-          onDone={closeObjectOptions}
-        />
-      )}
+      {!selectionEditing.editing &&
+        selectionEditing.objectOptionsVisible &&
+        (activeTool === 'text' || activeTool === 'sticky') && (
+          <ObjectOptionsSheet
+            theme={theme}
+            dark={dark}
+            kind={activeTool}
+            colorKey={
+              activeTool === 'sticky'
+                ? selectionEditing.stickyColorKey
+                : selectionEditing.textColorKey
+            }
+            fontSize={
+              activeTool === 'sticky' ? selectionEditing.stickySize : selectionEditing.textSize
+            }
+            fontWeight={
+              activeTool === 'sticky'
+                ? selectionEditing.stickyBold
+                  ? 'bold'
+                  : 'normal'
+                : selectionEditing.textBold
+                  ? 'bold'
+                  : 'normal'
+            }
+            fontStyle={
+              activeTool === 'sticky'
+                ? selectionEditing.stickyItalic
+                  ? 'italic'
+                  : 'normal'
+                : selectionEditing.textItalic
+                  ? 'italic'
+                  : 'normal'
+            }
+            bottomOffset={optionsBottom}
+            variant={layout.toolOptionsVariant}
+            leftOffset={layout.toolPopoverLeft}
+            topOffset={layout.toolPopoverTop}
+            maxWidth={layout.toolPopoverMaxWidth}
+            doneLabel="Done"
+            doneHint="Closes the style options"
+            showScrim={false}
+            onColorChange={(key) =>
+              activeTool === 'sticky'
+                ? selectionEditing.setStickyColorKey(key)
+                : selectionEditing.setTextColorKey(key)
+            }
+            onFontSizeChange={(size) =>
+              activeTool === 'sticky'
+                ? selectionEditing.setStickySize(size)
+                : selectionEditing.setTextSize(size)
+            }
+            onFontWeightChange={(weight) => {
+              if (activeTool === 'sticky') selectionEditing.setStickyBold(weight === 'bold');
+              else selectionEditing.setTextBold(weight === 'bold');
+            }}
+            onFontStyleChange={(style) => {
+              if (activeTool === 'sticky') selectionEditing.setStickyItalic(style === 'italic');
+              else selectionEditing.setTextItalic(style === 'italic');
+            }}
+            onDone={selectionEditing.closeObjectOptions}
+          />
+        )}
 
-      {!editing && shapeOptionsVisible && (activeTool === 'shape' || activeTool === 'connector') && (
-        <ShapeOptionsSheet
-          theme={theme}
-          mode={activeTool}
-          shapeKind={shapeKind}
-          shapeColorKey={shapeColorKey}
-          shapeFillKey={shapeFillKey}
-          shapeStrokeWidth={shapeStrokeWidth}
-          showMeasurements={shapeShowMeasurements}
-          connectorStyle={connectorStyle}
-          connectorColorKey={connectorColorKey}
-          connectorStrokeWidth={connectorStrokeWidth}
-          bottomOffset={optionsBottom}
-          variant={layout.toolOptionsVariant}
-          leftOffset={layout.toolPopoverLeft}
-          topOffset={layout.toolPopoverTop}
-          maxWidth={layout.toolPopoverMaxWidth}
-          onShapeKind={setShapeKind}
-          onShapeColor={setShapeColorKey}
-          onShapeFill={setShapeFillKey}
-          onShapeStrokeWidth={setShapeStrokeWidth}
-          onShowMeasurements={setShapeShowMeasurements}
-          onConnectorStyle={setConnectorStyle}
-          onConnectorColor={setConnectorColorKey}
-          onConnectorStrokeWidth={setConnectorStrokeWidth}
-          onDone={() => setShapeOptionsVisible(false)}
-        />
-      )}
+      {!selectionEditing.editing &&
+        selectionEditing.shapeOptionsVisible &&
+        (activeTool === 'shape' || activeTool === 'connector') && (
+          <ShapeOptionsSheet
+            theme={theme}
+            mode={activeTool}
+            shapeKind={selectionEditing.shapeKind}
+            shapeColorKey={selectionEditing.shapeColorKey}
+            shapeFillKey={selectionEditing.shapeFillKey}
+            shapeStrokeWidth={selectionEditing.shapeStrokeWidth}
+            showMeasurements={selectionEditing.shapeShowMeasurements}
+            connectorStyle={selectionEditing.connectorStyle}
+            connectorColorKey={selectionEditing.connectorColorKey}
+            connectorStrokeWidth={selectionEditing.connectorStrokeWidth}
+            bottomOffset={optionsBottom}
+            variant={layout.toolOptionsVariant}
+            leftOffset={layout.toolPopoverLeft}
+            topOffset={layout.toolPopoverTop}
+            maxWidth={layout.toolPopoverMaxWidth}
+            onShapeKind={selectionEditing.setShapeKind}
+            onShapeColor={selectionEditing.setShapeColorKey}
+            onShapeFill={selectionEditing.setShapeFillKey}
+            onShapeStrokeWidth={selectionEditing.setShapeStrokeWidth}
+            onShowMeasurements={selectionEditing.setShapeShowMeasurements}
+            onConnectorStyle={selectionEditing.setConnectorStyle}
+            onConnectorColor={selectionEditing.setConnectorColorKey}
+            onConnectorStrokeWidth={selectionEditing.setConnectorStrokeWidth}
+            onDone={() => selectionEditing.setShapeOptionsVisible(false)}
+          />
+        )}
 
-      {!editing && !tablet && stylingTextObject && (
+      {!selectionEditing.editing && !tablet && stylingTextObject && (
         <ObjectOptionsSheet
           theme={theme}
           dark={dark}
@@ -4013,44 +1786,80 @@ function mathSpanAtPoint(
           bottomOffset={optionsBottom}
           doneLabel="Done"
           doneHint="Closes the style options"
-          onColorChange={(key) => updateStyledObject({ colorKey: key })}
-          onFontSizeChange={(size) => updateStyledObject({ fontSize: size })}
-          onFontWeightChange={(weight) => updateStyledObject({ fontWeight: weight })}
-          onFontStyleChange={(style) => updateStyledObject({ fontStyle: style })}
-          onDone={() => setStylingObjectId(null)}
+          onColorChange={(key) => selectionEditing.updateStyledObject({ colorKey: key })}
+          onFontSizeChange={(size) => selectionEditing.updateStyledObject({ fontSize: size })}
+          onFontWeightChange={(weight) =>
+            selectionEditing.updateStyledObject({ fontWeight: weight })
+          }
+          onFontStyleChange={(style) => selectionEditing.updateStyledObject({ fontStyle: style })}
+          onDone={() => selectionEditing.setStylingObjectId(null)}
         />
       )}
 
-      {!editing && !tablet && stylingGeometricObject && (
+      {!selectionEditing.editing && !tablet && stylingGeometricObject && (
         <ShapeOptionsSheet
           theme={theme}
           mode={stylingGeometricObject.type}
-          shapeKind={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.shape : shapeKind}
-          shapeColorKey={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.colorKey : shapeColorKey}
-          shapeFillKey={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.fillKey : shapeFillKey}
-          shapeStrokeWidth={stylingGeometricObject.type === 'shape' ? stylingGeometricObject.strokeWidth : shapeStrokeWidth}
+          shapeKind={
+            stylingGeometricObject.type === 'shape'
+              ? stylingGeometricObject.shape
+              : selectionEditing.shapeKind
+          }
+          shapeColorKey={
+            stylingGeometricObject.type === 'shape'
+              ? stylingGeometricObject.colorKey
+              : selectionEditing.shapeColorKey
+          }
+          shapeFillKey={
+            stylingGeometricObject.type === 'shape'
+              ? stylingGeometricObject.fillKey
+              : selectionEditing.shapeFillKey
+          }
+          shapeStrokeWidth={
+            stylingGeometricObject.type === 'shape'
+              ? stylingGeometricObject.strokeWidth
+              : selectionEditing.shapeStrokeWidth
+          }
           showMeasurements={
             stylingGeometricObject.type === 'shape'
               ? Boolean(stylingGeometricObject.showMeasurements)
               : false
           }
-          connectorStyle={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.style : connectorStyle}
-          connectorColorKey={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.colorKey : connectorColorKey}
-          connectorStrokeWidth={stylingGeometricObject.type === 'connector' ? stylingGeometricObject.strokeWidth : connectorStrokeWidth}
+          connectorStyle={
+            stylingGeometricObject.type === 'connector'
+              ? stylingGeometricObject.style
+              : selectionEditing.connectorStyle
+          }
+          connectorColorKey={
+            stylingGeometricObject.type === 'connector'
+              ? stylingGeometricObject.colorKey
+              : selectionEditing.connectorColorKey
+          }
+          connectorStrokeWidth={
+            stylingGeometricObject.type === 'connector'
+              ? stylingGeometricObject.strokeWidth
+              : selectionEditing.connectorStrokeWidth
+          }
           bottomOffset={optionsBottom}
-          onShapeKind={(value) => updateStyledObject({ shape: value })}
-          onShapeColor={(value) => updateStyledObject({ colorKey: value })}
-          onShapeFill={(value) => updateStyledObject({ fillKey: value })}
-          onShapeStrokeWidth={(value) => updateStyledObject({ strokeWidth: value })}
-          onShowMeasurements={(value) => updateStyledObject({ showMeasurements: value })}
-          onConnectorStyle={(value) => updateStyledObject({ style: value })}
-          onConnectorColor={(value) => updateStyledObject({ colorKey: value })}
-          onConnectorStrokeWidth={(value) => updateStyledObject({ strokeWidth: value })}
-          onDone={() => setStylingObjectId(null)}
+          onShapeKind={(value) => selectionEditing.updateStyledObject({ shape: value })}
+          onShapeColor={(value) => selectionEditing.updateStyledObject({ colorKey: value })}
+          onShapeFill={(value) => selectionEditing.updateStyledObject({ fillKey: value })}
+          onShapeStrokeWidth={(value) =>
+            selectionEditing.updateStyledObject({ strokeWidth: value })
+          }
+          onShowMeasurements={(value) =>
+            selectionEditing.updateStyledObject({ showMeasurements: value })
+          }
+          onConnectorStyle={(value) => selectionEditing.updateStyledObject({ style: value })}
+          onConnectorColor={(value) => selectionEditing.updateStyledObject({ colorKey: value })}
+          onConnectorStrokeWidth={(value) =>
+            selectionEditing.updateStyledObject({ strokeWidth: value })
+          }
+          onDone={() => selectionEditing.setStylingObjectId(null)}
         />
       )}
 
-      {!editing && inkOptionsVisible && (
+      {!selectionEditing.editing && inkOptionsVisible && (
         <InkOptionsSheet
           theme={theme}
           dark={dark}
@@ -4082,7 +1891,8 @@ function mathSpanAtPoint(
           onClose={() => setInkOptionsVisible(false)}
         />
       )}
-      {!tablet && !editing && isInkingTool && inkTrayOpen && (
+
+      {!tablet && !selectionEditing.editing && isInkingTool && inkTrayOpen && (
         <InkingQuickTray
           theme={theme}
           dark={dark}
@@ -4095,8 +1905,6 @@ function mathSpanAtPoint(
           bottomOffset={ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom}
           onToolChange={(tool) => {
             setLastInkingTool(tool);
-            // Switching inside the tray keeps the tray open; only its
-            // "more options" button opens the full ink sheet.
             setInkOptionsVisible(false);
             setActiveTool(tool);
           }}
@@ -4113,7 +1921,8 @@ function mathSpanAtPoint(
           }}
         />
       )}
-      {!tablet && !editing && (
+
+      {!tablet && !selectionEditing.editing && (
         <ActionIsland
           theme={theme}
           bottom={islandBottom}
@@ -4127,13 +1936,14 @@ function mathSpanAtPoint(
           onInsert={() => {
             setInkTrayOpen(false);
             setInkOptionsVisible(false);
-            setObjectOptionsVisible(false);
-            setShapeOptionsVisible(false);
+            selectionEditing.setObjectOptionsVisible(false);
+            selectionEditing.setShapeOptionsVisible(false);
             setQuickCreationOpen(true);
           }}
         />
       )}
-      {!tablet && !editing && (
+
+      {!tablet && !selectionEditing.editing && (
         <QuickCreationSheet
           theme={theme}
           dark={dark}
@@ -4142,120 +1952,100 @@ function mathSpanAtPoint(
           onSelectInsert={handleSelectInsert}
           onOpenShapeOptions={(kind) => {
             pressTool(kind);
-            setShapeOptionsVisible(true);
+            selectionEditing.setShapeOptionsVisible(true);
           }}
           onOpenObjectOptions={(kind) => {
             pressTool(kind);
-            setObjectOptionsVisible(true);
+            selectionEditing.setObjectOptionsVisible(true);
           }}
         />
       )}
+
       <LessonReplayModal
-        visible={Boolean(replayLesson)}
-        lesson={replayLesson}
-        alreadySaved={replayAlreadySaved}
+        visible={Boolean(recorder.replayLesson)}
+        lesson={recorder.replayLesson}
+        alreadySaved={recorder.replayAlreadySaved}
         dark={dark}
         boardBackground={board?.settings.background ?? DEFAULT_BOARD_SETTINGS.background}
         boardStyle={board?.settings.style ?? DEFAULT_BOARD_SETTINGS.style}
         theme={theme}
-        notice={replayNotice}
-        onSaveToLibrary={(lesson) => {
-          void handleSaveReplayLesson(lesson);
-        }}
-        onShareLesson={(lesson) => {
-          void handleShareReplayLesson(lesson);
-        }}
-        onDiscard={() => {
-          setReplayLesson(null);
-          setReplayNotice(null);
-        }}
-        onClose={() => {
-          setReplayLesson(null);
-          setReplayNotice(null);
-        }}
+        notice={recorder.replayNotice}
+        onSaveToLibrary={(lesson) => void recorder.handleSaveReplayLesson(lesson)}
+        onShareLesson={(lesson) => void recorder.handleShareReplayLesson(lesson)}
+        onDiscard={recorder.closeReplayModal}
+        onClose={recorder.closeReplayModal}
       />
+
       <SavedLessonsModal
-        visible={savedLessonsVisible}
-        lessons={savedLessons}
+        visible={recorder.savedLessonsVisible}
+        lessons={recorder.savedLessons}
         theme={theme}
-        onPlayLesson={(item) => {
-          void handlePlaySavedLesson(item);
-        }}
-        onShareLesson={(item) => {
-          void handleShareSavedLesson(item);
-        }}
-        onDeleteLesson={(item) => {
-          void handleDeleteSavedLesson(item);
-        }}
-        onClose={() => setSavedLessonsVisible(false)}
+        onPlayLesson={(item) => void recorder.handlePlaySavedLesson(item)}
+        onShareLesson={(item) => void recorder.handleShareSavedLesson(item)}
+        onDeleteLesson={(item) => void recorder.handleDeleteSavedLesson(item)}
+        onClose={() => recorder.setSavedLessonsVisible(false)}
       />
+
       {imageFlowOpen && imageFlowId && boardId && (
         <ImageImportFlow
           key={imageFlowId}
           theme={theme}
           boardId={boardId}
-          point={screenToCanvas(
-            {
-              x: canvasRect.width > 0 ? canvasRect.width / 2 : 180,
-              y: canvasRect.height > 0 ? canvasRect.height / 2 : 300,
-            },
-            viewport,
-          )}
-          onPlace={placeImageObject}
-          onExplodeStickyNotes={explodeImageStickyNotes}
-          onClose={() => { setImageFlowOpen(false); setImageFlowId(null); }}
+          point={getViewportCenterPoint()}
+          onPlace={ocrAndMath.placeImageObject}
+          onExplodeStickyNotes={ocrAndMath.explodeImageStickyNotes}
+          onClose={() => {
+            setImageFlowOpen(false);
+            setImageFlowId(null);
+          }}
         />
       )}
+
       <LiveClassHostSheet
         visible={Boolean(
-          hostSheetVisible &&
-            classroomState?.active &&
-            classroomState.role === 'teacher' &&
-            classroomState.roomInfo,
+          liveClass.hostSheetVisible &&
+            liveClass.classroomState?.active &&
+            liveClass.classroomState.role === 'teacher' &&
+            liveClass.classroomState.roomInfo,
         )}
         centered={tablet}
-        roomInfo={classroomState?.roomInfo ?? null}
-        status={classroomState?.status ?? 'disconnected'}
-        participants={classroomState?.participants ?? []}
-        studentBoards={classroomState?.studentBoards ?? {}}
-        showcasedStudentPeerId={classroomState?.showcasedStudentPeerId ?? null}
+        roomInfo={liveClass.classroomState?.roomInfo ?? null}
+        status={liveClass.classroomState?.status ?? 'disconnected'}
+        participants={liveClass.classroomState?.participants ?? []}
+        studentBoards={liveClass.classroomState?.studentBoards ?? {}}
+        showcasedStudentPeerId={liveClass.classroomState?.showcasedStudentPeerId ?? null}
         theme={theme}
-        onClose={() => setHostSheetVisible(false)}
-        onToggleLock={(locked) => {
-          void classroomSessionRef.current?.setClassLocked(locked);
-        }}
-        onToggleFollowViewport={(follow) => {
-          void classroomSessionRef.current?.setFollowTeacherViewport(follow);
-        }}
+        onClose={() => liveClass.setHostSheetVisible(false)}
+        onToggleLock={(locked) => void liveClass.classroomSessionRef.current?.setClassLocked(locked)}
+        onToggleFollowViewport={(follow) =>
+          void liveClass.classroomSessionRef.current?.setFollowTeacherViewport(follow)
+        }
         onToggleDrawPermission={(peerId, currentlyCanDraw) => {
           if (currentlyCanDraw) {
-            void classroomSessionRef.current?.revokeDrawPermission(peerId);
+            void liveClass.classroomSessionRef.current?.revokeDrawPermission(peerId);
           } else {
-            void classroomSessionRef.current?.grantDrawPermission(peerId);
+            void liveClass.classroomSessionRef.current?.grantDrawPermission(peerId);
           }
         }}
         onToggleVoicePermission={(peerId, currentlyCanSpeak) => {
           if (currentlyCanSpeak) {
-            void classroomSessionRef.current?.revokeStudentVoice(peerId);
+            void liveClass.classroomSessionRef.current?.revokeStudentVoice(peerId);
           } else {
-            void classroomSessionRef.current?.allowStudentVoice(peerId);
+            void liveClass.classroomSessionRef.current?.allowStudentVoice(peerId);
           }
         }}
-        onLowerHand={(peerId) => {
-          void classroomSessionRef.current?.lowerStudentHand(peerId);
-        }}
-        onShowcaseStudent={(peerId) => {
-          void classroomSessionRef.current?.showcaseStudentBoard(peerId);
-        }}
-        onKickParticipant={(peerId) => {
-          void classroomSessionRef.current?.kickParticipant(peerId);
-        }}
-        onEndClass={() => {
-          setHostSheetVisible(false);
-          void audioAdapterRef.current?.disconnect();
-          void classroomSessionRef.current?.endOrLeave();
-        }}
+        onLowerHand={(peerId) =>
+          void liveClass.classroomSessionRef.current?.lowerStudentHand(peerId)
+        }
+        onShowcaseStudent={(peerId) =>
+          void liveClass.classroomSessionRef.current?.showcaseStudentBoard(peerId)
+        }
+        onKickParticipant={(peerId) =>
+          void liveClass.classroomSessionRef.current?.kickParticipant(peerId)
+        }
+        onEndClass={liveClass.handleEndClassFromSheet}
       />
+
       <ExportSheet
         visible={exportSheetVisible}
         theme={theme}
@@ -4263,22 +2053,20 @@ function mathSpanAtPoint(
         boardTitle={title}
         document={document}
         viewport={viewport}
-        canvasSize={{
-          width: canvasRect.width > 0 ? canvasRect.width : width,
-          height: canvasRect.height > 0 ? canvasRect.height : windowHeight - 120,
-        }}
+        canvasSize={canvasBounds}
         settings={board?.settings ?? DEFAULT_BOARD_SETTINGS}
         selectedIds={selectedObjectIds}
-        pages={exportPages}
+        pages={persistence.exportPages}
         defaultFormat={preferences.exportFormat}
         hasRevealedTapes={hasRevealedTapes}
         onResetAllTapes={handleResetAllTapes}
         onClose={() => setExportSheetVisible(false)}
       />
+
       <PollOverlayModal
         visible={pollModalVisible}
-        role={classroomState?.role ?? 'teacher'}
-        peerId={classroomState?.peerId ?? 'teacher'}
+        role={liveClass.classroomState?.role ?? 'teacher'}
+        peerId={liveClass.classroomState?.peerId ?? 'teacher'}
         activePoll={activePoll}
         theme={theme}
         onStartPoll={handleStartPoll}
@@ -4288,579 +2076,110 @@ function mathSpanAtPoint(
         onClearPoll={handleClearPoll}
         onDismiss={handleClosePollModal}
       />
+
       <FlashcardStudyModal
         visible={flashcardsVisible}
         document={document}
         theme={theme}
         onClose={() => setFlashcardsVisible(false)}
       />
+
       <PageSorterSheet
         visible={pageSorterVisible}
         theme={theme}
-        pages={pages}
-        activePageId={activePageId}
+        pages={persistence.pages}
+        activePageId={persistence.activePageId}
         onClose={() => setPageSorterVisible(false)}
-        onSelectPage={(pageId) => switchToPage(pageId)}
-        onAddPage={handleAddPage}
-        onDuplicatePage={handleDuplicatePage}
-        onRenamePage={handleRenamePage}
-        onMovePage={handleMovePage}
-        onDeletePage={handleDeletePage}
+        onSelectPage={(pageId) => persistence.switchToPage(pageId)}
+        onAddPage={persistence.handleAddPage}
+        onDuplicatePage={persistence.handleDuplicatePage}
+        onRenamePage={persistence.handleRenamePage}
+        onMovePage={persistence.handleMovePage}
+        onDeletePage={persistence.handleDeletePage}
         onOpenPdfImport={() => setPdfImportVisible(true)}
       />
+
       <PdfImportModal
         visible={pdfImportVisible}
         boardId={boardId ?? null}
         theme={theme}
-        insertAtIndex={activePageIndex + 1}
+        insertAtIndex={persistence.activePageIndex + 1}
         onClose={() => setPdfImportVisible(false)}
-        onImportedPages={handleImportedPdfPages}
+        onImportedPages={persistence.handleImportedPdfPages}
         onFallbackImageImport={() => {
           if (!boardId) return;
           setImageFlowId(`${boardId}-${Date.now()}`);
           setImageFlowOpen(true);
         }}
       />
-      {selectedInkIds.length > 0 && !editing && (
+
+      {selectedInkIds.length > 0 && !selectionEditing.editing && (
         <View
-          style={{
-            position: 'absolute',
-            bottom: ACTION_ISLAND_HEIGHT + spacing.md + islandBottom,
-            alignSelf: 'center',
-            zIndex: 30,
-          }}
+          style={[
+            styles.convertInkWrap,
+            { bottom: ACTION_ISLAND_HEIGHT + spacing.md + islandBottom },
+          ]}
         >
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Convert selected ink to text"
-            onPress={() => void handleConvertInkToText()}
+            onPress={() => void ocrAndMath.handleConvertInkToText()}
             style={({ pressed }) => [
-              {
-                backgroundColor: theme.primary,
-                paddingHorizontal: spacing.md,
-                paddingVertical: spacing.xs + 2,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: theme.border,
-                minHeight: 40,
-                justifyContent: 'center',
-                alignItems: 'center',
-              },
+              styles.convertInkButton,
+              { backgroundColor: theme.primary, borderColor: theme.border },
               pressed && styles.pressed,
             ]}
           >
-            <Text style={{ color: theme.surface, fontWeight: '700', fontSize: 13 }}>
+            <Text style={[styles.convertInkText, { color: theme.surface }]}>
               Convert to text ({selectedInkIds.length})
             </Text>
           </Pressable>
         </View>
       )}
+
       <MathKeyboardSheet
-        visible={mathSheetVisible}
+        visible={ocrAndMath.mathSheetVisible}
         theme={theme}
-        initialLatex={editingMathObject?.latex ?? ''}
-        isEditing={Boolean(editingMathObject)}
-        onSubmit={handleSubmitMath}
+        initialLatex={ocrAndMath.editingMathObject?.latex ?? ''}
+        isEditing={Boolean(ocrAndMath.editingMathObject)}
+        onSubmit={ocrAndMath.handleSubmitMath}
         onClose={() => {
-          setMathSheetVisible(false);
-          setEditingMathObject(null);
+          ocrAndMath.setMathSheetVisible(false);
+          ocrAndMath.setEditingMathObject(null);
         }}
       />
+
       <Modal
-        visible={Boolean(inkOcrSession)}
+        visible={Boolean(ocrAndMath.inkOcrSession)}
         transparent={false}
-        animationType="slide"
+        animationType={reducedMotion ? 'none' : 'slide'}
         statusBarTranslucent
-        onRequestClose={handleCloseInkOcr}
+        onRequestClose={ocrAndMath.handleCloseInkOcr}
       >
-        {inkOcrSession && (
+        {ocrAndMath.inkOcrSession && (
           <OcrReviewScreen
             theme={theme}
-            uri={inkOcrSession.uri}
-            width={Math.max(1, Math.round(inkOcrSession.bounds.width))}
-            height={Math.max(1, Math.round(inkOcrSession.bounds.height))}
-            state={inkOcrSession.state}
-            onChangeText={(nextText) =>
-              setInkOcrSession((prev) =>
-                prev ? { ...prev, state: withOcrCorrection(prev.state, nextText) } : null,
-              )
-            }
-            onRetry={() => {
-              setInkOcrSession((prev) =>
-                prev ? { ...prev, state: loadingOcrState() } : null,
-              );
-              void runInkOcr(inkOcrSession.uri);
-            }}
-            onAddText={handleCommitInkOcrText}
-            onAddImageOnly={handleCloseInkOcr}
-            onClose={handleCloseInkOcr}
+            uri={ocrAndMath.inkOcrSession.uri}
+            width={Math.max(1, Math.round(ocrAndMath.inkOcrSession.bounds.width))}
+            height={Math.max(1, Math.round(ocrAndMath.inkOcrSession.bounds.height))}
+            state={ocrAndMath.inkOcrSession.state}
+            onChangeText={ocrAndMath.handleChangeInkOcrText}
+            onRetry={ocrAndMath.handleRetryInkOcr}
+            onAddText={ocrAndMath.handleCommitInkOcrText}
+            onAddImageOnly={ocrAndMath.handleCloseInkOcr}
+            onClose={ocrAndMath.handleCloseInkOcr}
           />
         )}
       </Modal>
-      <Modal
+
+      <BoardStyleModal
         visible={boardStyleModalVisible}
-        transparent
-        animationType="fade"
-        statusBarTranslucent
-        onRequestClose={() => setBoardStyleModalVisible(false)}
-      >
-        <Pressable style={styles.styleModalScrim} onPress={() => setBoardStyleModalVisible(false)}>
-          <Pressable
-            style={[styles.styleModalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
-            onPress={() => undefined}
-          >
-            <View style={styles.styleModalHeader}>
-              <Text style={[styles.styleModalTitle, { color: theme.foreground }]}>Board background</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close board background options"
-                onPress={() => setBoardStyleModalVisible(false)}
-                hitSlop={8}
-              >
-                <Text style={[styles.styleModalDone, { color: theme.primary }]}>Done</Text>
-              </Pressable>
-            </View>
-            <View style={styles.bgColorRow}>
-              {(['light', 'white', 'dark'] as const).map((bg) => {
-                const currentBg = board?.settings.background ?? DEFAULT_BOARD_SETTINGS.background;
-                const active = currentBg === bg;
-                const label = bg === 'white' ? 'White' : bg === 'dark' ? 'Dark' : 'Light';
-                return (
-                  <Pressable
-                    key={bg}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: active }}
-                    accessibilityLabel={`${label} canvas color`}
-                    onPress={() => {
-                      if (boardId) {
-                        const base = board?.settings ?? DEFAULT_BOARD_SETTINGS;
-                        updateSettings(boardId, { ...base, background: bg as BoardBackground });
-                      }
-                    }}
-                    style={[
-                      styles.bgColorChip,
-                      {
-                        borderColor: active ? theme.primary : theme.border,
-                        backgroundColor: active ? theme.primary + '16' : theme.background,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.bgColorChipText, { color: active ? theme.primary : theme.foreground }]}>
-                      {label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <View style={[styles.styleOptionList, { borderColor: theme.border, backgroundColor: theme.background }]}>
-              {BOARD_STYLE_OPTIONS.map((opt, idx) => {
-                const currentStyle = board?.settings.style ?? DEFAULT_BOARD_SETTINGS.style;
-                const active = currentStyle === opt.key;
-                return (
-                  <Pressable
-                    key={opt.key}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: active }}
-                    accessibilityLabel={`${opt.label}, ${opt.description}`}
-                    onPress={() => {
-                      if (boardId) {
-                        const base = board?.settings ?? DEFAULT_BOARD_SETTINGS;
-                        updateSettings(boardId, { ...base, style: opt.key as BoardStyle });
-                      }
-                      setBoardStyleModalVisible(false);
-                    }}
-                    style={[
-                      styles.styleOptionRow,
-                      idx > 0 && { borderTopWidth: 1, borderTopColor: theme.border },
-                      active && { backgroundColor: theme.primary + '16' },
-                    ]}
-                  >
-                    <View style={styles.styleOptionText}>
-                      <Text style={[styles.styleOptionLabel, { color: active ? theme.primary : theme.foreground }]}>
-                        {opt.label}
-                      </Text>
-                      <Text style={[styles.styleOptionDesc, { color: theme.foreground }]}>{opt.description}</Text>
-                    </View>
-                    {active && <CheckIcon size={20} color={theme.primary} />}
-                  </Pressable>
-                );
-              })}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        settings={board?.settings ?? DEFAULT_BOARD_SETTINGS}
+        theme={theme}
+        reducedMotion={reducedMotion}
+        onChangeSettings={handleChangeBoardSettings}
+        onClose={() => setBoardStyleModalVisible(false)}
+      />
     </View>
   );
 }
-
-function ToolRail({
-  theme,
-  activeTool,
-  bottomInset,
-  timerVisible,
-  calculatorVisible,
-  geometryActive,
-  faceCamVisible,
-  recorderBarVisible,
-  onToolPress,
-  onToggleGeometryBox,
-  onOpenMath,
-  onOpenPdfImport,
-  onToggleTimer,
-  onToggleCalculator,
-  onToggleFaceCam,
-  onToggleRecorder,
-  onOpenSavedLessons,
-  stageOverlayVisible,
-  stageOverlayMode,
-  voicePinRecording,
-  onStartVoicePin,
-  onOpenStageOverlay,
-  onOpenFlashcards,
-}: {
-  theme: ThemeColors;
-  activeTool: InkTool;
-  bottomInset: number;
-  timerVisible: boolean;
-  calculatorVisible: boolean;
-  geometryActive: boolean;
-  faceCamVisible: boolean;
-  recorderBarVisible: boolean;
-  onToolPress: (tool: InkTool) => void;
-  onToggleGeometryBox: () => void;
-  onOpenMath: () => void;
-  onOpenPdfImport: () => void;
-  onToggleTimer: () => void;
-  onToggleCalculator: () => void;
-  onToggleFaceCam: () => void;
-  onToggleRecorder: () => void;
-  onOpenSavedLessons: () => void;
-  stageOverlayVisible: boolean;
-  stageOverlayMode: 'curtain' | 'spotlight';
-  voicePinRecording: boolean;
-  onStartVoicePin: () => void;
-  onOpenStageOverlay: (mode: 'curtain' | 'spotlight') => void;
-  onOpenFlashcards: () => void;
-}) {
-  return (
-    <View style={[styles.rail, { borderRightColor: theme.border, backgroundColor: theme.surface }]}>
-      <ScrollView
-        contentContainerStyle={[
-          styles.railContent,
-          { paddingBottom: bottomInset + spacing.md },
-        ]}
-        showsVerticalScrollIndicator={false}
-      >
-        {TOOLS.map((definition) => {
-          const { Icon, label, tool } = definition;
-          const selected = activeTool === tool;
-          const color = selected ? theme.primary : theme.foreground;
-          return (
-            <Pressable
-              key={tool}
-              accessibilityRole="button"
-              accessibilityLabel={label}
-              accessibilityHint={tool !== 'select' ? 'Opens the tool options when selected again' : undefined}
-              accessibilityState={{ selected }}
-              onPress={() => onToolPress(tool)}
-              style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-            >
-              <View style={[styles.toolIconWrap, selected && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-                <Icon size={22} color={color} />
-              </View>
-              <Text style={[styles.toolLabel, { color }]} numberOfLines={1}>{label}</Text>
-            </Pressable>
-          );
-        })}
-        <View style={[styles.railDivider, { backgroundColor: theme.border }]} />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Toggle geometry box"
-          accessibilityState={{ selected: geometryActive }}
-          onPress={onToggleGeometryBox}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, geometryActive && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-            <Text style={{ fontSize: 16, color: geometryActive ? theme.primary : theme.foreground }}>📐</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: geometryActive ? theme.primary : theme.foreground }]} numberOfLines={1}>Geo</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Toggle floating timer"
-          accessibilityState={{ selected: timerVisible }}
-          onPress={onToggleTimer}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, timerVisible && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-            <TimerIcon size={22} color={timerVisible ? theme.primary : theme.foreground} />
-          </View>
-          <Text style={[styles.toolLabel, { color: timerVisible ? theme.primary : theme.foreground }]} numberOfLines={1}>Timer</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Toggle floating calculator"
-          accessibilityState={{ selected: calculatorVisible }}
-          onPress={onToggleCalculator}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, calculatorVisible && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-            <CalculatorIcon size={22} color={calculatorVisible ? theme.primary : theme.foreground} />
-          </View>
-          <Text style={[styles.toolLabel, { color: calculatorVisible ? theme.primary : theme.foreground }]} numberOfLines={1}>Calc</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open math formula builder"
-          onPress={onOpenMath}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={styles.toolIconWrap}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: theme.foreground }}>∑</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>Math</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Import PDF for markup"
-          onPress={onOpenPdfImport}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={styles.toolIconWrap}>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: theme.foreground }}>PDF</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>PDF</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Toggle floating Face-Cam"
-          accessibilityState={{ selected: faceCamVisible }}
-          onPress={onToggleFaceCam}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, faceCamVisible && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-            <Text style={{ fontSize: 16, fontWeight: '700', color: faceCamVisible ? theme.primary : theme.foreground }}>◉</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: faceCamVisible ? theme.primary : theme.foreground }]} numberOfLines={1}>Cam</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Toggle lesson recorder"
-          accessibilityState={{ selected: recorderBarVisible }}
-          onPress={onToggleRecorder}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, recorderBarVisible && { backgroundColor: '#DC26261F', borderColor: '#DC2626' }]}>
-            <Text style={{ fontSize: 16, fontWeight: '700', color: '#DC2626' }}>●</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: recorderBarVisible ? '#DC2626' : theme.foreground }]} numberOfLines={1}>Rec</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open saved lessons"
-          onPress={onOpenSavedLessons}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={styles.toolIconWrap}>
-            <Text style={{ fontSize: 14, fontWeight: '700', color: theme.foreground }}>▶</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>Lessons</Text>
-        </Pressable>
-        <View style={[styles.railDivider, { backgroundColor: theme.border }]} />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Place tap-to-reveal answer tape"
-          accessibilityState={{ selected: activeTool === 'reveal-tape' }}
-          onPress={() => onToolPress('reveal-tape')}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, activeTool === 'reveal-tape' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: activeTool === 'reveal-tape' ? theme.primary : theme.foreground }}>▓</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: activeTool === 'reveal-tape' ? theme.primary : theme.foreground }]} numberOfLines={1}>Tape</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Record spatial voice pin"
-          accessibilityState={{ selected: voicePinRecording }}
-          onPress={onStartVoicePin}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, voicePinRecording && { backgroundColor: '#DC26261F', borderColor: '#DC2626' }]}>
-            <Text style={{ fontSize: 15, color: voicePinRecording ? '#DC2626' : theme.foreground }}>🎤</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: voicePinRecording ? '#DC2626' : theme.foreground }]} numberOfLines={1}>Voice</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open stage curtain shade"
-          accessibilityState={{ selected: stageOverlayVisible && stageOverlayMode === 'curtain' }}
-          onPress={() => onOpenStageOverlay('curtain')}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, stageOverlayVisible && stageOverlayMode === 'curtain' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-            <Text style={{ fontSize: 15, color: stageOverlayVisible && stageOverlayMode === 'curtain' ? theme.primary : theme.foreground }}>▥</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: stageOverlayVisible && stageOverlayMode === 'curtain' ? theme.primary : theme.foreground }]} numberOfLines={1}>Curtain</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Open spotlight focus shade"
-          accessibilityState={{ selected: stageOverlayVisible && stageOverlayMode === 'spotlight' }}
-          onPress={() => onOpenStageOverlay('spotlight')}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={[styles.toolIconWrap, stageOverlayVisible && stageOverlayMode === 'spotlight' && { backgroundColor: theme.primary + '1F', borderColor: theme.primary }]}>
-            <Text style={{ fontSize: 15, color: stageOverlayVisible && stageOverlayMode === 'spotlight' ? theme.primary : theme.foreground }}>◎</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: stageOverlayVisible && stageOverlayMode === 'spotlight' ? theme.primary : theme.foreground }]} numberOfLines={1}>Spot</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Study board flashcards"
-          onPress={onOpenFlashcards}
-          style={({ pressed }) => [styles.tool, pressed && styles.toolPressed]}
-        >
-          <View style={styles.toolIconWrap}>
-            <Text style={{ fontSize: 15, color: theme.foreground }}>🗂</Text>
-          </View>
-          <Text style={[styles.toolLabel, { color: theme.foreground }]} numberOfLines={1}>Cards</Text>
-        </Pressable>
-      </ScrollView>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  topBar: { minHeight: 64, flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.sm, borderBottomWidth: 1, gap: spacing.sm },
-  iconButton: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '180deg' }] },
-  title: { flex: 1, ...typography.bodyStrong, paddingVertical: spacing.sm },
-  actions: { flexDirection: 'row', alignItems: 'center' },
-  action: { width: touchTarget, height: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  actionDisabled: { opacity: 0.3 },
-  workspace: { flex: 1, flexDirection: 'row', position: 'relative' },
-  rail: { width: 84, borderRightWidth: 1 },
-  railContent: { alignItems: 'center', paddingTop: spacing.md, gap: spacing.xs },
-  canvas: { flex: 1, margin: spacing.md, borderWidth: 1, borderRadius: radii.md },
-  canvasClip: { flex: 1, overflow: 'hidden', borderRadius: radii.md },
-  canvasGuidance: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, padding: spacing.lg },
-  canvasTitle: { ...typography.subtitle },
-  canvasBody: { ...typography.body, opacity: 0.7, textAlign: 'center' },
-  /** Tablet tool rail entries (the phone layout uses ActionIsland). */
-  tool: { minWidth: DOCK_TOUCH_TARGET, minHeight: DOCK_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, gap: 2 },
-  toolIconWrap: { width: 36, height: 32, borderWidth: 1, borderColor: 'transparent', borderRadius: radii.sm, alignItems: 'center', justifyContent: 'center' },
-  toolLabel: { ...typography.caption, fontSize: 11, textAlign: 'center' },
-  toolPressed: { opacity: 0.65 },
-  objectEditor: { position: 'absolute', zIndex: 10, textAlignVertical: 'top' },
-  selectionRail: { position: 'absolute', zIndex: 20, borderWidth: 1, borderRadius: radii.sm, overflow: 'hidden' },
-  selectionAction: { height: touchTarget, alignItems: 'center', justifyContent: 'center' },
-  selectionActionSeparator: { borderTopWidth: 1 },
-  editingFloatingBar: {
-    position: 'absolute',
-    zIndex: 22,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    padding: 4,
-    borderRadius: radii.md,
-    borderWidth: 1,
-  },
-  editingBarButton: {
-    minWidth: touchTarget,
-    minHeight: touchTarget,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radii.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  },
-  editingBarLabel: {
-    ...typography.caption,
-    fontWeight: '600',
-  },
-  pressed: { opacity: 0.65 },
-  storageBanner: { marginHorizontal: spacing.md, marginTop: spacing.sm, padding: spacing.md, borderWidth: 1, borderRadius: radii.sm },
-  storageBannerText: { ...typography.caption, lineHeight: 18 },
-  editorLoading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
-  editorLoadingText: { ...typography.body },
-  railDivider: { width: 32, height: 1, marginVertical: spacing.xs },
-  styleModalScrim: {
-    flex: 1,
-    backgroundColor: 'rgba(19, 78, 74, 0.24)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  styleModalCard: {
-    width: '100%',
-    maxWidth: 380,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    padding: spacing.md,
-    gap: spacing.sm,
-  },
-  styleModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  styleModalTitle: {
-    ...typography.subtitle,
-  },
-  styleModalDone: {
-    ...typography.bodyStrong,
-  },
-  bgColorRow: {
-    flexDirection: 'row',
-    gap: spacing.xs,
-  },
-  bgColorChip: {
-    flex: 1,
-    paddingVertical: spacing.xs,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    alignItems: 'center',
-  },
-  bgColorChipText: {
-    ...typography.caption,
-    fontWeight: '600',
-  },
-  styleOptionList: {
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
-  styleOptionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  styleOptionText: {
-    flex: 1,
-    gap: 2,
-  },
-  styleOptionLabel: {
-    ...typography.bodyStrong,
-  },
-  styleOptionDesc: {
-    fontSize: 12,
-    opacity: 0.72,
-  },
-  tableCellInput: {
-    position: 'absolute',
-    borderWidth: 2,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    zIndex: 30,
-  },
-  railTextAction: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-});

@@ -1,74 +1,45 @@
 import { StyleSheet } from 'react-native';
 
-import { colors, radii, spacing, touchTarget, typography } from '../theme';
+import { radii, spacing, touchTarget, typography } from '../theme';
 
 export const homeStyles = StyleSheet.create({
-  root: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  root: {
+    flex: 1,
+  },
+  row: {
+    gap: spacing.md,
+  },
+  listHeader: {
     paddingTop: spacing.md,
-    paddingBottom: spacing.lg,
-    gap: spacing.md,
+    marginBottom: spacing.md,
   },
-  headerCompact: {
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.sm,
-  },
-  wordmarkWrap: { flexShrink: 1 },
-  wordmark: { ...typography.display },
-  subtitle: { ...typography.body, marginTop: spacing.xs },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  iconButton: {
-    width: touchTarget,
-    height: touchTarget,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.sm,
-  },
-  row: { gap: spacing.md },
-  tabletActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  phoneActionStack: {
-    gap: spacing.md,
-  },
-  tabletPrimaryWrap: {
-    minWidth: 200,
-  },
-  customizeLink: {
-    minHeight: touchTarget,
-    paddingHorizontal: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-  },
-  customizeLinkInline: {
-    marginTop: 0,
-    borderWidth: 1,
-    borderRadius: radii.sm,
-  },
-  customizeLinkText: { fontSize: 14, fontWeight: '600' },
-  listHeader: { marginBottom: spacing.lg },
   twoPaneBody: {
     flex: 1,
     flexDirection: 'row',
     gap: spacing.xl,
+    paddingTop: spacing.md,
   },
   sidebar: {
     borderRightWidth: 1,
     paddingRight: spacing.lg,
     paddingBottom: spacing.xl,
+    gap: spacing.sm + 2,
+  },
+  sidebarButton: {
+    minHeight: touchTarget + 4,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.sm,
+  },
+  sidebarButtonPressed: {
+    opacity: 0.78,
+  },
+  sidebarButtonText: {
+    ...typography.bodyStrong,
+    fontSize: 14,
   },
   sidebarCard: {
     borderWidth: 1,
@@ -80,72 +51,58 @@ export const homeStyles = StyleSheet.create({
   sidebarMetaTitle: {
     ...typography.caption,
     fontWeight: '700',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
   },
   sidebarMetaBody: {
     ...typography.caption,
-    opacity: 0.8,
+    opacity: 0.82,
     lineHeight: 18,
   },
   gridPane: {
     flex: 1,
+    gap: spacing.md,
   },
-  empty: {
-    alignItems: 'center',
-    alignSelf: 'center',
-    width: '100%',
-    maxWidth: 480,
-    marginTop: spacing.xl,
-    padding: spacing.xl,
-    borderWidth: 1,
-    borderRadius: radii.lg,
+  twoPaneSearchHeader: {
+    gap: spacing.sm,
   },
-  emptyIcon: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  emptyTitle: { ...typography.title, textAlign: 'center' },
-  emptyBody: {
-    ...typography.body,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-    maxWidth: 320,
-    lineHeight: 24,
-  },
-  emptyButton: {
-    minHeight: touchTarget + 4,
+  sectionMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radii.sm,
-    marginTop: spacing.xl,
+    justifyContent: 'space-between',
   },
-  emptyButtonText: { ...typography.bodyStrong, color: colors.onAccent },
-  import: {
-    minHeight: touchTarget,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.md,
+  sectionHeading: {
+    ...typography.caption,
+    fontWeight: '700',
+    letterSpacing: 0.8,
   },
-  importText: { ...typography.bodyStrong },
+  sectionCount: {
+    ...typography.caption,
+    opacity: 0.78,
+  },
   storageBanner: {
-    marginBottom: spacing.md,
+    marginTop: spacing.sm,
     padding: spacing.md,
     borderWidth: 1,
     borderRadius: radii.sm,
   },
-  storageBannerText: { ...typography.caption, lineHeight: 18 },
-  loading: {
+  storageBannerText: {
+    ...typography.caption,
+    lineHeight: 18,
+  },
+  importFooter: {
+    minHeight: touchTarget,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.xxl,
+    gap: spacing.xs + 2,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.md,
   },
-  loadingText: { ...typography.body },
+  importFooterText: {
+    ...typography.bodyStrong,
+    fontSize: 14,
+  },
+  itemSeparator: {
+    height: spacing.md,
+  },
 });

@@ -16,6 +16,7 @@ export const stageCurtainOverlayStyles = StyleSheet.create({
   },
   curtainHandleBar: {
     position: 'absolute',
+    top: 0,
     left: 0,
     right: 0,
     height: 48,
@@ -47,11 +48,15 @@ export const stageCurtainOverlayStyles = StyleSheet.create({
   },
   spotlightMoveRing: {
     position: 'absolute',
+    top: 0,
+    left: 0,
     borderWidth: 2,
     borderColor: '#2DD4BF',
   },
   spotlightResizeHandle: {
     position: 'absolute',
+    top: 0,
+    left: 0,
     width: 44,
     height: 44,
     alignItems: 'center',
@@ -77,7 +82,7 @@ export const stageCurtainOverlayStyles = StyleSheet.create({
     gap: 4,
   },
   modeChip: {
-    minHeight: 36,
+    minHeight: touchTarget,
     minWidth: touchTarget,
     paddingHorizontal: spacing.sm,
     borderRadius: 999,

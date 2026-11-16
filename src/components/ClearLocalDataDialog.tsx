@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -11,29 +11,34 @@ import {
 
 import { formatBytes } from '../export/regions';
 import type { LocalDataStats } from '../persistence/repository';
-import { colors, radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
-import { CheckIcon, DatabaseIcon, BoardIcon, SettingsIcon, TrashIcon } from './icons';
+import { resolveFlowModalLayout } from '../responsive/layout';
+import { colors, spacing, type ThemeColors } from '../theme';
+import { clearLocalDataDialogStyles as styles } from './ClearLocalDataDialog.styles';
+import { BoardIcon, CheckIcon, DatabaseIcon, SettingsIcon, TrashIcon } from './icons';
 
 type ClearLocalDataDialogProps = {
   visible: boolean;
   theme: ThemeColors;
   isDark: boolean;
+  reducedMotion?: boolean;
   stats: LocalDataStats | null;
   loadingStats?: boolean;
   onClose: () => void;
   onConfirm: () => Promise<void>;
 };
 
-export function ClearLocalDataDialog({
+export const ClearLocalDataDialog = memo(function ClearLocalDataDialog({
   visible,
   theme,
   isDark,
+  reducedMotion = false,
   stats,
   loadingStats,
   onClose,
   onConfirm,
 }: ClearLocalDataDialogProps) {
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  const { centeredModal, modalMaxWidth } = resolveFlowModalLayout(width, height);
   const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -44,7 +49,11 @@ export function ClearLocalDataDialog({
     }
   }, [visible]);
 
-  const handleConfirm = async () => {
+  const toggleAcknowledge = useCallback(() => {
+    setAcknowledged((curr) => !curr);
+  }, []);
+
+  const handleConfirm = useCallback(async () => {
     if (!acknowledged || busy) return;
     setBusy(true);
     try {
@@ -52,19 +61,19 @@ export function ClearLocalDataDialog({
     } finally {
       setBusy(false);
     }
-  };
+  }, [acknowledged, busy, onConfirm]);
 
-  const isWide = width >= 768;
   const boardCount = stats?.boardCount ?? 0;
   const stickyCount = stats?.stickyCount ?? 0;
-  const drawingCount = (stats?.strokeCount ?? 0) + (stats?.shapeCount ?? 0) + (stats?.connectorCount ?? 0);
+  const drawingCount =
+    (stats?.strokeCount ?? 0) + (stats?.shapeCount ?? 0) + (stats?.connectorCount ?? 0);
   const mediaBytes = stats?.mediaBytes ?? 0;
 
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType={reducedMotion ? 'none' : 'fade'}
       statusBarTranslucent
       onRequestClose={busy ? undefined : onClose}
     >
@@ -82,11 +91,10 @@ export function ClearLocalDataDialog({
             {
               backgroundColor: theme.surface,
               borderColor: isDark ? theme.border : '#FECACA',
-              maxWidth: isWide ? 440 : width - spacing.lg * 2,
+              maxWidth: centeredModal ? modalMaxWidth : width - spacing.lg * 2,
             },
           ]}
         >
-          {/* Destructive badge icon */}
           <View
             style={[
               styles.iconCircle,
@@ -96,20 +104,17 @@ export function ClearLocalDataDialog({
             <TrashIcon size={24} color={colors.destructive} />
           </View>
 
-          {/* Heading and consequence */}
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.foreground }]}>
               Clear all local data?
             </Text>
             <Text style={[styles.consequence, { color: theme.foreground }]}>
-              Every local board, exported backup, and canvas preference stored on
-              this device will be permanently deleted. Because FlowCanvas has
-              zero cloud accounts or remote servers, this action is irreversible
-              and your data cannot be recovered.
+              Every local board, exported backup, and canvas preference stored on this device will
+              be permanently deleted. Because FlowCanvas has zero cloud accounts or remote servers,
+              this action is irreversible and your data cannot be recovered.
             </Text>
           </View>
 
-          {/* Items to be purged container */}
           <View
             style={[
               styles.purgedBox,
@@ -124,13 +129,18 @@ export function ClearLocalDataDialog({
             </Text>
 
             {loadingStats ? (
-              <ActivityIndicator size="small" color={theme.primary} style={{ marginVertical: spacing.sm }} />
+              <ActivityIndicator
+                size="small"
+                color={theme.primary}
+                style={styles.purgedSpinner}
+              />
             ) : (
               <View style={styles.purgedList}>
                 <View style={styles.purgedItem}>
                   <BoardIcon size={18} color={colors.destructive} />
                   <Text style={[styles.purgedItemText, { color: theme.foreground }]}>
-                    {boardCount} active {boardCount === 1 ? 'board' : 'boards'} ({stickyCount} sticky notes, {drawingCount} vector drawings)
+                    {boardCount} active {boardCount === 1 ? 'board' : 'boards'} ({stickyCount}{' '}
+                    sticky notes, {drawingCount} vector drawings)
                   </Text>
                 </View>
 
@@ -151,13 +161,12 @@ export function ClearLocalDataDialog({
             )}
           </View>
 
-          {/* Checkbox acknowledgement */}
           <Pressable
             accessibilityRole="checkbox"
             accessibilityState={{ checked: acknowledged }}
             accessibilityLabel="I understand this cannot be undone"
             style={styles.checkboxRow}
-            onPress={() => setAcknowledged((curr) => !curr)}
+            onPress={toggleAcknowledge}
             hitSlop={8}
           >
             <View
@@ -176,7 +185,6 @@ export function ClearLocalDataDialog({
             </Text>
           </Pressable>
 
-          {/* Action buttons */}
           <View style={styles.buttons}>
             <Pressable
               accessibilityRole="button"
@@ -206,127 +214,17 @@ export function ClearLocalDataDialog({
                 styles.cancelButton,
                 {
                   borderColor: theme.border,
-                  backgroundColor: isDark ? theme.surface : '#FFFFFF',
+                  backgroundColor: isDark ? theme.surface : colors.onPrimary,
                 },
               ]}
               disabled={busy}
               onPress={onClose}
             >
-              <Text style={[styles.cancelButtonText, { color: theme.foreground }]}>
-                Cancel
-              </Text>
+              <Text style={[styles.cancelButtonText, { color: theme.foreground }]}>Cancel</Text>
             </Pressable>
           </View>
         </View>
       </View>
     </Modal>
   );
-}
-
-const styles = StyleSheet.create({
-  scrim: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.md,
-  },
-  dialog: {
-    width: '100%',
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
-  iconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  header: {
-    gap: spacing.xs,
-  },
-  title: {
-    ...typography.title,
-  },
-  consequence: {
-    ...typography.body,
-    opacity: 0.85,
-    lineHeight: 22,
-  },
-  purgedBox: {
-    borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    gap: spacing.sm,
-  },
-  purgedHeader: {
-    ...typography.caption,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  purgedList: {
-    gap: spacing.xs,
-  },
-  purgedItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  purgedItemText: {
-    ...typography.caption,
-    flexShrink: 1,
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: radii.sm,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxLabel: {
-    ...typography.bodyStrong,
-    fontSize: 15,
-  },
-  buttons: {
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  deleteButton: {
-    minHeight: touchTarget,
-    backgroundColor: colors.destructive,
-    borderRadius: radii.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-  },
-  deleteButtonText: {
-    ...typography.bodyStrong,
-    color: colors.onPrimary,
-  },
-  buttonDisabled: {
-    opacity: 0.4,
-  },
-  cancelButton: {
-    minHeight: touchTarget,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-  },
-  cancelButtonText: {
-    ...typography.bodyStrong,
-  },
 });

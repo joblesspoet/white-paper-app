@@ -1,10 +1,12 @@
 import { StyleSheet } from 'react-native';
 
-import { radii, spacing, typography } from '../theme';
+import { radii, spacing, touchTarget, typography } from '../theme';
 
 export const faceCamStyles = StyleSheet.create({
   bubbleContainer: {
     position: 'absolute',
+    top: 0,
+    left: 0,
     zIndex: 45,
     overflow: 'hidden',
   },
@@ -57,20 +59,15 @@ export const faceCamStyles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
-    padding: 5,
+    gap: 6,
+    padding: 6,
     borderRadius: radii.md,
     borderWidth: 1,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.24,
-    shadowRadius: 12,
-    elevation: 20,
   },
   controlButton: {
-    minWidth: 36,
-    height: 32,
-    paddingHorizontal: 7,
+    minWidth: touchTarget,
+    minHeight: touchTarget,
+    paddingHorizontal: spacing.sm,
     borderRadius: radii.sm,
     borderWidth: 1,
     alignItems: 'center',
@@ -105,7 +102,8 @@ export const faceCamStyles = StyleSheet.create({
     marginTop: 2,
   },
   permissionButton: {
-    minHeight: 36,
+    minHeight: touchTarget,
+    minWidth: touchTarget,
     paddingHorizontal: spacing.sm,
     borderRadius: radii.sm,
     borderWidth: 1,

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { memo, useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
@@ -10,8 +10,9 @@ import {
 import { importBackup } from '../export/backup-store';
 import { formatBytes } from '../export/regions';
 import { resolveFlowModalLayout } from '../responsive/layout';
-import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { spacing, typography, type ThemeColors } from '../theme';
 import { AppButton } from './AppButton';
+import { importBoardModalStyles as styles } from './ImportBoardModal.styles';
 
 export type ImportModalState =
   | { status: 'closed' }
@@ -31,7 +32,7 @@ type ImportBoardModalProps = {
   onImported: (boardId: string) => void;
 };
 
-export function ImportBoardModal({
+export const ImportBoardModal = memo(function ImportBoardModal({
   state,
   theme,
   onClose,
@@ -195,33 +196,4 @@ export function ImportBoardModal({
       </Pressable>
     </Modal>
   );
-}
-
-const styles = StyleSheet.create({
-  scrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#00000055' },
-  scrimCentered: { justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
-  sheet: {
-    borderTopLeftRadius: radii.lg,
-    borderTopRightRadius: radii.lg,
-    borderTopWidth: 1,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    gap: spacing.md,
-  },
-  sheetModal: {
-    width: '100%',
-    borderRadius: radii.lg,
-    borderWidth: 1,
-  },
-  grabber: { width: 44, height: 4, borderRadius: 2, alignSelf: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  title: { ...typography.title },
-  closeButton: { minHeight: touchTarget, minWidth: touchTarget, alignItems: 'flex-end', justifyContent: 'center' },
-  closeText: { ...typography.bodyStrong },
-  card: { borderWidth: 1, borderRadius: radii.sm, padding: spacing.md, gap: spacing.xs },
-  banner: { borderWidth: 1, borderRadius: radii.sm, padding: spacing.md, gap: spacing.xs },
-  progressBox: { borderWidth: 1, borderRadius: radii.sm, padding: spacing.md, gap: spacing.sm },
-  progressHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: '100%' },
 });

@@ -1,7 +1,8 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { Canvas, Path, Skia } from '@shopify/react-native-skia';
+import Animated, { useAnimatedStyle, useDerivedValue, useSharedValue } from 'react-native-reanimated';
+import { Canvas, Circle, Group, Rect, RoundedRect } from '@shopify/react-native-skia';
 
 import type { ThemeColors } from '../theme';
 import { stageCurtainOverlayStyles as styles } from './StageCurtainOverlay.styles';
@@ -19,10 +20,6 @@ export type StageCurtainOverlayProps = {
   onClose: () => void;
 };
 
-function clamp(val: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, val));
-}
-
 export const StageCurtainOverlay = memo(function StageCurtainOverlay({
   visible,
   mode,
@@ -32,25 +29,23 @@ export const StageCurtainOverlay = memo(function StageCurtainOverlay({
   onClose,
 }: StageCurtainOverlayProps) {
   const [curtainAnchor, setCurtainAnchor] = useState<CurtainAnchor>('top');
-  const [curtainFraction, setCurtainFraction] = useState(0.55);
-  const curtainDragStart = useRef(0.55);
-
   const [spotlightShape, setSpotlightShape] = useState<SpotlightShape>('circle');
-  const [spotCenter, setSpotCenter] = useState({
-    x: Math.max(120, bounds.width / 2),
-    y: Math.max(120, bounds.height / 2),
-  });
-  const [spotRadius, setSpotRadius] = useState(110);
-  const spotDragStart = useRef(spotCenter);
-  const spotRadiusStart = useRef(110);
+
+  const curtainFraction = useSharedValue(0.55);
+  const curtainDragStart = useSharedValue(0.55);
+
+  const spotX = useSharedValue(Math.max(120, bounds.width / 2));
+  const spotY = useSharedValue(Math.max(120, bounds.height / 2));
+  const spotRadius = useSharedValue(110);
+  const spotStartX = useSharedValue(Math.max(120, bounds.width / 2));
+  const spotStartY = useSharedValue(Math.max(120, bounds.height / 2));
+  const spotRadiusStart = useSharedValue(110);
 
   useEffect(() => {
     if (bounds.width <= 0 || bounds.height <= 0) return;
-    setSpotCenter((prev) => ({
-      x: clamp(prev.x, 48, Math.max(48, bounds.width - 48)),
-      y: clamp(prev.y, 48, Math.max(48, bounds.height - 48)),
-    }));
-  }, [bounds.height, bounds.width]);
+    spotX.value = Math.max(48, Math.min(Math.max(48, bounds.width - 48), spotX.value));
+    spotY.value = Math.max(48, Math.min(Math.max(48, bounds.height - 48), spotY.value));
+  }, [bounds.height, bounds.width, spotX, spotY]);
 
   const handleToggleAnchor = useCallback(() => {
     setCurtainAnchor((prev) => (prev === 'top' ? 'bottom' : 'top'));
@@ -63,100 +58,108 @@ export const StageCurtainOverlay = memo(function StageCurtainOverlay({
   const handleSelectCurtain = useCallback(() => onChangeMode('curtain'), [onChangeMode]);
   const handleSelectSpotlight = useCallback(() => onChangeMode('spotlight'), [onChangeMode]);
 
-  const curtainPan = useMemo(
-    () =>
-      Gesture.Pan()
-        .runOnJS(true)
-        .onStart(() => {
-          curtainDragStart.current = curtainFraction;
-        })
-        .onUpdate((e) => {
-          if (bounds.height <= 0) return;
-          const deltaFrac = e.translationY / bounds.height;
-          const next =
-            curtainAnchor === 'top'
-              ? curtainDragStart.current + deltaFrac
-              : curtainDragStart.current - deltaFrac;
-          setCurtainFraction(clamp(next, 0.08, 0.92));
-        }),
-    [bounds.height, curtainAnchor, curtainFraction],
-  );
+  const curtainPan = useMemo(() => {
+    const boundsH = bounds.height;
+    const isTop = curtainAnchor === 'top';
+    return Gesture.Pan()
+      .onStart(() => {
+        curtainDragStart.value = curtainFraction.value;
+      })
+      .onUpdate((e) => {
+        if (boundsH <= 0) return;
+        const deltaFrac = e.translationY / boundsH;
+        const next = isTop
+          ? curtainDragStart.value + deltaFrac
+          : curtainDragStart.value - deltaFrac;
+        curtainFraction.value = Math.max(0.08, Math.min(0.92, next));
+      });
+  }, [bounds.height, curtainAnchor, curtainDragStart, curtainFraction]);
 
-  const spotMovePan = useMemo(
-    () =>
-      Gesture.Pan()
-        .runOnJS(true)
-        .onStart(() => {
-          spotDragStart.current = spotCenter;
-        })
-        .onUpdate((e) => {
-          setSpotCenter({
-            x: clamp(spotDragStart.current.x + e.translationX, 40, Math.max(40, bounds.width - 40)),
-            y: clamp(spotDragStart.current.y + e.translationY, 40, Math.max(40, bounds.height - 40)),
-          });
-        }),
-    [bounds.height, bounds.width, spotCenter],
-  );
+  const spotMovePan = useMemo(() => {
+    const maxX = Math.max(40, bounds.width - 40);
+    const maxY = Math.max(40, bounds.height - 40);
+    return Gesture.Pan()
+      .onStart(() => {
+        spotStartX.value = spotX.value;
+        spotStartY.value = spotY.value;
+      })
+      .onUpdate((e) => {
+        spotX.value = Math.max(40, Math.min(maxX, spotStartX.value + e.translationX));
+        spotY.value = Math.max(40, Math.min(maxY, spotStartY.value + e.translationY));
+      });
+  }, [bounds.height, bounds.width, spotStartX, spotStartY, spotX, spotY]);
 
   const spotResizePan = useMemo(
     () =>
       Gesture.Pan()
-        .runOnJS(true)
         .onStart(() => {
-          spotRadiusStart.current = spotRadius;
+          spotRadiusStart.value = spotRadius.value;
         })
         .onUpdate((e) => {
           const delta = (e.translationX + e.translationY) * 0.6;
-          setSpotRadius(clamp(spotRadiusStart.current + delta, 56, 260));
+          spotRadius.value = Math.max(56, Math.min(260, spotRadiusStart.value + delta));
         }),
-    [spotRadius],
+    [spotRadius, spotRadiusStart],
   );
 
-  const spotlightPath = useMemo(() => {
-    if (mode !== 'spotlight' || bounds.width <= 0 || bounds.height <= 0) return null;
-    const outer = `M 0 0 H ${bounds.width} V ${bounds.height} H 0 Z`;
-    let inner = '';
-    if (spotlightShape === 'circle') {
-      const r = spotRadius;
-      const cx = spotCenter.x;
-      const cy = spotCenter.y;
-      inner = `M ${cx - r} ${cy} A ${r} ${r} 0 1 0 ${cx + r} ${cy} A ${r} ${r} 0 1 0 ${cx - r} ${cy} Z`;
-    } else {
-      const rw = spotRadius * 2.5;
-      const rh = spotRadius * 1.7;
-      const rx = spotCenter.x - rw / 2;
-      const ry = spotCenter.y - rh / 2;
-      inner = `M ${rx} ${ry} H ${rx + rw} V ${ry + rh} H ${rx} Z`;
-    }
-    return Skia.Path.MakeFromSVGString(`${outer} ${inner}`);
-  }, [bounds.height, bounds.width, mode, spotCenter.x, spotCenter.y, spotRadius, spotlightShape]);
+  const boundsHeight = bounds.height;
+  const isTopAnchor = curtainAnchor === 'top';
+
+  const curtainShadeAnimatedStyle = useAnimatedStyle(() => {
+    const shadePx = Math.round(boundsHeight * curtainFraction.value);
+    return isTopAnchor
+      ? { top: 0, bottom: undefined, height: shadePx, borderBottomWidth: 2, borderTopWidth: 0 }
+      : { bottom: 0, top: undefined, height: shadePx, borderTopWidth: 2, borderBottomWidth: 0 };
+  }, [boundsHeight, isTopAnchor]);
+
+  const curtainHandleAnimatedStyle = useAnimatedStyle(() => {
+    const shadePx = Math.round(boundsHeight * curtainFraction.value);
+    const rawY = isTopAnchor ? shadePx - 24 : boundsHeight - shadePx - 24;
+    const handleY = Math.max(12, Math.min(Math.max(12, boundsHeight - 56), rawY));
+    return { transform: [{ translateY: handleY }] };
+  }, [boundsHeight, isTopAnchor]);
+
+  const isCircleSpot = spotlightShape === 'circle';
+
+  const spotRectW = useDerivedValue(() => spotRadius.value * 2.5);
+  const spotRectH = useDerivedValue(() => spotRadius.value * 1.7);
+  const spotRectX = useDerivedValue(() => spotX.value - (spotRadius.value * 2.5) / 2);
+  const spotRectY = useDerivedValue(() => spotY.value - (spotRadius.value * 1.7) / 2);
+
+  const ringAnimatedStyle = useAnimatedStyle(() => {
+    const rw = isCircleSpot ? spotRadius.value * 2 : spotRadius.value * 2.5;
+    const rh = isCircleSpot ? spotRadius.value * 2 : spotRadius.value * 1.7;
+    return {
+      width: rw,
+      height: rh,
+      borderRadius: isCircleSpot ? spotRadius.value : 16,
+      transform: [{ translateX: spotX.value - rw / 2 }, { translateY: spotY.value - rh / 2 }],
+    };
+  }, [isCircleSpot]);
+
+  const resizeHandleAnimatedStyle = useAnimatedStyle(() => {
+    const rw = isCircleSpot ? spotRadius.value * 2 : spotRadius.value * 2.5;
+    const rh = isCircleSpot ? spotRadius.value * 2 : spotRadius.value * 1.7;
+    return {
+      transform: [
+        { translateX: spotX.value + rw / 2 - 22 },
+        { translateY: spotY.value + rh / 2 - 22 },
+      ],
+    };
+  }, [isCircleSpot]);
 
   if (!visible || bounds.width <= 0 || bounds.height <= 0) return null;
-
-  const shadePx = Math.round(bounds.height * curtainFraction);
-  const handleY =
-    curtainAnchor === 'top' ? clamp(shadePx - 24, 12, bounds.height - 56) : clamp(bounds.height - shadePx - 24, 12, bounds.height - 56);
-
-  const ringWidth = spotlightShape === 'circle' ? spotRadius * 2 : spotRadius * 2.5;
-  const ringHeight = spotlightShape === 'circle' ? spotRadius * 2 : spotRadius * 1.7;
-  const ringLeft = spotCenter.x - ringWidth / 2;
-  const ringTop = spotCenter.y - ringHeight / 2;
 
   return (
     <View pointerEvents="box-none" style={styles.root}>
       {mode === 'curtain' ? (
         <>
-          <View
+          <Animated.View
             pointerEvents="auto"
-            style={[
-              styles.curtainShade,
-              curtainAnchor === 'top'
-                ? { top: 0, height: shadePx, borderBottomWidth: 2 }
-                : { bottom: 0, height: shadePx, borderTopWidth: 2 },
-            ]}
+            style={[styles.curtainShade, curtainShadeAnimatedStyle]}
           />
           <GestureDetector gesture={curtainPan}>
-            <View style={[styles.curtainHandleBar, { top: handleY }]}>
+            <Animated.View style={[styles.curtainHandleBar, curtainHandleAnimatedStyle]}>
               <View
                 style={[
                   styles.curtainHandlePill,
@@ -168,44 +171,44 @@ export const StageCurtainOverlay = memo(function StageCurtainOverlay({
                   Drag shade
                 </Text>
               </View>
-            </View>
+            </Animated.View>
           </GestureDetector>
         </>
       ) : (
         <>
-          {spotlightPath && (
-            <View pointerEvents="none" style={styles.spotlightCanvas}>
-              <Canvas style={styles.spotlightCanvas}>
-                <Path path={spotlightPath} fillType="evenOdd" color="rgba(15, 23, 42, 0.75)" />
-              </Canvas>
-            </View>
-          )}
+          <View pointerEvents="none" style={styles.spotlightCanvas}>
+            <Canvas style={styles.spotlightCanvas}>
+              <Group layer>
+                <Rect
+                  x={0}
+                  y={0}
+                  width={bounds.width}
+                  height={bounds.height}
+                  color="rgba(15, 23, 42, 0.75)"
+                />
+                {isCircleSpot ? (
+                  <Circle cx={spotX} cy={spotY} r={spotRadius} blendMode="clear" color="black" />
+                ) : (
+                  <RoundedRect
+                    x={spotRectX}
+                    y={spotRectY}
+                    width={spotRectW}
+                    height={spotRectH}
+                    r={16}
+                    blendMode="clear"
+                    color="black"
+                  />
+                )}
+              </Group>
+            </Canvas>
+          </View>
           <GestureDetector gesture={spotMovePan}>
-            <View
-              style={[
-                styles.spotlightMoveRing,
-                {
-                  left: ringLeft,
-                  top: ringTop,
-                  width: ringWidth,
-                  height: ringHeight,
-                  borderRadius: spotlightShape === 'circle' ? spotRadius : 16,
-                },
-              ]}
-            />
+            <Animated.View style={[styles.spotlightMoveRing, ringAnimatedStyle]} />
           </GestureDetector>
           <GestureDetector gesture={spotResizePan}>
-            <View
-              style={[
-                styles.spotlightResizeHandle,
-                {
-                  left: ringLeft + ringWidth - 22,
-                  top: ringTop + ringHeight - 22,
-                },
-              ]}
-            >
+            <Animated.View style={[styles.spotlightResizeHandle, resizeHandleAnimatedStyle]}>
               <View style={styles.spotlightResizeDot} />
-            </View>
+            </Animated.View>
           </GestureDetector>
         </>
       )}
@@ -227,7 +230,12 @@ export const StageCurtainOverlay = memo(function StageCurtainOverlay({
             pressed && styles.pressed,
           ]}
         >
-          <Text style={[styles.modeChipText, { color: mode === 'curtain' ? theme.primary : theme.foreground }]}>
+          <Text
+            style={[
+              styles.modeChipText,
+              { color: mode === 'curtain' ? theme.primary : theme.foreground },
+            ]}
+          >
             Curtain
           </Text>
         </Pressable>
@@ -242,7 +250,12 @@ export const StageCurtainOverlay = memo(function StageCurtainOverlay({
             pressed && styles.pressed,
           ]}
         >
-          <Text style={[styles.modeChipText, { color: mode === 'spotlight' ? theme.primary : theme.foreground }]}>
+          <Text
+            style={[
+              styles.modeChipText,
+              { color: mode === 'spotlight' ? theme.primary : theme.foreground },
+            ]}
+          >
             Spotlight
           </Text>
         </Pressable>
@@ -253,7 +266,13 @@ export const StageCurtainOverlay = memo(function StageCurtainOverlay({
           style={({ pressed }) => [styles.modeChip, pressed && styles.pressed]}
         >
           <Text style={[styles.modeChipText, { color: theme.foreground }]}>
-            {mode === 'curtain' ? (curtainAnchor === 'top' ? 'Top' : 'Bottom') : spotlightShape === 'circle' ? 'Circle' : 'Rect'}
+            {mode === 'curtain'
+              ? curtainAnchor === 'top'
+                ? 'Top'
+                : 'Bottom'
+              : spotlightShape === 'circle'
+                ? 'Circle'
+                : 'Rect'}
           </Text>
         </Pressable>
         <Pressable

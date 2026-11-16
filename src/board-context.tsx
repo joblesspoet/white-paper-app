@@ -14,6 +14,8 @@ import type { PersistenceDatabase } from './persistence/database';
 import { storageErrorMessage } from './persistence/errors';
 import { getLocalDatabase } from './persistence/expo-store';
 import {
+  deleteBoard as deleteBoardRecord,
+  duplicateBoard as duplicateBoardRecord,
   insertBoard,
   listBoards,
   updateBoardSettings,
@@ -34,6 +36,8 @@ type BoardContextValue = {
   ready: boolean;
   storageError: string | null;
   createBoard: (settings?: BoardSettings) => Board;
+  duplicateBoard: (id: string) => Promise<Board | null>;
+  deleteBoard: (id: string) => void;
   updateTitle: (id: string, title: string) => void;
   updateSettings: (id: string, settings: BoardSettings) => void;
   /** Refresh the home card after an editor autosave without a database read. */
@@ -179,6 +183,38 @@ export function BoardProvider({ children }: { children: ReactNode }) {
     runWrite((database) => updateBoardSettings(database, id, settings));
   }, [runWrite]);
 
+  const duplicateBoard = useCallback(
+    async (id: string): Promise<Board | null> => {
+      const targetId = newBoardId();
+      try {
+        let duplicated: BoardRecord | null = null;
+        await enqueuePersistenceWrite(async () => {
+          const database = await getLocalDatabase();
+          duplicated = await duplicateBoardRecord(database, id, targetId);
+        });
+        if (!duplicated) return null;
+        const board = toBoard(duplicated);
+        if (mounted.current) {
+          setBoards((current) => [board, ...current.filter((item) => item.id !== board.id)]);
+          setStorageError(null);
+        }
+        return board;
+      } catch (error) {
+        if (mounted.current) setStorageError(storageErrorMessage(error));
+        return null;
+      }
+    },
+    [],
+  );
+
+  const deleteBoard = useCallback(
+    (id: string) => {
+      setBoards((current) => current.filter((board) => board.id !== id));
+      runWrite((database) => deleteBoardRecord(database, id));
+    },
+    [runWrite],
+  );
+
   const touchBoard = useCallback((id: string, objectCount: number) => {
     setBoards((current) =>
       current.map((board) =>
@@ -200,6 +236,8 @@ export function BoardProvider({ children }: { children: ReactNode }) {
       ready,
       storageError,
       createBoard,
+      duplicateBoard,
+      deleteBoard,
       updateTitle,
       updateSettings,
       touchBoard,
@@ -213,6 +251,8 @@ export function BoardProvider({ children }: { children: ReactNode }) {
       ready,
       storageError,
       createBoard,
+      duplicateBoard,
+      deleteBoard,
       updateTitle,
       updateSettings,
       touchBoard,

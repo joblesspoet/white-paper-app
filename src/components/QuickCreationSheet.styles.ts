@@ -106,8 +106,8 @@ export const styles = StyleSheet.create({
   stepperGroup: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   stepperLabel: { ...typography.caption, fontWeight: '600' },
   stepperBtn: {
-    width: 32,
-    height: 32,
+    width: touchTarget,
+    height: touchTarget,
     borderRadius: radii.sm,
     borderWidth: 1,
     alignItems: 'center',
@@ -115,8 +115,10 @@ export const styles = StyleSheet.create({
   },
   stepperBtnText: { fontSize: 16, fontWeight: '700' },
   insertTableBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    minHeight: touchTarget,
+    paddingHorizontal: spacing.md,
+    justifyContent: 'center',
+    alignItems: 'center',
     borderRadius: radii.sm,
   },
   insertTableBtnText: { ...typography.caption, color: '#FFFFFF', fontWeight: '700' },

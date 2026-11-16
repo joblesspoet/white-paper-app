@@ -13,9 +13,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { BoardPageRecord } from '../persistence/repository';
 import { resolveFlowModalLayout } from '../responsive/layout';
+import { usePreferences } from '../settings/preferences-context';
 import { spacing, type ThemeColors } from '../theme';
 import { AppButton } from './AppButton';
 import { pageNavigatorStyles as styles } from './PageNavigator.styles';
+
+const NOOP = () => undefined;
 
 type PageNavigatorPillProps = {
   theme: ThemeColors;
@@ -402,6 +405,7 @@ export const PageSorterSheet = React.memo(function PageSorterSheet({
   onDeletePage,
   onOpenPdfImport,
 }: PageSorterSheetProps) {
+  const { reducedMotion } = usePreferences();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const { centeredModal, modalMaxWidth } = resolveFlowModalLayout(width, height);
@@ -410,6 +414,10 @@ export const PageSorterSheet = React.memo(function PageSorterSheet({
 
   const handleMoveUp = useCallback((pageId: string) => onMovePage(pageId, -1), [onMovePage]);
   const handleMoveDown = useCallback((pageId: string) => onMovePage(pageId, 1), [onMovePage]);
+  const handleImportPdf = useCallback(() => {
+    onClose();
+    onOpenPdfImport?.();
+  }, [onClose, onOpenPdfImport]);
 
   const handleSelectAndClose = useCallback(
     (pageId: string) => {
@@ -454,7 +462,7 @@ export const PageSorterSheet = React.memo(function PageSorterSheet({
     <Modal
       transparent
       visible={visible}
-      animationType={centeredModal ? 'fade' : 'slide'}
+      animationType={reducedMotion ? 'none' : centeredModal ? 'fade' : 'slide'}
       statusBarTranslucent
       onRequestClose={onClose}
     >
@@ -480,7 +488,7 @@ export const PageSorterSheet = React.memo(function PageSorterSheet({
                 },
             { backgroundColor: theme.surface },
           ]}
-          onPress={() => undefined}
+          onPress={NOOP}
         >
           {!centeredModal && (
             <View style={[styles.grabber, { backgroundColor: theme.border }]} />
@@ -530,10 +538,7 @@ export const PageSorterSheet = React.memo(function PageSorterSheet({
                 <AppButton
                   label="Import PDF"
                   variant="secondary"
-                  onPress={() => {
-                    onClose();
-                    onOpenPdfImport();
-                  }}
+                  onPress={handleImportPdf}
                 />
               </View>
             ) : null}

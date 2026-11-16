@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, type GestureResponderEvent } from 'react-native';
+import { memo, useEffect, useRef, useState } from 'react';
+import { Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { hexToHsv, hsvToHex, isHexColor, isReadableOn, type Hsv } from '../canvas/colors';
-import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import type { ThemeColors } from '../theme';
+import {
+  COLOR_PICKER_FIELD_HEIGHT,
+  COLOR_PICKER_THUMB_SIZE,
+  colorPickerStyles as styles,
+} from './ColorPicker.styles';
 
 type ColorPickerProps = {
   theme: ThemeColors;
@@ -17,10 +22,6 @@ type ColorPickerProps = {
   onClose: () => void;
 };
 
-const FIELD_HEIGHT = 148;
-const HUE_HEIGHT = 28;
-const THUMB_SIZE = 22;
-
 /** Hue strip stops: the full wheel, returning to red so the ends match. */
 const HUE_STOPS = ['#FF0000', '#FFFF00', '#00FF00', '#00FFFF', '#0000FF', '#FF00FF', '#FF0000'];
 
@@ -33,7 +34,7 @@ function clamp01(value: number): number {
  * surfaces (saturation/value field and hue strip) cover the full sRGB gamut
  * without pulling in a native picker dependency.
  */
-export function ColorPicker({
+export const ColorPicker = memo(function ColorPicker({
   theme,
   value,
   background,
@@ -42,7 +43,7 @@ export function ColorPicker({
   onClose,
 }: ColorPickerProps) {
   const [hsv, setHsv] = useState<Hsv>(() => hexToHsv(value));
-  const [field, setField] = useState({ width: 0, height: FIELD_HEIGHT });
+  const [field, setField] = useState({ width: 0, height: COLOR_PICKER_FIELD_HEIGHT });
   const [hueWidth, setHueWidth] = useState(0);
   /** Remembers our own output so an external preset can reseed the picker. */
   const lastEmitted = useRef(value);
@@ -132,8 +133,8 @@ export function ColorPicker({
               styles.thumb,
               {
                 backgroundColor: hex,
-                left: hsv.s * field.width - THUMB_SIZE / 2,
-                top: (1 - hsv.v) * field.height - THUMB_SIZE / 2,
+                left: hsv.s * field.width - COLOR_PICKER_THUMB_SIZE / 2,
+                top: (1 - hsv.v) * field.height - COLOR_PICKER_THUMB_SIZE / 2,
               },
             ]}
           />
@@ -179,21 +180,4 @@ export function ColorPicker({
       </Text>
     </View>
   );
-}
-
-const styles = StyleSheet.create({
-  root: { borderTopWidth: 1, paddingTop: spacing.sm, gap: spacing.sm },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  title: { ...typography.caption },
-  preview: { width: 20, height: 20, borderRadius: 10, borderWidth: 1 },
-  hex: { ...typography.caption, opacity: 0.75 },
-  close: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xs },
-  closeText: { ...typography.caption },
-  field: { height: FIELD_HEIGHT, borderRadius: radii.sm, borderWidth: 1, overflow: 'hidden' },
-  thumb: { position: 'absolute', width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: THUMB_SIZE / 2, borderWidth: 2, borderColor: '#FFFFFF' },
-  hue: { height: HUE_HEIGHT, borderRadius: radii.sm, borderWidth: 1, overflow: 'hidden' },
-  hueThumb: { position: 'absolute', top: 0, bottom: 0, width: 4, borderRadius: 2, borderWidth: 1, borderColor: '#FFFFFF' },
-  hint: { ...typography.caption, opacity: 0.75 },
-  pressed: { opacity: 0.65 },
 });

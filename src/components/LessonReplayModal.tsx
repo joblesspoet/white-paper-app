@@ -17,13 +17,53 @@ import {
   interpolateLessonAtTime,
   type LessonRecordingPackage,
 } from '../recorder/lesson-recorder';
+import { usePreferences } from '../settings/preferences-context';
 import type { ThemeColors } from '../theme';
 import { CanvasViewport } from './CanvasViewport';
 import { lessonReplayModalStyles as styles } from './LessonReplayModal.styles';
 
 const PLAYBACK_SPEEDS = [0.5, 1, 1.5, 2] as const;
+type PlaybackSpeed = (typeof PLAYBACK_SPEEDS)[number];
 const EMPTY_STRING_ARRAY: string[] = [];
 const NOOP = () => {};
+
+const SpeedChip = memo(function SpeedChip({
+  value,
+  selected,
+  theme,
+  onSelect,
+}: {
+  value: PlaybackSpeed;
+  selected: boolean;
+  theme: ThemeColors;
+  onSelect: (value: PlaybackSpeed) => void;
+}) {
+  const handlePress = useCallback(() => onSelect(value), [onSelect, value]);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Playback speed ${value}x`}
+      accessibilityState={{ selected }}
+      onPress={handlePress}
+      style={[
+        styles.speedChip,
+        {
+          backgroundColor: selected ? theme.primary : theme.muted,
+          borderColor: selected ? theme.primary : theme.border,
+        },
+      ]}
+    >
+      <Text
+        style={[
+          styles.speedText,
+          { color: selected ? '#FFFFFF' : theme.foreground },
+        ]}
+      >
+        {value}×
+      </Text>
+    </Pressable>
+  );
+});
 
 type OptionalVideoModule = {
   VideoView: ComponentType<{
@@ -127,6 +167,7 @@ export const LessonReplayModal = memo(function LessonReplayModal({
   onDiscard,
   onClose,
 }: LessonReplayModalProps) {
+  const { reducedMotion } = usePreferences();
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isTablet = Math.min(windowWidth, windowHeight) >= 600;
@@ -302,7 +343,18 @@ export const LessonReplayModal = memo(function LessonReplayModal({
     if (lesson) onShareLesson(lesson);
   }, [lesson, onShareLesson]);
 
-  if (!visible || !lesson || !replayed) return null;
+  const handleShowVideo = useCallback(() => setViewMode('video'), []);
+  const handleShowTimeline = useCallback(() => setViewMode('timeline'), []);
+  const handleScrubberTouch = useCallback(() => true, []);
+
+  const viewportKey = Math.floor(currentTimeMs / 100);
+  const replayedViewport = replayed?.viewport;
+  const viewportRequest = useMemo(
+    () => (replayedViewport ? { key: viewportKey, viewport: replayedViewport } : null),
+    [replayedViewport, viewportKey],
+  );
+
+  if (!visible || !lesson || !replayed || !viewportRequest) return null;
 
   const progressPct = `${Math.round(replayed.progress * 100)}%` as const;
 
@@ -310,7 +362,7 @@ export const LessonReplayModal = memo(function LessonReplayModal({
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType={reducedMotion ? 'none' : 'fade'}
       statusBarTranslucent
       onRequestClose={onClose}
     >
@@ -351,7 +403,7 @@ export const LessonReplayModal = memo(function LessonReplayModal({
                   accessibilityRole="button"
                   accessibilityLabel="Show recorded video"
                   accessibilityState={{ selected: showingVideo }}
-                  onPress={() => setViewMode('video')}
+                  onPress={handleShowVideo}
                   style={[
                     styles.modeChip,
                     showingVideo && { backgroundColor: theme.primary },
@@ -370,7 +422,7 @@ export const LessonReplayModal = memo(function LessonReplayModal({
                   accessibilityRole="button"
                   accessibilityLabel="Show canvas timeline"
                   accessibilityState={{ selected: !showingVideo }}
-                  onPress={() => setViewMode('timeline')}
+                  onPress={handleShowTimeline}
                   style={[
                     styles.modeChip,
                     !showingVideo && { backgroundColor: theme.primary },
@@ -451,10 +503,7 @@ export const LessonReplayModal = memo(function LessonReplayModal({
                 editingTableCell={null}
                 editingMath={false}
                 editingMathSpan={null}
-                viewportRequest={{
-                  key: Math.floor(currentTimeMs / 100),
-                  viewport: replayed.viewport,
-                }}
+                viewportRequest={viewportRequest}
                 activeInstrument={null}
                 stylusOnlyDrawing={false}
                 pressureSensitivity={true}
@@ -490,7 +539,7 @@ export const LessonReplayModal = memo(function LessonReplayModal({
                 <View style={styles.scrubberSection}>
               <View
                 onLayout={handleTrackLayout}
-                onStartShouldSetResponder={() => true}
+                onStartShouldSetResponder={handleScrubberTouch}
                 onResponderGrant={seekFromEvent}
                 onResponderMove={seekFromEvent}
                 style={styles.scrubberTrack}
@@ -527,35 +576,16 @@ export const LessonReplayModal = memo(function LessonReplayModal({
               </Pressable>
 
               <View style={styles.speedGroup}>
-                {PLAYBACK_SPEEDS.map((s) => {
-                  const selected = speed === s;
-                  return (
-                    <Pressable
-                      key={s}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Playback speed ${s}x`}
-                      accessibilityState={{ selected }}
-                      onPress={() => setSpeed(s)}
-                      style={[
-                        styles.speedChip,
-                        {
-                          backgroundColor: selected ? theme.primary : theme.muted,
-                          borderColor: selected ? theme.primary : theme.border,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.speedText,
-                          { color: selected ? '#FFFFFF' : theme.foreground },
-                        ]}
-                      >
-                        {s}×
-                      </Text>
-                    </Pressable>
-                    );
-                  })}
-                </View>
+                {PLAYBACK_SPEEDS.map((s) => (
+                  <SpeedChip
+                    key={s}
+                    value={s}
+                    selected={speed === s}
+                    theme={theme}
+                    onSelect={setSpeed}
+                  />
+                ))}
+              </View>
               </View>
               </>
             )}
