@@ -33,6 +33,7 @@ export type OcrReviewState = {
   status: OcrReviewStatus;
   text: string;
   regionCount: number;
+  regions?: OcrRegion[];
   engine: OcrEngine | null;
   errorMessage: string | null;
 };
@@ -156,6 +157,7 @@ export function loadingOcrState(): OcrReviewState {
     status: 'loading',
     text: '',
     regionCount: 0,
+    regions: [],
     engine: null,
     errorMessage: null,
   };
@@ -168,6 +170,7 @@ export function ocrReviewStateFromResult(result: OcrResult): OcrReviewState {
       status: 'empty',
       text: '',
       regionCount: 0,
+      regions: [],
       engine: result.engine,
       errorMessage: null,
     };
@@ -176,6 +179,7 @@ export function ocrReviewStateFromResult(result: OcrResult): OcrReviewState {
     status: 'success',
     text,
     regionCount: Math.max(1, result.regionCount),
+    regions: result.regions,
     engine: result.engine,
     errorMessage: null,
   };
@@ -210,6 +214,7 @@ export function ocrReviewStateFromError(error: unknown): OcrReviewState {
     status: 'error',
     text: '',
     regionCount: 0,
+    regions: [],
     engine: null,
     errorMessage: ocrErrorMessage(error),
   };

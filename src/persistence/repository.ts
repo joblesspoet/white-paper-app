@@ -25,6 +25,8 @@ import {
   documentsEqual,
   normalizeColumnRatios,
 } from '../canvas/document.ts';
+import { isValidPortSide, type ConnectorBinding } from '../canvas/connectors.ts';
+import type { ChartKind, ChartSeries } from '../canvas/chart-generator.ts';
 import type { InkStroke } from '../canvas/ink.ts';
 import type { Viewport } from '../canvas/viewport.ts';
 import type { PersistenceDatabase, SqlParams } from './database.ts';
@@ -490,6 +492,8 @@ function objectStyle(object: CanvasObject): Record<string, unknown> {
   if (object.type === 'connector') {
     style.style = object.style;
     style.strokeWidth = object.strokeWidth;
+    if (object.startBinding) style.startBinding = object.startBinding;
+    if (object.endBinding) style.endBinding = object.endBinding;
   }
   if (object.type === 'image') {
     style.assetId = object.assetId;
@@ -502,6 +506,13 @@ function objectStyle(object: CanvasObject): Record<string, unknown> {
   }
   if (object.type === 'math') {
     style.fontSize = object.fontSize;
+  }
+  if (object.type === 'function-plot') {
+    style.latex = object.latex;
+    style.expression = object.expression;
+  }
+  if (object.type === 'chart') {
+    style.chartType = object.chartType;
   }
   return style;
 }
@@ -552,11 +563,55 @@ function cloneDocumentWithFreshIds(document: CanvasDocument): CanvasDocument {
   }));
   const objects: CanvasObject[] = document.objects.map((obj) => {
     const clonedId = objectIdMap.get(obj.id) ?? freshId(obj.type);
-    if (obj.type === 'text' && obj.sourceImageId) {
+    if ((obj.type === 'text' || obj.type === 'sticky') && obj.sourceImageId) {
       return {
         ...obj,
         id: clonedId,
         sourceImageId: objectIdMap.get(obj.sourceImageId) ?? obj.sourceImageId,
+      };
+    }
+    if (obj.type === 'connector') {
+      return {
+        ...obj,
+        id: clonedId,
+        ...(obj.startBinding
+          ? {
+              startBinding: {
+                objectId: objectIdMap.get(obj.startBinding.objectId) ?? obj.startBinding.objectId,
+                port: obj.startBinding.port,
+              },
+            }
+          : {}),
+        ...(obj.endBinding
+          ? {
+              endBinding: {
+                objectId: objectIdMap.get(obj.endBinding.objectId) ?? obj.endBinding.objectId,
+                port: obj.endBinding.port,
+              },
+            }
+          : {}),
+      };
+    }
+    if (obj.type === 'function-plot') {
+      return {
+        ...obj,
+        id: clonedId,
+        params: { ...obj.params },
+        parameterNames: [...obj.parameterNames],
+        ...(obj.sourceMathId
+          ? { sourceMathId: objectIdMap.get(obj.sourceMathId) ?? obj.sourceMathId }
+          : {}),
+      };
+    }
+    if (obj.type === 'chart') {
+      return {
+        ...obj,
+        id: clonedId,
+        labels: [...obj.labels],
+        series: obj.series.map((s) => ({ ...s, values: [...s.values] })),
+        ...(obj.sourceTableId
+          ? { sourceTableId: objectIdMap.get(obj.sourceTableId) ?? obj.sourceTableId }
+          : {}),
       };
     }
     if (obj.type === 'table') {
@@ -860,7 +915,7 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
     const fontWeight = value.fontWeight === 'bold' ? 'bold' : 'normal';
     const fontStyle = value.fontStyle === 'italic' ? 'italic' : 'normal';
     const sourceImageId =
-      value.type === 'text' && typeof value.sourceImageId === 'string' && value.sourceImageId.length > 0
+      typeof value.sourceImageId === 'string' && value.sourceImageId.length > 0
         ? value.sourceImageId
         : null;
     return {
@@ -977,6 +1032,14 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
     ) {
       return null;
     }
+    const parseBinding = (raw: unknown): ConnectorBinding | undefined => {
+      if (!isRecord(raw)) return undefined;
+      if (typeof raw.objectId !== 'string' || raw.objectId.length === 0) return undefined;
+      if (!isValidPortSide(raw.port)) return undefined;
+      return { objectId: raw.objectId, port: raw.port };
+    };
+    const startBinding = parseBinding(value.startBinding);
+    const endBinding = parseBinding(value.endBinding);
     return {
       ...base,
       type: 'connector',
@@ -984,6 +1047,8 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
       colorKey,
       strokeWidth: value.strokeWidth,
       direction: value.direction as LineDirection,
+      ...(startBinding ? { startBinding } : {}),
+      ...(endBinding ? { endBinding } : {}),
     };
   }
 
@@ -1002,6 +1067,84 @@ export function parseCanvasObject(raw: string): CanvasObject | null {
       displayText: typeof value.displayText === 'string' ? value.displayText : value.latex,
       colorKey,
       fontSize,
+    };
+  }
+
+  if (value.type === 'function-plot') {
+    if (
+      typeof value.latex !== 'string' ||
+      typeof value.expression !== 'string' ||
+      !isFiniteNumber(value.xMin) ||
+      !isFiniteNumber(value.xMax) ||
+      !isFiniteNumber(value.yMin) ||
+      !isFiniteNumber(value.yMax) ||
+      typeof colorKey !== 'string'
+    ) {
+      return null;
+    }
+    const params: Record<string, number> = {};
+    if (isRecord(value.params)) {
+      for (const [k, v] of Object.entries(value.params)) {
+        if (isFiniteNumber(v)) params[k] = v;
+      }
+    }
+    const parameterNames = Array.isArray(value.parameterNames)
+      ? value.parameterNames.filter((n): n is string => typeof n === 'string')
+      : Object.keys(params);
+    return {
+      ...base,
+      type: 'function-plot',
+      latex: value.latex,
+      expression: value.expression,
+      xMin: value.xMin,
+      xMax: value.xMax,
+      yMin: value.yMin,
+      yMax: value.yMax,
+      params,
+      parameterNames,
+      showKeyPoints: typeof value.showKeyPoints === 'boolean' ? value.showKeyPoints : true,
+      showTangent: typeof value.showTangent === 'boolean' ? value.showTangent : false,
+      tangentX: isFiniteNumber(value.tangentX) ? value.tangentX : 1,
+      colorKey,
+      ...(typeof value.sourceMathId === 'string' && value.sourceMathId.length > 0
+        ? { sourceMathId: value.sourceMathId }
+        : {}),
+    };
+  }
+
+  if (value.type === 'chart') {
+    const chartType = value.chartType;
+    if (
+      (chartType !== 'bar' && chartType !== 'line' && chartType !== 'pie') ||
+      typeof value.title !== 'string' ||
+      !Array.isArray(value.labels) ||
+      !Array.isArray(value.series) ||
+      typeof colorKey !== 'string'
+    ) {
+      return null;
+    }
+    const labels = value.labels.filter((l): l is string => typeof l === 'string');
+    const series: ChartSeries[] = [];
+    for (const rawS of value.series) {
+      if (!isRecord(rawS) || typeof rawS.name !== 'string' || !Array.isArray(rawS.values)) continue;
+      const values = rawS.values.map((v) => (isFiniteNumber(v) ? v : 0));
+      series.push({
+        name: rawS.name,
+        values,
+        colorKey: typeof rawS.colorKey === 'string' ? rawS.colorKey : 'teal',
+      });
+    }
+    return {
+      ...base,
+      type: 'chart',
+      chartType: chartType as ChartKind,
+      title: value.title,
+      labels,
+      series,
+      colorKey,
+      ...(typeof value.sourceTableId === 'string' && value.sourceTableId.length > 0
+        ? { sourceTableId: value.sourceTableId }
+        : {}),
     };
   }
 

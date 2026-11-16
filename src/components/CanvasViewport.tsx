@@ -28,6 +28,13 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { styles } from './CanvasViewport.styles';
+import { ChartLayer } from './canvas/ChartLayer';
+import { FunctionPlotLayer } from './canvas/FunctionPlotLayer';
+import {
+  CONNECTOR_SNAP_THRESHOLD_SCREEN,
+  findNearestPortSnap,
+  type ConnectorBinding,
+} from '../canvas/connectors';
 
 import {
   DEFAULT_CONNECTOR_STROKE_WIDTH,
@@ -38,6 +45,8 @@ import {
   createConnectorObject,
   createShapeObject,
   geometryFromPoints,
+  isChartObject,
+  isFunctionPlotObject,
   isGeometricObject,
   isImageObject,
   isMathObject,
@@ -630,30 +639,54 @@ export function CanvasViewport({
     );
   }, [eraserRadius, onCommand]);
 
+  const [snapPortPoint, setSnapPortPoint] = useState<Point | null>(null);
+  const draftStartBindingRef = useRef<ConnectorBinding | undefined>(undefined);
+
   /**
    * Shape and connector drags use the same lifecycle as ink: the object is
    * local state until the finger lifts, then it becomes one insert command.
    */
   const beginShape = useCallback((point: Point, tool: 'shape' | 'connector') => {
     const id = `draft-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const object = tool === 'shape'
-      ? createShapeObject({
-          id,
-          shape: shapeKind,
-          start: point,
-          end: point,
-          colorKey: shapeColorKey,
-          fillKey: shapeFillKey,
-          strokeWidth: shapeStrokeWidth,
-        })
-      : createConnectorObject({
-          id,
-          style: connectorStyle,
-          start: point,
-          end: point,
-          colorKey: connectorColorKey,
-          strokeWidth: connectorStrokeWidth,
-        });
+    if (tool === 'connector') {
+      const snap = findNearestPortSnap(
+        document.objects,
+        point,
+        viewport.scale,
+        CONNECTOR_SNAP_THRESHOLD_SCREEN,
+      );
+      const startPt = snap ? snap.point : point;
+      const startBinding: ConnectorBinding | undefined = snap
+        ? { objectId: snap.objectId, port: snap.port }
+        : undefined;
+      draftStartBindingRef.current = startBinding;
+      setSnapPortPoint(snap ? snap.point : null);
+      const object = createConnectorObject({
+        id,
+        style: connectorStyle,
+        start: startPt,
+        end: startPt,
+        colorKey: connectorColorKey,
+        strokeWidth: connectorStrokeWidth,
+        startBinding,
+      });
+      draftStartRef.current = startPt;
+      draftObjectRef.current = object;
+      setDraftObject(object);
+      return;
+    }
+
+    draftStartBindingRef.current = undefined;
+    setSnapPortPoint(null);
+    const object = createShapeObject({
+      id,
+      shape: shapeKind,
+      start: point,
+      end: point,
+      colorKey: shapeColorKey,
+      fillKey: shapeFillKey,
+      strokeWidth: shapeStrokeWidth,
+    });
     draftStartRef.current = point;
     draftObjectRef.current = object;
     setDraftObject(object);
@@ -661,25 +694,56 @@ export function CanvasViewport({
     connectorColorKey,
     connectorStrokeWidth,
     connectorStyle,
+    document.objects,
     shapeColorKey,
     shapeFillKey,
     shapeKind,
     shapeStrokeWidth,
+    viewport.scale,
   ]);
 
   const updateShape = useCallback((point: Point) => {
     const current = draftObjectRef.current;
     const start = draftStartRef.current;
     if (!current || !start) return;
+    if (current.type === 'connector') {
+      const exclude = draftStartBindingRef.current
+        ? new Set([draftStartBindingRef.current.objectId])
+        : undefined;
+      const snap = findNearestPortSnap(
+        document.objects,
+        point,
+        viewport.scale,
+        CONNECTOR_SNAP_THRESHOLD_SCREEN,
+        exclude,
+      );
+      const endPt = snap ? snap.point : point;
+      setSnapPortPoint(snap ? snap.point : null);
+      const next: ConnectorObject = {
+        ...current,
+        ...geometryFromPoints(start, endPt),
+      };
+      if (snap) {
+        next.endBinding = { objectId: snap.objectId, port: snap.port };
+      } else {
+        delete next.endBinding;
+      }
+      draftObjectRef.current = next;
+      setDraftObject(next);
+      return;
+    }
+
     const next = { ...current, ...geometryFromPoints(start, point) } as ShapeObject | ConnectorObject;
     draftObjectRef.current = next;
     setDraftObject(next);
-  }, []);
+  }, [document.objects, viewport.scale]);
 
   const finishShape = useCallback((currentScale: number) => {
     const draft = draftObjectRef.current;
     draftObjectRef.current = null;
     draftStartRef.current = null;
+    draftStartBindingRef.current = undefined;
+    setSnapPortPoint(null);
     setDraftObject(null);
     if (!draft) return;
     // A tap, or a drag too small to see, should not leave a speck on the board.
@@ -1238,7 +1302,23 @@ export function CanvasViewport({
                 activeSpan={editingMathSpan?.objectId === object.id ? editingMathSpan.span : null}
               />
             ))}
+            {document.objects.filter(isFunctionPlotObject).map((object) => (
+              <FunctionPlotLayer key={object.id} object={object} dark={dark} />
+            ))}
+            {document.objects.filter(isChartObject).map((object) => (
+              <ChartLayer key={object.id} object={object} dark={dark} />
+            ))}
             {draftObject && <GeometricObjectView object={draftObject} dark={dark} />}
+            {snapPortPoint && (
+              <Circle
+                cx={snapPortPoint.x}
+                cy={snapPortPoint.y}
+                r={8 / Math.max(viewport.scale, 0.5)}
+                color="#0D9488"
+                style="stroke"
+                strokeWidth={2 / Math.max(viewport.scale, 0.5)}
+              />
+            )}
             {renderedStrokes.map((stroke) => (
               <InkStrokeView
                 key={stroke.id}

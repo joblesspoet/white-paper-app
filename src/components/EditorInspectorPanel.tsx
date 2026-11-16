@@ -38,6 +38,11 @@ import {
   TrashIcon,
 } from './icons';
 
+import type { TidyMode } from '../canvas/auto-layout';
+import type { ChartKind } from '../canvas/chart-generator';
+import type { FunctionPlotObject } from '../canvas/document';
+import { StemInspectorSection } from './StemInspectorSection';
+
 type EditorInspectorPanelProps = {
   theme: ThemeColors;
   dark: boolean;
@@ -50,6 +55,18 @@ type EditorInspectorPanelProps = {
   onDeleteSelected: () => void;
   onUpdateObjectStyle: (id: string, patch: ObjectStylePatch) => void;
   onTableAction?: (id: string, action: 'add-row' | 'remove-row' | 'add-col' | 'remove-col') => void;
+  canTidySelection?: boolean;
+  canPlotMath?: boolean;
+  canChartTable?: boolean;
+  selectedFunctionPlot?: FunctionPlotObject | null;
+  onTidyLayout?: (mode: TidyMode) => void;
+  onPlotMath?: () => void;
+  onGenerateChart?: (chartType: ChartKind) => void;
+  onComputeTableStats?: () => void;
+  onUpdatePlotParam?: (name: string, value: number, transient?: boolean) => void;
+  onUpdateTangentX?: (x0: number, transient?: boolean) => void;
+  onTogglePlotTangent?: () => void;
+  onCommitPlotChanges?: () => void;
 };
 
 const SHAPES: ReadonlyArray<{ kind: ShapeKind; label: string; Icon: typeof RectangleIcon }> = [
@@ -80,6 +97,10 @@ function objectTypeLabel(type: CanvasObject['type']): string {
       return 'Table';
     case 'math':
       return 'Math Formula';
+    case 'function-plot':
+      return 'Function Graph';
+    case 'chart':
+      return 'Chart';
   }
 }
 
@@ -95,6 +116,18 @@ export function EditorInspectorPanel({
   onDeleteSelected,
   onUpdateObjectStyle,
   onTableAction,
+  canTidySelection = false,
+  canPlotMath = false,
+  canChartTable = false,
+  selectedFunctionPlot = null,
+  onTidyLayout,
+  onPlotMath,
+  onGenerateChart,
+  onComputeTableStats,
+  onUpdatePlotParam,
+  onUpdateTangentX,
+  onTogglePlotTangent,
+  onCommitPlotChanges,
 }: EditorInspectorPanelProps) {
   const [customPickerTarget, setCustomPickerTarget] = useState<'color' | 'fill' | null>(null);
 
@@ -999,6 +1032,22 @@ export function EditorInspectorPanel({
             </Pressable>
           </View>
         </View>
+
+        <StemInspectorSection
+          theme={theme}
+          canTidySelection={canTidySelection}
+          canPlotMath={canPlotMath}
+          canChartTable={canChartTable}
+          selectedFunctionPlot={selectedFunctionPlot}
+          onTidyLayout={onTidyLayout}
+          onPlotMath={onPlotMath}
+          onGenerateChart={onGenerateChart}
+          onComputeTableStats={onComputeTableStats}
+          onUpdatePlotParam={onUpdatePlotParam}
+          onUpdateTangentX={onUpdateTangentX}
+          onTogglePlotTangent={onTogglePlotTangent}
+          onCommitPlotChanges={onCommitPlotChanges}
+        />
 
         {singleObject ? (
           <>

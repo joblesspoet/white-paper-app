@@ -1,9 +1,24 @@
 # Task status
 
 ## Current phase
-Session 25 — Phase F: Live Classroom Broadcasting (6-Digit Code & QR Join) (branch `feat/phase-f-live-classroom`).
+Session 26 — Phase G: Magnetic Mind-Mapping, Live STEM Graphing & Spatial OCR Explode (branch `feat/phase-g-interactive-stem-mindmap`).
 
 ## Status
+`implemented-unverified` — Phase G (`prompts/26-phase-g-interactive-stem-mindmap.md`) is implemented with `npm run typecheck`, `npm test` (18 suites including `npm run test:stem-mindmap`), and iOS & Android Metro bundle checks passing; simulator/device touch and camera OCR testing remain unverified in this environment:
+- **Magnetic Connectors, `+` Quick-Branching & Lasso "Tidy Up" (`src/canvas/connectors.ts`, `src/canvas/auto-layout.ts`, `src/canvas/document.ts`, `src/hooks/useMagneticMindMap.ts`, `src/components/QuickBranchHandles.tsx`, `src/components/QuickBranchHandles.styles.ts`, `src/components/CanvasViewport.tsx`):**
+  - Added `startBinding` / `endBinding` (`{ objectId, port }`) on `ConnectorObject` with 24pt screen-space port snapping (`top`, `right`, `bottom`, `left`, `center`) during connector drags and automatic bound-connector re-routing on move/resize/rotate/delete + undo/redo.
+  - Added 4 cardinal `+` quick-branch pills (`QuickBranchHandles`) on single selected sticky notes/shapes spawning a connected child node 80 canvas units away in one batched undo step.
+  - Added `computeTidyLayout` (`Tidy grid`, `Align row`, `Align column`) with 24pt gaps for 3+ selected objects in the selection rail, `PhoneStemSelectionBar`, and `EditorInspectorPanel`.
+- **Live Function Plotter, Key-Point Solver & Table-to-Chart / Stats (`src/canvas/function-plotter.ts`, `src/canvas/chart-generator.ts`, `src/hooks/useStemGraphing.ts`, `src/components/canvas/FunctionPlotLayer.tsx`, `src/components/canvas/ChartLayer.tsx`, `src/components/FunctionPlotControls.tsx`, `src/components/StemInspectorSection.tsx`, `src/components/PhoneStemSelectionBar.tsx`, `src/export/stem-export-renderer.ts`):**
+  - Safe AST parser/evaluator (`FunctionPlotObject`) with asymptote branch splitting (`1/x`, `tan(x)`), automatic roots ($x$-intercepts), $y$-intercept, local extrema/vertex, optional calculus tangent line preview, and `FlatList`-backed interactive parameter sliders (`a`, `b`, `c`, `k` in `[-5, +5]`).
+  - `TableObject` numeric extraction, one-tap column summary statistics card (`Sum`, `Mean`, `Median`, `Min/Max`, `Std Dev`), and vector Bar, Line, and Pie `ChartObject` generation with Skia + offscreen export + SQLite persistence parity.
+- **Spatial OCR Explode (`src/ocr/ocr-explode.ts`, `src/ocr/ocr-service.ts`, `src/components/OcrReviewScreen.tsx`, `src/components/OcrReviewScreen.styles.ts`, `src/components/ImageImportFlow.tsx`):**
+  - Added `Explode into sticky notes (N)` on `OcrReviewScreen` when `regionCount >= 2`, filtering noise (`< 2` chars), mapping bounding boxes into collision-free pastel `StickyObject`s with `sourceImageId` in one batched undo command.
+- Verification suite added at `scripts/verify-stem-mindmap.mts` and wired into `npm test` via `npm run test:stem-mindmap`.
+- The next task is Session 27 — Phase H: Active Recall Reveal Tape, Voice Pins & Presenter Teleprompter Layer (`prompts/27-phase-h-active-recall-voice-presenter.md`).
+
+Previous slice (Phase F):
+Session 25 — Phase F: Live Classroom Broadcasting (6-Digit Code & QR Join) (branch `feat/phase-f-live-classroom`).
 `implemented-unverified` — Phase F (`prompts/25-phase-f-live-classroom.md`) is implemented with `npm run typecheck`, `npm test` (17 suites including `npm run test:live-classroom`), and the iOS Metro bundle check (`npx expo export --platform ios`) passing; multi-device live Supabase Realtime / LiveKit voice testing remain unverified in this environment:
 - **Classroom Protocol, QR & Transports (`src/classroom/protocol.ts`, `src/classroom/qr.ts`, `src/classroom/diff.ts`, `src/classroom/transport.ts`, `src/classroom/classroom-session.ts`, `src/classroom/entitlement.ts`, `src/classroom/audio-adapter.ts`, `supabase/functions/livekit-token/index.ts`):**
   - Schema-validated envelopes (`snapshot.sync`, `command.broadcast`, `ephemeral.stream` at 30 Hz, `classroom.control`, `student.board.update`), 6-digit code & `flowcanvas://join?code=...` deep-link helpers, and pure-TS Reed-Solomon QR matrix generator.

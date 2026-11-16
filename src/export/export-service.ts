@@ -29,6 +29,8 @@ import {
   arrowHeadSize,
   buildShapeRenderPrimitives,
   connectorPolyline,
+  isChartObject,
+  isFunctionPlotObject,
   isGeometricObject,
   isImageObject,
   isMathObject,
@@ -50,6 +52,7 @@ import {
   type TableObject,
   type TextualObject,
 } from '../canvas/document';
+import { drawChartObject, drawFunctionPlotObject } from './stem-export-renderer';
 import {
   buildVariableWidthStrokePath,
   hasVariablePressure,
@@ -588,6 +591,8 @@ async function renderRegionBase64(
   const images = objects.filter(isImageObject);
   const geometrics = objects.filter(isGeometricObject);
   const tables = objects.filter(isTableObject);
+  const plots = objects.filter(isFunctionPlotObject);
+  const charts = objects.filter(isChartObject);
   const maths = objects.filter(isMathObject);
   const textuals = objects.filter(isTextualObject);
 
@@ -652,6 +657,16 @@ async function renderRegionBase64(
   // 5. Math formulas
   for (let index = 0; index < maths.length; index += 1) {
     drawMathObject(canvas, maths[index], input.dark);
+    completed += 1;
+  }
+
+  // 6. Function plots & charts
+  for (let index = 0; index < plots.length; index += 1) {
+    drawFunctionPlotObject(canvas, plots[index], input.dark);
+    completed += 1;
+  }
+  for (let index = 0; index < charts.length; index += 1) {
+    drawChartObject(canvas, charts[index], input.dark);
     completed += 1;
   }
 

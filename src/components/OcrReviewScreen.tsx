@@ -1,27 +1,33 @@
+import { memo, useCallback, useMemo } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
   View,
+  type ListRenderItemInfo,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppButton } from './AppButton';
+import { EXPLODE_MIN_TEXT_LENGTH } from '../ocr/ocr-explode';
 import {
   canAddRecognizedText,
+  normalizeRecognizedText,
   ocrEngineLabel,
   ocrRegionLabel,
+  type OcrRegion,
   type OcrReviewState,
 } from '../ocr/ocr-service';
 import { resolveFlowModalLayout } from '../responsive/layout';
-import { radii, spacing, touchTarget, typography, type ThemeColors } from '../theme';
+import { spacing, type ThemeColors } from '../theme';
+import { ocrReviewScreenStyles as styles } from './OcrReviewScreen.styles';
 
 type Props = {
   theme: ThemeColors;
@@ -33,16 +39,38 @@ type Props = {
   onChangeText: (text: string) => void;
   onRetry: () => void;
   onAddText: () => void;
+  onExplodeStickyNotes?: () => void;
   onAddImageOnly: () => void;
   onClose: () => void;
 };
 
+const RegionChip = memo(function RegionChip({
+  region,
+  theme,
+}: {
+  region: OcrRegion;
+  theme: ThemeColors;
+}) {
+  return (
+    <View
+      style={[
+        styles.regionChip,
+        { borderColor: theme.border, backgroundColor: theme.surface },
+      ]}
+    >
+      <Text numberOfLines={1} style={[styles.regionChipText, { color: theme.foreground }]}>
+        {region.text}
+      </Text>
+    </View>
+  );
+});
+
 /**
  * OCR review: preview the placed image, correct the recognized text, then
- * either add the text with the image or place the image alone. Adapts to a
- * two-column layout on tablets and landscape viewports.
+ * add a text block, explode regions into spatial sticky notes, or place the
+ * image alone. Adapts to a two-column layout on tablets and landscape viewports.
  */
-export function OcrReviewScreen({
+export const OcrReviewScreen = memo(function OcrReviewScreen({
   theme,
   uri,
   width,
@@ -51,6 +79,7 @@ export function OcrReviewScreen({
   onChangeText,
   onRetry,
   onAddText,
+  onExplodeStickyNotes,
   onAddImageOnly,
   onClose,
 }: Props) {
@@ -60,8 +89,33 @@ export function OcrReviewScreen({
   const twoColumn = ocrLayout === 'two-column';
 
   const canAddText = canAddRecognizedText(state);
+  const explodableRegions = useMemo(
+    () =>
+      (state.regions ?? []).filter(
+        (r) => normalizeRecognizedText(r.text).length >= EXPLODE_MIN_TEXT_LENGTH,
+      ),
+    [state.regions],
+  );
+  const explodeCount =
+    explodableRegions.length >= 2 ? explodableRegions.length : state.regionCount;
+  const canExplode =
+    Boolean(onExplodeStickyNotes) &&
+    state.status === 'success' &&
+    state.regionCount >= 2 &&
+    explodeCount >= 2;
+
   const ratio = height > 0 ? width / height : 1;
   const previewRatio = Math.min(Math.max(ratio, 0.55), 2.4);
+
+  const keyExtractor = useCallback(
+    (item: OcrRegion, index: number) => `${index}-${item.boundingBox.x}-${item.boundingBox.y}`,
+    [],
+  );
+
+  const renderRegionChip = useCallback(
+    ({ item }: ListRenderItemInfo<OcrRegion>) => <RegionChip region={item} theme={theme} />,
+    [theme],
+  );
 
   const previewSection = (
     <View style={[styles.previewColumn, twoColumn && styles.previewColumnTwoPane]}>
@@ -91,7 +145,11 @@ export function OcrReviewScreen({
   const textAndActionsSection = (
     <View style={[styles.textColumn, twoColumn && styles.textColumnTwoPane]}>
       {state.status === 'loading' && (
-        <View style={styles.statusRow} accessibilityRole="progressbar" accessibilityLabel="Reading text on this device">
+        <View
+          style={styles.statusRow}
+          accessibilityRole="progressbar"
+          accessibilityLabel="Reading text on this device"
+        >
           <ActivityIndicator color={theme.primary} />
           <Text style={[styles.statusText, { color: theme.foreground }]}>
             Reading text on this device…
@@ -137,6 +195,17 @@ export function OcrReviewScreen({
           <Text style={[styles.summary, { color: theme.foreground }]}>
             {ocrRegionLabel(state.regionCount)} · {ocrEngineLabel(state.engine)}
           </Text>
+          {explodableRegions.length >= 2 && (
+            <FlatList
+              horizontal
+              data={explodableRegions}
+              keyExtractor={keyExtractor}
+              renderItem={renderRegionChip}
+              style={styles.regionStrip}
+              contentContainerStyle={styles.regionStripContent}
+              showsHorizontalScrollIndicator={false}
+            />
+          )}
           <TextInput
             style={[
               styles.textField,
@@ -174,6 +243,14 @@ export function OcrReviewScreen({
           disabled={!canAddText}
           accessibilityHint="Place the reviewed text as a text block below the image."
         />
+        {canExplode && onExplodeStickyNotes && (
+          <AppButton
+            label={`Explode into sticky notes (${explodeCount})`}
+            variant="secondary"
+            onPress={onExplodeStickyNotes}
+            accessibilityHint="Split each recognized text region into movable sticky notes in the same 2D layout."
+          />
+        )}
         <AppButton
           label="Add image only"
           variant="secondary"
@@ -229,88 +306,4 @@ export function OcrReviewScreen({
       </ScrollView>
     </KeyboardAvoidingView>
   );
-}
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-  },
-  headerCompact: {
-    paddingVertical: spacing.xs + 2,
-  },
-  title: { ...typography.title },
-  close: {
-    padding: spacing.sm,
-    minHeight: touchTarget,
-    minWidth: touchTarget,
-    alignItems: 'flex-end',
-    justifyContent: 'center',
-  },
-  closeLabel: { ...typography.bodyStrong },
-  content: { padding: spacing.lg, gap: spacing.md, maxWidth: 1080, width: '100%', alignSelf: 'center' },
-  contentTwoColumn: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.xl,
-  },
-  previewColumn: { gap: spacing.sm },
-  previewColumnTwoPane: { flex: 1 },
-  textColumn: { gap: spacing.md },
-  textColumnTwoPane: { flex: 1 },
-  preview: {
-    borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.sm,
-    alignItems: 'center',
-  },
-  previewImage: { width: '100%' },
-  assurance: { ...typography.caption },
-  summary: { ...typography.caption },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    paddingVertical: spacing.sm,
-  },
-  statusText: { ...typography.body },
-  notice: {
-    padding: spacing.md,
-    borderWidth: 1,
-    borderRadius: radii.sm,
-    gap: spacing.xs,
-  },
-  noticeTitle: { ...typography.bodyStrong },
-  noticeText: { ...typography.caption },
-  errorBanner: {
-    padding: spacing.md,
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: '#F87171',
-    borderRadius: radii.sm,
-    gap: spacing.xs,
-  },
-  errorTitle: { ...typography.bodyStrong, color: '#991B1B' },
-  errorText: { ...typography.caption, color: '#991B1B' },
-  retry: {
-    alignSelf: 'flex-start',
-    minHeight: touchTarget,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
-  },
-  retryLabel: { ...typography.caption, color: '#B91C1C', fontWeight: '700' },
-  textField: {
-    ...typography.body,
-    minHeight: 180,
-    borderWidth: 1,
-    borderRadius: radii.sm,
-    padding: spacing.md,
-  },
-  hint: { ...typography.caption },
-  actions: { gap: spacing.sm, paddingTop: spacing.sm },
 });

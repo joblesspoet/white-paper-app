@@ -48,6 +48,21 @@ import {
   type TableObjectBase,
 } from './table.ts';
 import {
+  propagateBoundConnectors,
+  type ConnectorBinding,
+} from './connectors.ts';
+import {
+  DEFAULT_CHART_HEIGHT,
+  DEFAULT_CHART_WIDTH,
+  type ChartObjectBase,
+} from './chart-generator.ts';
+import {
+  DEFAULT_PLOT_HEIGHT,
+  DEFAULT_PLOT_WIDTH,
+  createFunctionPlotConfig,
+  type FunctionPlotObjectBase,
+} from './function-plotter.ts';
+import {
   DEFAULT_MATH_FONT_SIZE,
   latexToDisplayText,
   type MathObjectBase,
@@ -285,6 +300,8 @@ export type StickyObject = CanvasObjectBase & {
   colorKey: string;
   fontWeight?: TextWeight;
   fontStyle?: TextSlant;
+  /** Source photo ID when created by Spatial OCR Explode. */
+  sourceImageId?: string;
 };
 export type ShapeObject = CanvasObjectBase &
   ShapeGeometry & {
@@ -305,6 +322,10 @@ export type ConnectorObject = CanvasObjectBase &
     /** Line and arrow colour, stored as a palette key or custom `#rrggbb`. */
     colorKey: string;
     strokeWidth: number;
+    /** Optional magnetic port binding at the start of the connector. */
+    startBinding?: ConnectorBinding;
+    /** Optional magnetic port binding at the end of the connector. */
+    endBinding?: ConnectorBinding;
   };
 
 /** A clockwise quarter-turn applied to the original before cropping. */
@@ -358,6 +379,8 @@ export type ImageOcr = {
 
 export type TableObject = CanvasObjectBase & TableObjectBase;
 export type MathObject = CanvasObjectBase & MathObjectBase;
+export type FunctionPlotObject = CanvasObjectBase & FunctionPlotObjectBase;
+export type ChartObject = CanvasObjectBase & ChartObjectBase;
 
 export type CanvasObject =
   | TextObject
@@ -366,7 +389,9 @@ export type CanvasObject =
   | ConnectorObject
   | ImageObject
   | TableObject
-  | MathObject;
+  | MathObject
+  | FunctionPlotObject
+  | ChartObject;
 export type CanvasObjectType = CanvasObject['type'];
 export type TextualObject = TextObject | StickyObject;
 export type GeometricObject = ShapeObject | ConnectorObject;
@@ -519,6 +544,8 @@ export type CreateConnectorInput = {
   end: Point;
   colorKey?: string;
   strokeWidth?: number;
+  startBinding?: ConnectorBinding;
+  endBinding?: ConnectorBinding;
 };
 
 export function createConnectorObject({
@@ -528,6 +555,8 @@ export function createConnectorObject({
   end,
   colorKey = DEFAULT_CONNECTOR_COLOR,
   strokeWidth = DEFAULT_CONNECTOR_STROKE_WIDTH,
+  startBinding,
+  endBinding,
 }: CreateConnectorInput): ConnectorObject {
   return {
     id,
@@ -537,6 +566,8 @@ export function createConnectorObject({
     rotation: 0,
     colorKey,
     strokeWidth,
+    ...(startBinding ? { startBinding } : {}),
+    ...(endBinding ? { endBinding } : {}),
   };
 }
 
@@ -642,6 +673,45 @@ export function isTableObject(object: CanvasObject): object is TableObject {
 export function isMathObject(object: CanvasObject): object is MathObject {
   'worklet';
   return object.type === 'math';
+}
+
+/** Function plots render 2D axes, sampled curves, key points, and tangents. */
+export function isFunctionPlotObject(object: CanvasObject): object is FunctionPlotObject {
+  'worklet';
+  return object.type === 'function-plot';
+}
+
+/** Charts render vector Bar, Line, or Pie diagrams derived from tables. */
+export function isChartObject(object: CanvasObject): object is ChartObject {
+  'worklet';
+  return object.type === 'chart';
+}
+
+export function createFunctionPlotObject(input: {
+  id: string;
+  point: Point;
+  latex: string;
+  colorKey?: string;
+  sourceMathId?: string;
+  width?: number;
+  height?: number;
+}): FunctionPlotObject | null {
+  const config = createFunctionPlotConfig(input.latex);
+  if (!config) return null;
+  const width = input.width ?? DEFAULT_PLOT_WIDTH;
+  const height = input.height ?? DEFAULT_PLOT_HEIGHT;
+  return {
+    id: input.id,
+    type: 'function-plot',
+    x: Math.round(input.point.x - width / 2),
+    y: Math.round(input.point.y - height / 2),
+    width,
+    height,
+    rotation: 0,
+    ...config,
+    colorKey: input.colorKey ?? DEFAULT_TEXT_COLOR,
+    ...(input.sourceMathId ? { sourceMathId: input.sourceMathId } : {}),
+  };
 }
 
 export type CreateMathInput = {
@@ -798,6 +868,10 @@ export function withObjectStyle(object: CanvasObject, patch: ObjectStylePatch): 
     }
     return { ...object, colorKey, hasHeaderRow, fillHeader, fontSize };
   }
+  if (object.type === 'function-plot' || object.type === 'chart') {
+    if (colorKey === object.colorKey) return object;
+    return { ...object, colorKey };
+  }
   const style = patch.style ?? object.style;
   const strokeWidth = patch.strokeWidth ?? object.strokeWidth;
   if (colorKey === object.colorKey && style === object.style && strokeWidth === object.strokeWidth) return object;
@@ -873,6 +947,32 @@ export function duplicateObject(
       columnRatios: [...object.columnRatios],
       cells: object.cells.map((cell) => ({ ...cell })),
     };
+  }
+  if (object.type === 'function-plot') {
+    return {
+      ...object,
+      id,
+      x: object.x + offset,
+      y: object.y + offset,
+      params: { ...object.params },
+      parameterNames: [...object.parameterNames],
+    };
+  }
+  if (object.type === 'chart') {
+    return {
+      ...object,
+      id,
+      x: object.x + offset,
+      y: object.y + offset,
+      labels: [...object.labels],
+      series: object.series.map((s) => ({ ...s, values: [...s.values] })),
+    };
+  }
+  if (object.type === 'connector') {
+    const copy: ConnectorObject = { ...object, id, x: object.x + offset, y: object.y + offset };
+    delete copy.startBinding;
+    delete copy.endBinding;
+    return copy;
   }
   return { ...object, id, x: object.x + offset, y: object.y + offset };
 }
@@ -1132,6 +1232,12 @@ export type DocumentCommand =
           'rows' | 'columns' | 'columnRatios' | 'cells' | 'width' | 'height' | 'hasHeaderRow' | 'fillHeader'
         >
       >;
+      functionPlot?: Partial<
+        Pick<
+          FunctionPlotObject,
+          'params' | 'showKeyPoints' | 'showTangent' | 'tangentX' | 'xMin' | 'xMax' | 'yMin' | 'yMax'
+        >
+      >;
     }
   | { type: 'object.move'; id: string; x: number; y: number }
   | {
@@ -1171,8 +1277,8 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
     }
     case 'object.insert':
       return { ...document, objects: [...document.objects, command.object] };
-    case 'object.update':
-      return mapObject(document, command.id, (object) => {
+    case 'object.update': {
+      const updated = mapObject(document, command.id, (object) => {
         let next = object;
         if (command.text !== undefined) next = withObjectText(next, command.text);
         if (command.latex !== undefined) next = withObjectMath(next, command.latex);
@@ -1183,6 +1289,13 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
           next = {
             ...next,
             ...command.table,
+          };
+        }
+        if (command.functionPlot && next.type === 'function-plot') {
+          next = {
+            ...next,
+            ...command.functionPlot,
+            ...(command.functionPlot.params ? { params: { ...next.params, ...command.functionPlot.params } } : {}),
           };
         }
         return withObjectStyle(next, {
@@ -1199,27 +1312,39 @@ export function applyCommand(document: CanvasDocument, command: DocumentCommand)
           fillHeader: command.fillHeader,
         });
       });
-    case 'object.move':
-      return mapObject(document, command.id, (object) =>
+      if (updated === document) return document;
+      const propagated = propagateBoundConnectors(updated.objects, new Set([command.id]));
+      return propagated === updated.objects ? updated : { ...updated, objects: propagated };
+    }
+    case 'object.move': {
+      const moved = mapObject(document, command.id, (object) =>
         object.x === command.x && object.y === command.y
           ? object
           : { ...object, x: command.x, y: command.y },
       );
+      if (moved === document) return document;
+      const propagated = propagateBoundConnectors(moved.objects, new Set([command.id]));
+      return propagated === moved.objects ? moved : { ...moved, objects: propagated };
+    }
     case 'objects.geometry': {
       const updates = new Map(command.updates.map((update) => [update.id, update]));
-      let changed = false;
+      const changedIds = new Set<string>();
       const objects = document.objects.map((object) => {
         const update = updates.get(object.id);
         if (!update) return object;
         const next = withObjectGeometry(object, update);
-        if (next !== object) changed = true;
+        if (next !== object) changedIds.add(object.id);
         return next;
       });
-      return changed ? { ...document, objects } : document;
+      if (changedIds.size === 0) return document;
+      const propagated = propagateBoundConnectors(objects, changedIds);
+      return { ...document, objects: propagated };
     }
     case 'object.delete': {
       const objects = document.objects.filter((object) => object.id !== command.id);
-      return objects.length === document.objects.length ? document : { ...document, objects };
+      if (objects.length === document.objects.length) return document;
+      const propagated = propagateBoundConnectors(objects, new Set([command.id]));
+      return { ...document, objects: propagated };
     }
     default:
       return document;
@@ -1232,6 +1357,89 @@ function objectEquals(left: CanvasObject, right: CanvasObject): boolean {
   if (Boolean(left.locked) !== Boolean(right.locked)) return false;
   if (left.type === 'table' && right.type === 'table') {
     return tableEquals(left, right);
+  }
+  if (left.type === 'connector' && right.type === 'connector') {
+    return (
+      left.id === right.id &&
+      left.x === right.x &&
+      left.y === right.y &&
+      left.width === right.width &&
+      left.height === right.height &&
+      left.rotation === right.rotation &&
+      left.direction === right.direction &&
+      left.style === right.style &&
+      left.colorKey === right.colorKey &&
+      left.strokeWidth === right.strokeWidth &&
+      left.startBinding?.objectId === right.startBinding?.objectId &&
+      left.startBinding?.port === right.startBinding?.port &&
+      left.endBinding?.objectId === right.endBinding?.objectId &&
+      left.endBinding?.port === right.endBinding?.port
+    );
+  }
+  if (left.type === 'function-plot' && right.type === 'function-plot') {
+    if (
+      left.id !== right.id ||
+      left.x !== right.x ||
+      left.y !== right.y ||
+      left.width !== right.width ||
+      left.height !== right.height ||
+      left.rotation !== right.rotation ||
+      left.latex !== right.latex ||
+      left.expression !== right.expression ||
+      left.xMin !== right.xMin ||
+      left.xMax !== right.xMax ||
+      left.yMin !== right.yMin ||
+      left.yMax !== right.yMax ||
+      left.showKeyPoints !== right.showKeyPoints ||
+      left.showTangent !== right.showTangent ||
+      left.tangentX !== right.tangentX ||
+      left.colorKey !== right.colorKey ||
+      left.sourceMathId !== right.sourceMathId ||
+      left.parameterNames.length !== right.parameterNames.length
+    ) {
+      return false;
+    }
+    for (let i = 0; i < left.parameterNames.length; i += 1) {
+      if (left.parameterNames[i] !== right.parameterNames[i]) return false;
+    }
+    const leftParamKeys = Object.keys(left.params);
+    const rightParamKeys = Object.keys(right.params);
+    if (leftParamKeys.length !== rightParamKeys.length) return false;
+    return leftParamKeys.every((k) => left.params[k] === right.params[k]);
+  }
+  if (left.type === 'chart' && right.type === 'chart') {
+    if (
+      left.id !== right.id ||
+      left.x !== right.x ||
+      left.y !== right.y ||
+      left.width !== right.width ||
+      left.height !== right.height ||
+      left.rotation !== right.rotation ||
+      left.chartType !== right.chartType ||
+      left.title !== right.title ||
+      left.colorKey !== right.colorKey ||
+      left.sourceTableId !== right.sourceTableId ||
+      left.labels.length !== right.labels.length ||
+      left.series.length !== right.series.length
+    ) {
+      return false;
+    }
+    for (let i = 0; i < left.labels.length; i += 1) {
+      if (left.labels[i] !== right.labels[i]) return false;
+    }
+    for (let i = 0; i < left.series.length; i += 1) {
+      const ls = left.series[i];
+      const rs = right.series[i];
+      if (
+        ls.name !== rs.name ||
+        ls.colorKey !== rs.colorKey ||
+        ls.values.length !== rs.values.length ||
+        ls.values.some((v, idx) => v !== rs.values[idx])
+      ) {
+        return false;
+      }
+    }
+    return true;
   }
   if (left.type === 'image' && right.type === 'image') {
     return (
@@ -1324,7 +1532,8 @@ function moveHistoryCommand(id: string, label: string, from: Point, to: Point): 
         changed = true;
         return { ...object, x: to.x, y: to.y };
       });
-      return changed ? { ...current, objects } : current;
+      if (!changed) return current;
+      return { ...current, objects: propagateBoundConnectors(objects, new Set([id])) };
     },
     revert(current) {
       let changed = false;
@@ -1334,7 +1543,8 @@ function moveHistoryCommand(id: string, label: string, from: Point, to: Point): 
         changed = true;
         return { ...object, x: from.x, y: from.y };
       });
-      return changed ? { ...current, objects } : current;
+      if (!changed) return current;
+      return { ...current, objects: propagateBoundConnectors(objects, new Set([id])) };
     },
     move: { id, from, to },
     merge(next) {
@@ -1425,28 +1635,30 @@ function geometryHistoryCommand(
     type: 'update',
     label,
     apply(current) {
-      let changed = false;
+      const changedIds = new Set<string>();
       const objects = current.objects.map((object) => {
         const snapshot = afterById.get(object.id);
         const fields = fieldsById.get(object.id);
         if (!snapshot || !fields) return object;
         const next = withGeometryFields(object, snapshot, fields);
-        if (next !== object) changed = true;
+        if (next !== object) changedIds.add(object.id);
         return next;
       });
-      return changed ? { ...current, objects } : current;
+      if (changedIds.size === 0) return current;
+      return { ...current, objects: propagateBoundConnectors(objects, changedIds) };
     },
     revert(current) {
-      let changed = false;
+      const changedIds = new Set<string>();
       const objects = current.objects.map((object) => {
         const snapshot = beforeById.get(object.id);
         const fields = fieldsById.get(object.id);
         if (!snapshot || !fields) return object;
         const next = withGeometryFields(object, snapshot, fields);
-        if (next !== object) changed = true;
+        if (next !== object) changedIds.add(object.id);
         return next;
       });
-      return changed ? { ...current, objects } : current;
+      if (changedIds.size === 0) return current;
+      return { ...current, objects: propagateBoundConnectors(objects, changedIds) };
     },
     geometry: { verb, before, after },
     merge(next) {
@@ -1592,13 +1804,19 @@ export function prepareDocumentCommand(
       const index = document.objects.findIndex((object) => object.id === command.id);
       if (index === -1) return null;
       const removed = document.objects[index];
+      const affectedConnectors = document.objects.filter(
+        (obj): obj is ConnectorObject =>
+          obj.type === 'connector' &&
+          (obj.startBinding?.objectId === command.id || obj.endBinding?.objectId === command.id),
+      );
+      const affectedById = new Map(affectedConnectors.map((c) => [c.id, c]));
       return {
         type: 'delete',
         label: `Delete ${removed.type}`,
         apply: (current) => applyCommand(current, command),
         revert: (current) => {
           if (current.objects.some((object) => object.id === removed.id)) return current;
-          const objects = [...current.objects];
+          const objects = current.objects.map((obj) => affectedById.get(obj.id) ?? obj);
           objects.splice(Math.min(index, objects.length), 0, removed);
           return { ...current, objects };
         },

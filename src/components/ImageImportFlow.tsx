@@ -23,9 +23,11 @@ import {
   type ImageCrop,
   type ImageObject,
   type Point,
+  type StickyObject,
   type TextObject,
 } from '../canvas/document';
-import { buildOcrPlacement, type OcrPlacementChoice } from '../ocr/ocr-placement';
+import { buildSpatialStickyExplosion } from '../ocr/ocr-explode';
+import { buildOcrPlacement, withRecognizedOcr, type OcrPlacementChoice } from '../ocr/ocr-placement';
 import { recognizeImageText } from '../ocr/native-ocr';
 import {
   loadingOcrState,
@@ -48,6 +50,7 @@ type Props = {
   boardId: string;
   point?: Point;
   onPlace: (object: ImageObject, textObject?: TextObject) => void;
+  onExplodeStickyNotes?: (image: ImageObject, stickyNotes: StickyObject[]) => void;
   onClose: () => void;
 };
 
@@ -59,7 +62,14 @@ type Props = {
  * placed copies together; a successful placement keeps both because the image
  * object refers to them.
  */
-export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Props) {
+export function ImageImportFlow({
+  theme,
+  boardId,
+  point,
+  onPlace,
+  onExplodeStickyNotes,
+  onClose,
+}: Props) {
   const [step, setStep] = useState<FlowStep>('source');
   const [working, setWorking] = useState<WorkingImage | null>(null);
   const [original, setOriginal] = useState<StoredImageAsset | null>(null);
@@ -211,6 +221,37 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
     onClose();
   }, [pending, ocrState, onPlace, onClose]);
 
+  const handleExplode = useCallback(() => {
+    if (!pending || !onExplodeStickyNotes) return;
+    const enrichedImage = withRecognizedOcr(pending.image, ocrState);
+    const regions = ocrState.regions ?? [];
+    const stickyNotes = buildSpatialStickyExplosion(
+      regions,
+      {
+        id: enrichedImage.id,
+        x: enrichedImage.x,
+        y: enrichedImage.y,
+        width: enrichedImage.width,
+        height: enrichedImage.height,
+        sourceWidth: enrichedImage.sourceWidth,
+        sourceHeight: enrichedImage.sourceHeight,
+      },
+      { viewportCenter: point },
+    );
+    if (stickyNotes.length === 0) {
+      handlePlace('text');
+      return;
+    }
+    setStep('placing');
+    onExplodeStickyNotes(enrichedImage, stickyNotes);
+    setPending(null);
+    setOriginal(null);
+    setWorking(null);
+    setOcrState(loadingOcrState());
+    setStep('source');
+    onClose();
+  }, [handlePlace, ocrState, onClose, onExplodeStickyNotes, pending, point]);
+
   const handleCancel = useCallback(() => {
     cleanupTemporary();
     setStep('source');
@@ -262,6 +303,7 @@ export function ImageImportFlow({ theme, boardId, point, onPlace, onClose }: Pro
           onChangeText={(text) => setOcrState((current) => withOcrCorrection(current, text))}
           onRetry={handleRetryOcr}
           onAddText={() => handlePlace('text')}
+          onExplodeStickyNotes={onExplodeStickyNotes ? handleExplode : undefined}
           onAddImageOnly={() => handlePlace('image-only')}
           onClose={handleClose}
         />

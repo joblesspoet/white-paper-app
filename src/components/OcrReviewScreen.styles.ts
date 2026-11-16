@@ -1,0 +1,111 @@
+import { StyleSheet } from 'react-native';
+
+import { radii, spacing, touchTarget, typography } from '../theme';
+
+export const ocrReviewScreenStyles = StyleSheet.create({
+  root: { flex: 1 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+  },
+  headerCompact: {
+    paddingVertical: spacing.xs + 2,
+  },
+  title: { ...typography.title },
+  close: {
+    padding: spacing.sm,
+    minHeight: touchTarget,
+    minWidth: touchTarget,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  closeLabel: { ...typography.bodyStrong },
+  content: {
+    padding: spacing.lg,
+    gap: spacing.md,
+    maxWidth: 1080,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  contentTwoColumn: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xl,
+  },
+  previewColumn: { gap: spacing.sm },
+  previewColumnTwoPane: { flex: 1 },
+  textColumn: { gap: spacing.md },
+  textColumnTwoPane: { flex: 1 },
+  preview: {
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.sm,
+    alignItems: 'center',
+  },
+  previewImage: { width: '100%' },
+  assurance: { ...typography.caption },
+  summary: { ...typography.caption },
+  regionStrip: {
+    maxHeight: 40,
+  },
+  regionStripContent: {
+    gap: spacing.xs,
+    alignItems: 'center',
+  },
+  regionChip: {
+    maxWidth: 160,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  regionChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  statusText: { ...typography.body },
+  notice: {
+    padding: spacing.md,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    gap: spacing.xs,
+  },
+  noticeTitle: { ...typography.bodyStrong },
+  noticeText: { ...typography.caption },
+  errorBanner: {
+    padding: spacing.md,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#F87171',
+    borderRadius: radii.sm,
+    gap: spacing.xs,
+  },
+  errorTitle: { ...typography.bodyStrong, color: '#991B1B' },
+  errorText: { ...typography.caption, color: '#991B1B' },
+  retry: {
+    alignSelf: 'flex-start',
+    minHeight: touchTarget,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+  },
+  retryLabel: { ...typography.caption, color: '#B91C1C', fontWeight: '700' },
+  textField: {
+    ...typography.body,
+    minHeight: 180,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    padding: spacing.md,
+  },
+  hint: { ...typography.caption },
+  actions: { gap: spacing.sm, paddingTop: spacing.sm },
+});

@@ -186,7 +186,11 @@ import { openAppSettings, requestMicrophonePermission } from '../src/recorder/pe
 import { ImageImportFlow } from '../src/components/ImageImportFlow';
 import { insertMediaAsset, type MediaAssetRecord } from '../src/persistence/repository';
 import { cropMetadata } from '../src/media/asset-store';
-import type { ImageObject } from '../src/canvas/document';
+import type { ImageObject, StickyObject } from '../src/canvas/document';
+import { QuickBranchHandles } from '../src/components/QuickBranchHandles';
+import { PhoneStemSelectionBar } from '../src/components/PhoneStemSelectionBar';
+import { useMagneticMindMap } from '../src/hooks/useMagneticMindMap';
+import { useStemGraphing } from '../src/hooks/useStemGraphing';
 import { InkingQuickTray } from '../src/components/InkingQuickTray';
 import { QuickCreationSheet, type InsertToolRequest } from '../src/components/QuickCreationSheet';
 import { ActionIsland, ACTION_ISLAND_HEIGHT } from '../src/components/ActionIsland';
@@ -482,6 +486,46 @@ export default function BoardEditorScreen() {
     });
     setSelectedObjectIds([object.id]);
   }, [boardId, dispatch, insertMediaAssetRow]);
+
+  const explodeImageStickyNotes = useCallback(
+    (image: ImageObject, stickyNotes: StickyObject[]) => {
+      if (!boardId) return;
+      const commands: DocumentCommand[] = [
+        { type: 'object.insert', object: image },
+        ...stickyNotes.map((note) => ({ type: 'object.insert' as const, object: note })),
+      ];
+      dispatch({ type: 'commands', commands });
+      void insertMediaAssetRow({
+        id: image.originalAssetId,
+        boardId,
+        ownerId: null,
+        storagePath: image.originalStoragePath,
+        mimeType: '',
+        bytes: 0,
+        metadata: {},
+        createdAt: new Date().toISOString(),
+      });
+      void insertMediaAssetRow({
+        id: image.assetId,
+        boardId,
+        ownerId: null,
+        storagePath: image.storagePath,
+        mimeType: '',
+        bytes: 0,
+        metadata: {
+          ...cropMetadata(image.crop, image.originalAssetId, '', {
+            width: image.sourceWidth,
+            height: image.sourceHeight,
+          }),
+          ...(image.ocr ? { ocr: image.ocr } : {}),
+        },
+        createdAt: new Date().toISOString(),
+      });
+      setActiveTool('select');
+      setSelectedObjectIds(stickyNotes.map((note) => note.id));
+    },
+    [boardId, insertMediaAssetRow],
+  );
 
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [canvasRect, setCanvasRect] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -814,6 +858,9 @@ export default function BoardEditorScreen() {
 
   const runCommand = useCallback((command: DocumentCommand, transient?: boolean) => {
     dispatch({ type: 'command', command, transient });
+  }, []);
+  const runBatchCommands = useCallback((commands: readonly DocumentCommand[]) => {
+    dispatch({ type: 'commands', commands });
   }, []);
   const measureObject = useCallback((id: string, height: number) => {
     dispatch({ type: 'measure', id, height });
@@ -2446,6 +2493,51 @@ function mathSpanAtPoint(
   const overlayFill = editingTextObject ? objectFill(editingTextObject) : undefined;
   const overlayTextColor = editingTextObject ? objectTextColor(editingTextObject, dark) : theme.foreground;
   const overlayLineHeight = editingTextObject ? textLineHeight(editingTextObject.fontSize) : 0;
+  const isCanvasReadOnly = Boolean(
+    Boolean(showcasedName) ||
+      (classroomState?.active &&
+        classroomState.role === 'student' &&
+        !isScratchpadMode &&
+        (isProjectorMode ||
+          classroomState.myPermission !== 'can-draw' ||
+          classroomState.roomInfo?.isLocked)),
+  );
+
+  const {
+    quickBranchTarget,
+    canTidySelection,
+    handleQuickBranch,
+    handleTidyLayout,
+  } = useMagneticMindMap({
+    document,
+    selectedObjects,
+    editing: Boolean(editing),
+    isReadOnly: isCanvasReadOnly,
+    connectorColorKey,
+    dispatchCommand: runCommand,
+    dispatchBatchCommands: runBatchCommands,
+    setSelectedIds: setSelectedObjectIds,
+  });
+
+  const {
+    plottableMath,
+    selectedFunctionPlot,
+    numericTable,
+    handlePlotMathObject,
+    handleUpdatePlotParam,
+    handleCommitPlotChanges,
+    handleTogglePlotTangent,
+    handleUpdateTangentX,
+    handleGenerateChart,
+    handleComputeTableStats,
+  } = useStemGraphing({
+    selectedObjects,
+    isReadOnly: isCanvasReadOnly,
+    dispatchCommand: runCommand,
+    commitPending,
+    setSelectedIds: setSelectedObjectIds,
+  });
+
   const selectedBounds = selectionBounds(selectedObjects);
   const selectedRect = selectedBounds && !editing ? canvasRectToScreen(selectedBounds, viewport) : null;
   // Only text and sticky notes have editable text. Shapes and connectors
@@ -2454,13 +2546,27 @@ function mathSpanAtPoint(
   const selectedIsMath = selectedObject ? isMathObject(selectedObject) : false;
   const selectedIsImage = selectedObject?.type === 'image';
   const selectedIsTable = selectedObject?.type === 'table';
+  const selectedIsStemDiagram =
+    selectedObject?.type === 'function-plot' || selectedObject?.type === 'chart';
   // The rail is vertical and sits beside the selection, so it never covers the
   // rotate handle above the selection. Its action count decides its height.
   const selectionActionCount = selectedObjects.length === 0
     ? 0
     : selectedObject
-      ? (selectedIsTextual ? 4 : selectedIsMath ? 3 : selectedIsTable ? 4 : selectedIsImage ? 2 : 3)
-      : 2;
+      ? (selectedIsTextual
+          ? 4
+          : selectedIsMath
+            ? plottableMath
+              ? 4
+              : 3
+            : selectedIsTable
+              ? 4
+              : selectedIsImage || selectedIsStemDiagram
+                ? 2
+                : 3)
+      : canTidySelection
+        ? 5
+        : 2;
   const canvasBorder = 1;
   const rawActionRail = selectedRect && !editing && canvasRect.width > 0
     ? selectionActionRail(
@@ -3353,7 +3459,7 @@ function mathSpanAtPoint(
                     <EditIcon size={18} color={theme.foreground} />
                   </Pressable>
                 )}
-                {selectedObject && !selectedIsImage && !selectedIsTable && !selectedIsMath && (
+                {selectedObject && !selectedIsImage && !selectedIsTable && !selectedIsMath && !selectedIsStemDiagram && (
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Style selected object"
@@ -3368,6 +3474,60 @@ function mathSpanAtPoint(
                   >
                     <StyleIcon size={18} color={theme.foreground} />
                   </Pressable>
+                )}
+                {plottableMath && (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Plot graph"
+                    accessibilityHint="Plots this math function onto 2D coordinate axes"
+                    onPress={handlePlotMathObject}
+                    style={({ pressed }) => [
+                      styles.selectionAction,
+                      styles.selectionActionSeparator,
+                      { borderTopColor: theme.border },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={[styles.railTextAction, { color: theme.primary }]}>Plot</Text>
+                  </Pressable>
+                )}
+                {canTidySelection && (
+                  <>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Tidy grid"
+                      onPress={() => handleTidyLayout('grid')}
+                      style={({ pressed }) => [styles.selectionAction, pressed && styles.pressed]}
+                    >
+                      <Text style={[styles.railTextAction, { color: theme.primary }]}>Grid</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Align row"
+                      onPress={() => handleTidyLayout('row')}
+                      style={({ pressed }) => [
+                        styles.selectionAction,
+                        styles.selectionActionSeparator,
+                        { borderTopColor: theme.border },
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.railTextAction, { color: theme.foreground }]}>Row</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Align column"
+                      onPress={() => handleTidyLayout('column')}
+                      style={({ pressed }) => [
+                        styles.selectionAction,
+                        styles.selectionActionSeparator,
+                        { borderTopColor: theme.border },
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.railTextAction, { color: theme.foreground }]}>Col</Text>
+                    </Pressable>
+                  </>
                 )}
                 {selectedIsTable && selectedObject && (
                   <>
@@ -3401,7 +3561,7 @@ function mathSpanAtPoint(
                   onPress={duplicateSelected}
                   style={({ pressed }) => [
                     styles.selectionAction,
-                    selectedObject && styles.selectionActionSeparator,
+                    (selectedObject || canTidySelection) && styles.selectionActionSeparator,
                     { borderTopColor: theme.border },
                     pressed && styles.pressed,
                   ]}
@@ -3423,6 +3583,36 @@ function mathSpanAtPoint(
                   <TrashIcon size={18} color={theme.destructive} />
                 </Pressable>
               </View>
+            )}
+
+            {quickBranchTarget && activeTool === 'select' && !editing && (
+              <QuickBranchHandles
+                object={quickBranchTarget}
+                viewport={viewport}
+                canvasWidth={canvasRect.width}
+                canvasHeight={canvasRect.height}
+                theme={theme}
+                onBranch={handleQuickBranch}
+              />
+            )}
+
+            {!tablet && !editing && selectedObjects.length > 0 && (
+              <PhoneStemSelectionBar
+                theme={theme}
+                bottomOffset={ACTION_ISLAND_HEIGHT + spacing.sm + islandBottom}
+                canTidySelection={canTidySelection}
+                canPlotMath={Boolean(plottableMath)}
+                canChartTable={Boolean(numericTable)}
+                selectedFunctionPlot={selectedFunctionPlot}
+                onTidyLayout={handleTidyLayout}
+                onPlotMath={handlePlotMathObject}
+                onGenerateChart={handleGenerateChart}
+                onComputeTableStats={handleComputeTableStats}
+                onUpdatePlotParam={handleUpdatePlotParam}
+                onUpdateTangentX={handleUpdateTangentX}
+                onTogglePlotTangent={handleTogglePlotTangent}
+                onCommitPlotChanges={handleCommitPlotChanges}
+              />
             )}
 
             {editingTextObject && (
@@ -3489,6 +3679,18 @@ function mathSpanAtPoint(
               onDeleteSelected={deleteSelected}
               onUpdateObjectStyle={updateObjectStyleById}
               onTableAction={handleTableAction}
+              canTidySelection={canTidySelection}
+              canPlotMath={Boolean(plottableMath)}
+              canChartTable={Boolean(numericTable)}
+              selectedFunctionPlot={selectedFunctionPlot}
+              onTidyLayout={handleTidyLayout}
+              onPlotMath={handlePlotMathObject}
+              onGenerateChart={handleGenerateChart}
+              onComputeTableStats={handleComputeTableStats}
+              onUpdatePlotParam={handleUpdatePlotParam}
+              onUpdateTangentX={handleUpdateTangentX}
+              onTogglePlotTangent={handleTogglePlotTangent}
+              onCommitPlotChanges={handleCommitPlotChanges}
             />
           )}
       </View>
@@ -3786,6 +3988,7 @@ function mathSpanAtPoint(
             viewport,
           )}
           onPlace={placeImageObject}
+          onExplodeStickyNotes={explodeImageStickyNotes}
           onClose={() => { setImageFlowOpen(false); setImageFlowId(null); }}
         />
       )}
