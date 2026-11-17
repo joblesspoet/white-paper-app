@@ -7,6 +7,7 @@
 
 import type { InstrumentKind } from '../canvas/geometry-box.ts';
 import type { BoardStyle } from '../persistence/schema.ts';
+import type { VideoQuality } from '../recorder/lesson-recorder.ts';
 
 export type IapEnvironment = 'development' | 'production';
 
@@ -28,26 +29,30 @@ export type IapProductDefinition = {
   kind: IapProductKind;
   title: string;
   subtitle: string;
-  /** Reference USD display price before store localization. */
+  /** Reference USD display price before store localization / PPP adjustments. */
   referenceUsdPrice: string;
+  /** Introductory free-trial duration in days (subscriptions only). */
+  introTrialDays?: number;
   /** Store product IDs per environment. */
   storeIds: {
     development: {
       ios: string;
       androidProductId: string;
       androidBasePlanId?: string;
+      androidOfferId?: string;
     };
     production: {
       ios: string;
       androidProductId: string;
       androidBasePlanId?: string;
+      androidOfferId?: string;
     };
   };
   /** RevenueCat Offering package identifier. */
   revenueCatPackageId: string;
   /** Entitlements unlocked when purchased (subscriptions & non-consumables). */
   grantsEntitlements: readonly RevenueCatEntitlementId[];
-  /** Number of Live Class session credits granted (consumables only). */
+  /** Number of Live Class + Voice session credits granted (consumables only). */
   grantsLiveClassPasses?: number;
 };
 
@@ -67,7 +72,7 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
     key: 'remove_ads',
     kind: 'non_consumable',
     title: 'Remove Ads',
-    subtitle: 'Ad-free Home & Export + up to 15 local boards',
+    subtitle: 'Ad-free Home & Export + up to 15 local boards + ad-free Board-Only Live Sync',
     referenceUsdPrice: '$1.99',
     storeIds: {
       development: {
@@ -104,8 +109,8 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
   {
     key: 'live_class_5_pack',
     kind: 'consumable',
-    title: '5 Live Class Passes',
-    subtitle: 'Host 5 live classes (up to 60 min & 25 students each, voice + sync)',
+    title: '5 Live Voice Class Passes',
+    subtitle: 'Host 5 live classes with LiveKit Voice (up to 60 min & 25 students each)',
     referenceUsdPrice: '$1.99',
     storeIds: {
       development: {
@@ -124,8 +129,8 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
   {
     key: 'live_class_20_pack',
     kind: 'consumable',
-    title: '20 Live Class Passes',
-    subtitle: 'Host 20 live classes (up to 60 min & 25 students each, voice + sync)',
+    title: '20 Live Voice Class Passes',
+    subtitle: 'Host 20 live classes with LiveKit Voice (up to 60 min & 25 students each)',
     referenceUsdPrice: '$4.99',
     storeIds: {
       development: {
@@ -145,8 +150,8 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
     key: 'teacher_pro_monthly',
     kind: 'subscription',
     title: 'Teacher Pro Monthly',
-    subtitle: 'Live Classroom (40 students), HD Lesson Video + Face-Cam & all Offline Studio tools',
-    referenceUsdPrice: '$3.99/mo',
+    subtitle: 'Live Class + Voice (40 students), Unlimited HD Video + Face-Cam & all Studio tools',
+    referenceUsdPrice: '$2.99/mo',
     storeIds: {
       development: {
         ios: 'com.joblesspoet.flowcanvas.dev.sub.teacher_pro.monthly',
@@ -166,24 +171,45 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
     key: 'teacher_pro_annual',
     kind: 'subscription',
     title: 'Teacher Pro Annual',
-    subtitle: 'Best value (~$2.08/mo) — Live Classroom, HD Video + Face-Cam & all Studio tools',
-    referenceUsdPrice: '$24.99/yr',
+    subtitle: '7-day free trial, then ~$1.67/mo — Live Class + Voice, HD Video + Face-Cam & all Studio tools',
+    referenceUsdPrice: '$19.99/yr',
+    introTrialDays: 7,
     storeIds: {
       development: {
         ios: 'com.joblesspoet.flowcanvas.dev.sub.teacher_pro.annual',
         androidProductId: 'flowcanvas_dev_teacher_pro',
         androidBasePlanId: 'annual-base',
+        androidOfferId: 'annual-7day-trial',
       },
       production: {
         ios: 'com.joblesspoet.flowcanvas.sub.teacher_pro.annual',
         androidProductId: 'flowcanvas_teacher_pro',
         androidBasePlanId: 'annual-base',
+        androidOfferId: 'annual-7day-trial',
       },
     },
     revenueCatPackageId: '$rc_annual',
     grantsEntitlements: ['ad_free', 'offline_studio', 'teacher_pro'],
   },
 ] as const;
+
+export type BoardOnlyLiveClassLimits = {
+  enabled: boolean;
+  /** Free users unlock a 30-min Board-Only session by watching 1 Rewarded Ad ($0 LiveKit cost). */
+  requiresRewardedAd: boolean;
+  maxStudents: number;
+  maxSessionMinutes: number;
+  /** Ephemeral broadcast interval in ms (66 ms = ~15 Hz to keep Supabase message volume low). */
+  ephemeralIntervalMs: number;
+};
+
+export type LiveVoiceClassLimits = {
+  lifetimeTrialCount: number;
+  maxStudents: number;
+  maxSessionMinutes: number;
+  /** Fair-use monthly LiveKit voice hours cap (0 if only consumable passes/trials apply). */
+  monthlyVoiceHoursCap: number;
+};
 
 export type TierFeatureLimits = {
   tier: UserPlanTier;
@@ -199,15 +225,20 @@ export type TierFeatureLimits = {
   multiPageExportEnabled: boolean;
   advancedStemEnabled: boolean;
   activeRecallEnabled: boolean;
-  /** Full 720p/1080p video recording + Face-Cam PiP. */
-  lessonVideoRecorderEnabled: boolean;
-  /** Max free preview seconds for lesson recorder on non-subscribed tiers (0 = locked). */
-  lessonRecorderPreviewSeconds: number;
-  liveClassTrialCount: number;
-  liveClassMaxStudents: number;
-  liveClassMaxSessionMinutes: number;
-  /** Fair-use monthly LiveKit voice hours cap (0 if only consumable passes/trials apply). */
-  monthlyLiveVoiceHoursCap: number;
+  /** Unlimited 720p/1080p HD lesson video recording without watermark. */
+  lessonVideoUnlimitedEnabled: boolean;
+  /** Max free lesson recorder seconds on non-subscribed tiers (null = unlimited). */
+  lessonRecorderMaxSeconds: number | null;
+  /** Highest video resolution allowed on this tier. */
+  lessonRecorderMaxQuality: VideoQuality;
+  /** Adds a subtle "Made with FlowCanvas" corner watermark on non-subscribed recordings. */
+  lessonRecorderWatermark: boolean;
+  /** Floating Face-Cam PiP bubble during recordings. */
+  faceCamPipEnabled: boolean;
+  /** Lightweight Supabase-only Live Class (no LiveKit audio cost). */
+  boardOnlyLiveClass: BoardOnlyLiveClassLimits;
+  /** Full LiveKit Voice + Supabase Live Class limits. */
+  liveVoiceClass: LiveVoiceClassLimits;
   adsEnabled: boolean;
   rewardedAd24hUnlockSupported: boolean;
 };
@@ -224,12 +255,24 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
     multiPageExportEnabled: false,
     advancedStemEnabled: false,
     activeRecallEnabled: false,
-    lessonVideoRecorderEnabled: false,
-    lessonRecorderPreviewSeconds: 60,
-    liveClassTrialCount: 3,
-    liveClassMaxStudents: 10,
-    liveClassMaxSessionMinutes: 20,
-    monthlyLiveVoiceHoursCap: 1,
+    lessonVideoUnlimitedEnabled: false,
+    lessonRecorderMaxSeconds: 240, // 4-minute free recording (matches/beats 3-min Explain Everything)
+    lessonRecorderMaxQuality: '480p',
+    lessonRecorderWatermark: true,
+    faceCamPipEnabled: false,
+    boardOnlyLiveClass: {
+      enabled: true,
+      requiresRewardedAd: true,
+      maxStudents: 15,
+      maxSessionMinutes: 30,
+      ephemeralIntervalMs: 66,
+    },
+    liveVoiceClass: {
+      lifetimeTrialCount: 3,
+      maxStudents: 10,
+      maxSessionMinutes: 20,
+      monthlyVoiceHoursCap: 1,
+    },
     adsEnabled: true,
     rewardedAd24hUnlockSupported: true,
   },
@@ -244,12 +287,24 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
     multiPageExportEnabled: false,
     advancedStemEnabled: false,
     activeRecallEnabled: false,
-    lessonVideoRecorderEnabled: false,
-    lessonRecorderPreviewSeconds: 60,
-    liveClassTrialCount: 3,
-    liveClassMaxStudents: 10,
-    liveClassMaxSessionMinutes: 20,
-    monthlyLiveVoiceHoursCap: 1,
+    lessonVideoUnlimitedEnabled: false,
+    lessonRecorderMaxSeconds: 240,
+    lessonRecorderMaxQuality: '480p',
+    lessonRecorderWatermark: true,
+    faceCamPipEnabled: false,
+    boardOnlyLiveClass: {
+      enabled: true,
+      requiresRewardedAd: false,
+      maxStudents: 15,
+      maxSessionMinutes: 45,
+      ephemeralIntervalMs: 66,
+    },
+    liveVoiceClass: {
+      lifetimeTrialCount: 3,
+      maxStudents: 10,
+      maxSessionMinutes: 20,
+      monthlyVoiceHoursCap: 1,
+    },
     adsEnabled: false,
     rewardedAd24hUnlockSupported: false,
   },
@@ -264,12 +319,24 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
     multiPageExportEnabled: true,
     advancedStemEnabled: true,
     activeRecallEnabled: true,
-    lessonVideoRecorderEnabled: false,
-    lessonRecorderPreviewSeconds: 90,
-    liveClassTrialCount: 3,
-    liveClassMaxStudents: 10,
-    liveClassMaxSessionMinutes: 20,
-    monthlyLiveVoiceHoursCap: 1,
+    lessonVideoUnlimitedEnabled: false,
+    lessonRecorderMaxSeconds: 300, // 5-minute 480p preview; HD + Face-Cam in Teacher Pro
+    lessonRecorderMaxQuality: '480p',
+    lessonRecorderWatermark: true,
+    faceCamPipEnabled: false,
+    boardOnlyLiveClass: {
+      enabled: true,
+      requiresRewardedAd: false,
+      maxStudents: 20,
+      maxSessionMinutes: 60,
+      ephemeralIntervalMs: 50,
+    },
+    liveVoiceClass: {
+      lifetimeTrialCount: 3,
+      maxStudents: 10,
+      maxSessionMinutes: 20,
+      monthlyVoiceHoursCap: 1,
+    },
     adsEnabled: false,
     rewardedAd24hUnlockSupported: false,
   },
@@ -284,12 +351,24 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
     multiPageExportEnabled: true,
     advancedStemEnabled: true,
     activeRecallEnabled: true,
-    lessonVideoRecorderEnabled: true,
-    lessonRecorderPreviewSeconds: 0,
-    liveClassTrialCount: 3,
-    liveClassMaxStudents: 40,
-    liveClassMaxSessionMinutes: 120,
-    monthlyLiveVoiceHoursCap: 25,
+    lessonVideoUnlimitedEnabled: true,
+    lessonRecorderMaxSeconds: null,
+    lessonRecorderMaxQuality: '1080p',
+    lessonRecorderWatermark: false,
+    faceCamPipEnabled: true,
+    boardOnlyLiveClass: {
+      enabled: true,
+      requiresRewardedAd: false,
+      maxStudents: 40,
+      maxSessionMinutes: 120,
+      ephemeralIntervalMs: 33,
+    },
+    liveVoiceClass: {
+      lifetimeTrialCount: 3,
+      maxStudents: 40,
+      maxSessionMinutes: 120,
+      monthlyVoiceHoursCap: 25,
+    },
     adsEnabled: false,
     rewardedAd24hUnlockSupported: false,
   },
@@ -310,6 +389,38 @@ export const AD_POLICY_CONSTANTS = {
   /** Never show banners or interstitials over the active drawing canvas. */
   showAdsOnActiveCanvas: false,
 } as const;
+
+/**
+ * Purchasing Power Parity (PPP) target multipliers for App Store Connect &
+ * Google Play Console regional pricing to boost conversion in emerging markets.
+ * Keep Board-Only default + 25h LiveKit cap so Tier 3 prices remain profitable.
+ */
+export const REGIONAL_PPP_GUIDELINES = [
+  {
+    band: 'tier_1',
+    exampleMarkets: ['US', 'CA', 'UK', 'AU', 'EU'],
+    priceMultiplier: 1.0,
+    teacherProMonthlyUsdEq: '$2.99',
+    teacherProAnnualUsdEq: '$19.99',
+    offlineStudioUsdEq: '$4.99',
+  },
+  {
+    band: 'tier_2',
+    exampleMarkets: ['BR', 'MX', 'TR', 'MY', 'PL'],
+    priceMultiplier: 0.6,
+    teacherProMonthlyUsdEq: '~$1.79',
+    teacherProAnnualUsdEq: '~$11.99',
+    offlineStudioUsdEq: '~$2.99',
+  },
+  {
+    band: 'tier_3',
+    exampleMarkets: ['PK', 'IN', 'ID', 'PH', 'EG', 'NG'],
+    priceMultiplier: 0.45,
+    teacherProMonthlyUsdEq: '~$1.35',
+    teacherProAnnualUsdEq: '~$8.99',
+    offlineStudioUsdEq: '~$2.25',
+  },
+] as const;
 
 export function resolveIapEnvironment(rawEnv?: string): IapEnvironment {
   return rawEnv?.trim().toLowerCase() === 'production' ? 'production' : 'development';
