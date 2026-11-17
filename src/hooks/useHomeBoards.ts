@@ -8,6 +8,7 @@ import type { BoardSummary } from '../components/BoardCard';
 import type { ImportModalState } from '../components/ImportBoardModal';
 import { importErrorMessage } from '../export/backup';
 import { pickBackupFile } from '../export/backup-store';
+import { useMonetization } from '../monetization/monetization-context';
 import type { BoardBackground, BoardOrientation, BoardStyle } from '../persistence/schema';
 import { usePreferences } from '../settings/preferences-context';
 import { triggerHapticFeedback } from '../utils/haptics';
@@ -17,6 +18,12 @@ export type BoardOptionsMode = 'menu' | 'rename' | 'delete';
 export function useHomeBoards() {
   const router = useRouter();
   const { preferences } = usePreferences();
+  const {
+    limits,
+    canCreateAnotherBoard,
+    openPaywall,
+    requestRewardedUnlock,
+  } = useMonetization();
   const {
     boards,
     createBoard,
@@ -116,10 +123,38 @@ export function useHomeBoards() {
         style: preferences.canvasStyle,
         orientation: 'portrait' as const,
       };
-      const board = createBoard(settings ?? defaultSettings);
+      const resolvedSettings = settings ?? defaultSettings;
+      const check = canCreateAnotherBoard(boards.length);
+      if (!check.allowed) {
+        if (limits.rewardedAd24hUnlockSupported) {
+          requestRewardedUnlock('extra_board', () => {
+            const board = createBoard(resolvedSettings);
+            router.push({ pathname: '/editor', params: { boardId: board.id } });
+          });
+        } else {
+          openPaywall({
+            reason: 'board_limit',
+            currentCount: check.currentCount,
+            maxBoards: check.maxBoards ?? 15,
+          });
+        }
+        return;
+      }
+      const board = createBoard(resolvedSettings);
       router.push({ pathname: '/editor', params: { boardId: board.id } });
     },
-    [createBoard, preferences.canvasBackground, preferences.canvasStyle, preferences.haptics, router],
+    [
+      boards.length,
+      canCreateAnotherBoard,
+      createBoard,
+      limits.rewardedAd24hUnlockSupported,
+      openPaywall,
+      preferences.canvasBackground,
+      preferences.canvasStyle,
+      preferences.haptics,
+      requestRewardedUnlock,
+      router,
+    ],
   );
 
   const openCustomize = useCallback(() => {
@@ -205,6 +240,21 @@ export function useHomeBoards() {
 
   const handleDuplicateBoard = useCallback(async () => {
     if (!menuBoard || busyDuplicate) return;
+    const check = canCreateAnotherBoard(boards.length);
+    if (!check.allowed) {
+      setMenuBoard(null);
+      setMenuMode('menu');
+      if (limits.rewardedAd24hUnlockSupported) {
+        requestRewardedUnlock('extra_board');
+      } else {
+        openPaywall({
+          reason: 'board_limit',
+          currentCount: check.currentCount,
+          maxBoards: check.maxBoards ?? 15,
+        });
+      }
+      return;
+    }
     setBusyDuplicate(true);
     try {
       const copy = await duplicateBoard(menuBoard.id);
@@ -216,7 +266,17 @@ export function useHomeBoards() {
     } finally {
       setBusyDuplicate(false);
     }
-  }, [busyDuplicate, duplicateBoard, menuBoard, preferences.haptics]);
+  }, [
+    boards.length,
+    busyDuplicate,
+    canCreateAnotherBoard,
+    duplicateBoard,
+    limits.rewardedAd24hUnlockSupported,
+    menuBoard,
+    openPaywall,
+    preferences.haptics,
+    requestRewardedUnlock,
+  ]);
 
   const startDeleteBoard = useCallback(() => {
     void triggerHapticFeedback('warning', preferences.haptics);

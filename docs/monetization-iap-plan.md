@@ -9,10 +9,10 @@
 
 ## 1. Monetization Strategy Summary (Competitive Positioning)
 
-1. **Generous Free + Smart Ads + Board-Only Live Sync** — Free users get an infinite whiteboard, **4-minute 480p Lesson Video Recording** (with subtle `"Made with FlowCanvas"` corner watermark for viral sharing), and **Board-Only Live Class** (up to 15 students, 30 min, Supabase-only at `$0` LiveKit cost via 1 Rewarded Ad). **Students joining a Live Class never see ads.**
+1. **Generous Free + Smart Ads + 1-on-1 Live Whiteboard** — Free users get an infinite whiteboard, **4-minute 480p Lesson Video Recording** (with subtle `"Made with FlowCanvas"` corner watermark for viral sharing), and **1-on-1 Board Sync** (1 student, 45 min, Supabase-only at `$0` LiveKit cost via 1 Rewarded Ad). **Students joining a 1-on-1 session never see ads.**
 2. **Low-Priced Non-Consumables (`$1.99` / `$4.99`)** — All **$0-server-cost** local features (multi-page boards, PDF markup, Geometry Box, STEM plotter/charts, Active Recall) can be owned forever via a one-time unlock—undercutting Goodnotes/Notability (`$12–$36/yr`) at ~70–85% margin.
-3. **Consumable Live Voice Passes (`$1.99` / `$4.99`)** — Occasional tutors buy 5 or 20 Live Voice Class passes pay-as-you-go without a subscription (covers LiveKit + Supabase per session).
-4. **Competitive Subscription (`$2.99/mo` or `$19.99/yr` with 7-Day Free Trial)** — **Teacher Pro** beats Explain Everything (`$9.99/mo`) and Whiteboard.fi Pro (`$5–$7/mo`), unlocking **Live Class + LiveKit Voice (40 students)**, **Unlimited 1080p HD Video + Floating Face-Cam (no watermark)**, **all Offline Studio tools**, and **Ad-Free**.
+3. **Consumable 1-on-1 Tutoring Passes (`$1.99` / `$4.99`)** — Private tutors buy 5 or 20 Live 1-on-1 Voice Tutoring passes pay-as-you-go without a subscription (covers LiveKit + Supabase per session).
+4. **Competitive Subscription (`$2.99/mo` or `$19.99/yr` with 7-Day Free Trial)** — **Teacher Pro** beats Explain Everything (`$9.99/mo`) and Whiteboard.fi Pro (`$5–$7/mo`), unlocking **Unlimited 1-on-1 Live Voice Tutoring (35 hrs/mo)**, **Unlimited 1080p HD Video + Floating Face-Cam (no watermark)**, **all Offline Studio tools**, and **Ad-Free**.
 
 ---
 
@@ -27,12 +27,12 @@ Defined in [`src/monetization/iap-catalog.ts`](../src/monetization/iap-catalog.t
 | `remove_ads` | `$1.99` | `com.joblesspoet.flowcanvas.dev.iap.remove_ads` / `flowcanvas_dev_remove_ads` | `com.joblesspoet.flowcanvas.iap.remove_ads` / `flowcanvas_remove_ads` | `ad_free` |
 | `offline_studio` | `$4.99` | `com.joblesspoet.flowcanvas.dev.iap.offline_studio` / `flowcanvas_dev_offline_studio` | `com.joblesspoet.flowcanvas.iap.offline_studio` / `flowcanvas_offline_studio` | `ad_free`, `offline_studio` |
 
-### B. Consumables (Live Voice Class Session Credits)
+### B. Consumables (1-on-1 Live Voice Tutoring Session Credits)
 
 | Key | Price (USD Tier 1) | Dev Store ID (iOS / Android) | Prod Store ID (iOS / Android) | Credits Granted |
 |---|---|---|---|---|
-| `live_class_5_pack` | `$1.99` | `com.joblesspoet.flowcanvas.dev.consumable.live_5` / `flowcanvas_dev_live_5` | `com.joblesspoet.flowcanvas.consumable.live_5` / `flowcanvas_live_5` | `5` Live Voice Passes (60 min, 25 students) |
-| `live_class_20_pack` | `$4.99` | `com.joblesspoet.flowcanvas.dev.consumable.live_20` / `flowcanvas_dev_live_20` | `com.joblesspoet.flowcanvas.consumable.live_20` / `flowcanvas_live_20` | `20` Live Voice Passes (60 min, 25 students) |
+| `live_class_5_pack` | `$1.99` | `com.joblesspoet.flowcanvas.dev.consumable.live_5` / `flowcanvas_dev_live_5` | `com.joblesspoet.flowcanvas.consumable.live_5` / `flowcanvas_live_5` | `5` Live 1-on-1 Voice Passes (60 min each) |
+| `live_class_20_pack` | `$4.99` | `com.joblesspoet.flowcanvas.dev.consumable.live_20` / `flowcanvas_dev_live_20` | `com.joblesspoet.flowcanvas.consumable.live_20` / `flowcanvas_live_20` | `20` Live 1-on-1 Voice Passes (60 min each) |
 
 ### C. Auto-Renewable Subscriptions
 
@@ -75,8 +75,8 @@ Configure regional pricing in App Store Connect and Google Play Console (`REGION
 | **Active Recall (Reveal Tape, Curtain, Voice Pins, Flashcards, OCR Explode)** | Locked *(24h via Rewarded Ad)* | Locked | **Full Active Recall** | — | **Full Active Recall** |
 | **Lesson Video Recorder + Floating Face-Cam (`Phase E`)** | **4-min (240s)** at `480p` + subtle watermark *(no Face-Cam)* | **4-min** at `480p` + watermark | **5-min** at `480p` + watermark | — | **Unlimited HD (`480p`/`720p`/`1080p`) + Face-Cam + No Watermark** |
 | **Join Live Class as Student** | **Free & Ad-Free** | **Free & Ad-Free** | **Free & Ad-Free** | **Free & Ad-Free** | **Free & Ad-Free** |
-| **Board-Only Live Class (Supabase only, $0 LiveKit)** | **Unlocked per session via 1 Rewarded Ad** (max **15 students**, **30 min**, 15 Hz) | **No ads** (max **15 students**, **45 min**) | **No ads** (max **20 students**, **60 min**) | — | **Unlimited** (max **40 students**, **120 min**, 30 Hz) |
-| **Live Class + Voice (`Phase F` — LiveKit + Supabase)** | **3 lifetime trials** (max **10 students**, **20 min**) | **3 lifetime trials** (max 10 students, 20 min) | **3 lifetime trials** (max 10 students, 20 min) | **1 Pass = 1 Class** (max **25 students**, **60 min**) | **25 Voice hrs/mo** (max **40 students**, **120 min/session**) |
+| **1-on-1 Board Sync (Supabase only, $0 LiveKit)** | **Unlocked per session via 1 Rewarded Ad** (1 student, **45 min**, 15 Hz) | **No ads** (1 student, **60 min**) | **No ads** (1 student, **90 min**) | — | **Unlimited** (1 student, **180 min**, 30 Hz) |
+| **1-on-1 Live Voice Tutoring (`Phase F` — LiveKit + Supabase)** | **3 lifetime trials** (1 student, **30 min**) | **3 lifetime trials** (1 student, 30 min) | **3 lifetime trials** (1 student, 45 min) | **1 Pass = 1 Session** (1 student, **60 min**) | **35 Voice hrs/mo** (1 student, **180 min/session**) |
 | **Ads** | Home banner + post-export interstitial + rewarded | **None** | **None** | **None during class** | **None** |
 
 ---

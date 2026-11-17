@@ -74,6 +74,20 @@ export const homeHeaderStyles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
+  upgradeButton: {
+    minHeight: touchTarget,
+    paddingHorizontal: spacing.sm + 2,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  upgradeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   iconButton: {
     width: touchTarget,
     height: touchTarget,

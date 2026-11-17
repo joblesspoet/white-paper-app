@@ -233,9 +233,13 @@ export class ClassroomSession {
     viewport: Viewport;
     displayName?: string;
     roomCode?: string;
+    voiceEnabled?: boolean;
+    maxStudents?: number;
+    ephemeralIntervalMs?: number;
   }): Promise<ClassroomRoomInfo> {
     const code = normalizeRoomCode(params.roomCode ?? '') ?? generateRoomCode();
     const displayName = params.displayName?.trim() || 'Teacher';
+    const voiceEnabled = params.voiceEnabled ?? true;
     const roomInfo: ClassroomRoomInfo = {
       roomCode: code,
       boardId: params.boardId,
@@ -243,9 +247,12 @@ export class ClassroomSession {
       hostPeerId: this.state.peerId,
       deepLinkUri: buildClassroomDeepLink(code),
       isLocked: false,
-      teacherMuted: false,
+      teacherMuted: !voiceEnabled,
       activeSpeakerPeerId: null,
       followTeacherViewport: true,
+      voiceEnabled,
+      maxStudents: params.maxStudents ?? MAX_CLASSROOM_STUDENTS,
+      ...(params.ephemeralIntervalMs ? { ephemeralIntervalMs: params.ephemeralIntervalMs } : {}),
     };
 
     this.hostBoardState = {
@@ -500,7 +507,8 @@ export class ClassroomSession {
       force ||
       payload.activeStroke?.isDone === true ||
       payload.laser?.active === false;
-    if (!isTerminalPacket && now - this.lastEphemeralSentAt < EPHEMERAL_STREAM_INTERVAL_MS) {
+    const minInterval = this.state.roomInfo.ephemeralIntervalMs ?? EPHEMERAL_STREAM_INTERVAL_MS;
+    if (!isTerminalPacket && now - this.lastEphemeralSentAt < minInterval) {
       return;
     }
     this.lastEphemeralSentAt = now;
@@ -810,13 +818,14 @@ export class ClassroomSession {
     const nextList: ClassroomParticipant[] = [];
     const seenIds = new Set<string>();
     const newlyJoinedStudents: string[] = [];
+    const roomCap = this.state.roomInfo?.maxStudents ?? MAX_CLASSROOM_STUDENTS;
 
     for (const peer of peers) {
       this.seenInPresence.add(peer.peerId);
       if (peer.peerId === this.state.peerId) continue;
       if (
         peer.role === 'student' &&
-        nextList.filter((p) => p.role === 'student').length >= MAX_CLASSROOM_STUDENTS
+        nextList.filter((p) => p.role === 'student').length >= roomCap
       ) {
         continue;
       }
@@ -847,6 +856,16 @@ export class ClassroomSession {
     }
 
     this.updateState({ participants: nextList });
+
+    if (
+      this.state.role === 'teacher' &&
+      this.state.roomInfo &&
+      !this.state.roomInfo.isLocked &&
+      roomCap === 1 &&
+      nextList.filter((p) => p.role === 'student').length >= 1
+    ) {
+      void this.setClassLocked(true);
+    }
 
     // Teacher sends snapshot.sync to newly joined students
     if (this.state.role === 'teacher' && newlyJoinedStudents.length > 0) {
@@ -1114,20 +1133,30 @@ export class ClassroomSession {
             (p) => p.peerId === action.requesterPeerId,
           );
           if (!existing && action.requesterPeerId !== this.state.peerId) {
+            const roomCap = this.state.roomInfo?.maxStudents ?? 1;
+            const currentStudents = this.state.participants.filter((p) => p.role === 'student');
+            if (this.state.roomInfo?.isLocked || currentStudents.length >= roomCap) {
+              void this.sendControl({ action: 'peer.kick', targetPeerId: action.requesterPeerId });
+              return;
+            }
+            const nextParticipants = [
+              ...this.state.participants,
+              {
+                peerId: action.requesterPeerId,
+                displayName: cleanName,
+                role: 'student' as const,
+                permission: 'view-only' as const,
+                voicePermission: 'muted' as const,
+                handRaised: false,
+                joinedAt: new Date().toISOString(),
+              },
+            ];
             this.updateState({
-              participants: [
-                ...this.state.participants,
-                {
-                  peerId: action.requesterPeerId,
-                  displayName: cleanName,
-                  role: 'student',
-                  permission: this.state.roomInfo?.isLocked ? 'locked' : 'view-only',
-                  voicePermission: 'muted',
-                  handRaised: false,
-                  joinedAt: new Date().toISOString(),
-                },
-              ],
+              participants: nextParticipants,
             });
+            if (nextParticipants.filter((p) => p.role === 'student').length >= roomCap) {
+              void this.setClassLocked(true);
+            }
           } else if (existing && existing.displayName === 'Student' && cleanName !== 'Student') {
             this.patchParticipant(action.requesterPeerId, { displayName: cleanName });
           }

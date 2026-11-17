@@ -16,6 +16,7 @@ import { resolveFlowModalLayout } from '../responsive/layout';
 import { usePreferences } from '../settings/preferences-context';
 import { spacing, type ThemeColors } from '../theme';
 import { AppButton } from './AppButton';
+import { ProBadge } from './monetization/ProBadge';
 import { pageNavigatorStyles as styles } from './PageNavigator.styles';
 
 const NOOP = () => undefined;
@@ -28,6 +29,7 @@ type PageNavigatorPillProps = {
   canDeleteCurrentPage?: boolean;
   hasBackgroundImage?: boolean;
   isBackgroundLocked?: boolean;
+  showAddPageProBadge?: boolean;
   onPrevPage: () => void;
   onNextPage: () => void;
   onAddPage: () => void;
@@ -44,6 +46,7 @@ export const PageNavigatorPill = React.memo(function PageNavigatorPill({
   canDeleteCurrentPage = false,
   hasBackgroundImage = false,
   isBackgroundLocked = true,
+  showAddPageProBadge = false,
   onPrevPage,
   onNextPage,
   onAddPage,
@@ -114,9 +117,16 @@ export const PageNavigatorPill = React.memo(function PageNavigatorPill({
         accessibilityLabel="Add blank page"
         hitSlop={compactHitSlop}
         onPress={onAddPage}
-        style={[styles.pillAddButton, compact && styles.pillAddButtonCompact, { borderColor: theme.border }]}
+        style={[
+          styles.pillAddButton,
+          compact && styles.pillAddButtonCompact,
+          { borderColor: theme.border, flexDirection: 'row', gap: 3, width: 'auto', paddingHorizontal: 8 },
+        ]}
       >
         <Text style={[styles.pillGlyph, compact && styles.pillGlyphCompact, { color: theme.primary }]}>+</Text>
+        {showAddPageProBadge && (
+          <ProBadge label="PRO" variant="pro" theme={theme} compact />
+        )}
       </Pressable>
 
       {onDeleteCurrentPage ? (

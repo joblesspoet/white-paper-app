@@ -2,11 +2,18 @@
  * Live Classroom Monetization / Entitlement Gate.
  *
  * Students always join Live Classes for free via 6-digit code or QR code.
- * Hosting a Live Class as a teacher is gated here so RevenueCat
- * (`react-native-purchases`) can be wired in one place before App Store launch.
+ * Bridges the legacy Live Classroom entitlement helper with the unified
+ * `src/monetization/` catalog and SQLite-backed `MonetizationState`.
  */
 
-export const LIVE_CLASS_FREE_TRIAL_LIMIT = 3;
+import { TIER_LIMITS } from '../monetization/iap-catalog.ts';
+import {
+  evaluateLiveClassModeAccess,
+  type LiveClassMode,
+} from '../monetization/entitlement-service.ts';
+import type { MonetizationState } from '../persistence/schema.ts';
+
+export const LIVE_CLASS_FREE_TRIAL_LIMIT = TIER_LIMITS.free.liveVoiceClass.lifetimeTrialCount;
 
 export type LiveClassEntitlement = {
   canHost: boolean;
@@ -15,11 +22,6 @@ export type LiveClassEntitlement = {
   reason?: string;
 };
 
-/**
- * Currently returns `canHost: true` for local testing and Phase F verification.
- * Swap this implementation with RevenueCat customerInfo entitlement checks
- * when ready for production billing.
- */
 export function getLiveClassEntitlement(
   hostedTrialCount = 0,
   hasProSubscription = true,
@@ -43,6 +45,14 @@ export function getLiveClassEntitlement(
     canHost: false,
     tier: 'locked',
     remainingFreeClasses: 0,
-    reason: 'Upgrade to Teacher Pro to host unlimited Live Classes.',
+    reason: 'Upgrade to Teacher Pro or buy Live Voice Passes to host Live Classes.',
   };
+}
+
+export function getClassroomEntitlementFromState(
+  state: MonetizationState,
+  mode: LiveClassMode = 'voice',
+  nowMs = Date.now(),
+) {
+  return evaluateLiveClassModeAccess(state, mode, nowMs);
 }

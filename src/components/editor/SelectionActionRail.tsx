@@ -5,6 +5,7 @@ import type { CanvasObject } from '../../canvas/document';
 import type { ThemeColors } from '../../theme';
 import { editorStyles as styles } from '../../screens/editor.styles';
 import { DuplicateIcon, EditIcon, StyleIcon, TrashIcon } from '../icons';
+import { ProBadge } from '../monetization/ProBadge';
 
 type SelectionActionRailProps = {
   theme: ThemeColors;
@@ -21,6 +22,7 @@ type SelectionActionRailProps = {
   selectedIsTable: boolean;
   selectedIsStemDiagram: boolean;
   plottableMath: boolean;
+  showPlotProBadge?: boolean;
   canTidySelection: boolean;
   onEditObject: (id: string) => void;
   onToggleStyleSheet: () => void;
@@ -46,6 +48,7 @@ export const SelectionActionRail = memo(function SelectionActionRail({
   selectedIsTable,
   selectedIsStemDiagram,
   plottableMath,
+  showPlotProBadge = false,
   canTidySelection,
   onEditObject,
   onToggleStyleSheet,
@@ -116,11 +119,12 @@ export const SelectionActionRail = memo(function SelectionActionRail({
           style={({ pressed }) => [
             styles.selectionAction,
             styles.selectionActionSeparator,
-            { borderTopColor: theme.border },
+            { borderTopColor: theme.border, flexDirection: 'row', alignItems: 'center', gap: 4 },
             pressed && styles.pressed,
           ]}
         >
           <Text style={[styles.railTextAction, { color: theme.primary }]}>Plot</Text>
+          {showPlotProBadge && <ProBadge label="PRO" variant="pro" theme={theme} compact />}
         </Pressable>
       )}
 

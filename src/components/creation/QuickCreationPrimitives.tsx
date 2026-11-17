@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 
 import { type ThemeColors } from '../../theme';
 import { PlusIcon } from '../icons';
+import { ProBadge, type ProBadgeVariant } from '../monetization/ProBadge';
 import { styles } from '../QuickCreationSheet.styles';
 
 type SectionAction = {
@@ -93,12 +94,16 @@ export const QuickCreationTile = memo(function QuickCreationTile({
   accessibilityLabel,
   label,
   icon,
+  badge,
+  badgeVariant = 'pro',
   onPress,
 }: {
   theme: ThemeColors;
   accessibilityLabel: string;
   label: string;
   icon: ReactNode;
+  badge?: string;
+  badgeVariant?: ProBadgeVariant;
   onPress: () => void;
 }) {
   return (
@@ -112,6 +117,11 @@ export const QuickCreationTile = memo(function QuickCreationTile({
         pressed && styles.pressed,
       ]}
     >
+      {badge && (
+        <View style={{ position: 'absolute', top: 4, right: 4 }}>
+          <ProBadge label={badge} variant={badgeVariant} theme={theme} compact />
+        </View>
+      )}
       {icon}
       <Text style={[styles.tileLabel, { color: theme.foreground }]} numberOfLines={1}>
         {label}

@@ -142,6 +142,23 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE board_pages ADD COLUMN background_asset_id TEXT`,
     ],
   },
+  {
+    version: 5,
+    name: 'create monetization state table',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS monetization_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        active_entitlements_json TEXT NOT NULL DEFAULT '[]',
+        cached_expires_at TEXT,
+        live_class_passes INTEGER NOT NULL DEFAULT 0,
+        hosted_voice_trial_count INTEGER NOT NULL DEFAULT 0,
+        bonus_board_slots INTEGER NOT NULL DEFAULT 0,
+        rewarded_unlocks_json TEXT NOT NULL DEFAULT '{}',
+        last_interstitial_at TEXT,
+        updated_at TEXT NOT NULL
+      )`,
+    ],
+  },
 ] as const;
 
 /** Latest schema version this build understands. */
@@ -321,4 +338,81 @@ export function parseAppPreferences(raw: string | null | undefined): AppPreferen
 export function serializeAppPreferences(prefs: AppPreferences): string {
   return JSON.stringify(prefs);
 }
+
+export type PersistedEntitlementId = 'ad_free' | 'offline_studio' | 'teacher_pro';
+
+const VALID_ENTITLEMENTS: readonly PersistedEntitlementId[] = [
+  'ad_free',
+  'offline_studio',
+  'teacher_pro',
+];
+
+export type MonetizationState = {
+  /** Cached active RevenueCat entitlements. */
+  activeEntitlements: PersistedEntitlementId[];
+  /** ISO timestamp until which cached entitlements remain valid offline. */
+  cachedExpiresAt: string | null;
+  /** Remaining consumable Live Voice Class passes. */
+  liveClassPasses: number;
+  /** Number of lifetime free Live Voice trials used (max 3). */
+  hostedVoiceTrialCount: number;
+  /** Bonus local board slots earned via Rewarded Ads. */
+  bonusBoardSlots: number;
+  /** Map of RewardedFeatureKey -> ISO expiration timestamp. */
+  rewardedUnlocks: Record<string, string>;
+  /** ISO timestamp of the last shown post-export interstitial ad. */
+  lastInterstitialAt: string | null;
+  updatedAt: string;
+};
+
+export const DEFAULT_MONETIZATION_STATE: MonetizationState = {
+  activeEntitlements: [],
+  cachedExpiresAt: null,
+  liveClassPasses: 0,
+  hostedVoiceTrialCount: 0,
+  bonusBoardSlots: 0,
+  rewardedUnlocks: {},
+  lastInterstitialAt: null,
+  updatedAt: '',
+};
+
+export function parsePersistedEntitlements(raw: string | null | undefined): PersistedEntitlementId[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const unique = new Set<PersistedEntitlementId>();
+    for (const item of parsed) {
+      if (typeof item === 'string' && VALID_ENTITLEMENTS.includes(item as PersistedEntitlementId)) {
+        unique.add(item as PersistedEntitlementId);
+      }
+    }
+    return [...unique];
+  } catch {
+    return [];
+  }
+}
+
+export function parseRewardedUnlocks(raw: string | null | undefined): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (typeof val === 'string' && Number.isFinite(Date.parse(val))) {
+        out[key] = val;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function clampNonNegativeInt(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
 

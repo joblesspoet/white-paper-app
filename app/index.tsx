@@ -20,8 +20,10 @@ import { HomeActionBar } from '../src/components/home/HomeActionBar';
 import { HomeEmptyState } from '../src/components/home/HomeEmptyState';
 import { HomeHeader } from '../src/components/home/HomeHeader';
 import { HomeSearchBar } from '../src/components/home/HomeSearchBar';
+import { HomeAdBanner } from '../src/components/monetization/HomeAdBanner';
 import type { Board } from '../src/board-context';
 import { useHomeBoards } from '../src/hooks/useHomeBoards';
+import { useMonetization } from '../src/monetization/monetization-context';
 import { resolveHomeLayout } from '../src/responsive/layout';
 import { homeStyles as styles } from '../src/screens/home.styles';
 import { usePreferences } from '../src/settings/preferences-context';
@@ -36,6 +38,7 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const { theme, isDark, reducedMotion } = usePreferences();
+  const { tier, showAds, maxBoards, openPaywall } = useMonetization();
 
   const {
     boards,
@@ -136,6 +139,7 @@ export default function HomeScreen() {
           showSearchBar={showSearchBar}
           searchQuery={searchQuery}
           boardCount={boards.length}
+          maxBoards={maxBoards}
           filteredCount={filteredBoards.length}
           onSearchChange={setSearchQuery}
           onClearSearch={clearSearch}
@@ -153,6 +157,7 @@ export default function HomeScreen() {
       handleQuickCreate,
       handleStartImport,
       layout.profile.isTabletPortrait,
+      maxBoards,
       openCustomize,
       searchQuery,
       setSearchQuery,
@@ -243,6 +248,8 @@ export default function HomeScreen() {
         isCompactHeight={layout.profile.isCompactHeight}
         isTablet={layout.profile.isTablet}
         boardCount={boards.length}
+        planTier={tier}
+        onUpgradePress={() => openPaywall({ reason: 'upgrade' })}
         onImportPress={handleStartImport}
         onSettingsPress={openSettings}
       />
@@ -336,7 +343,9 @@ export default function HomeScreen() {
                 LOCAL WORKSPACE
               </Text>
               <Text style={[styles.sidebarMetaBody, { color: theme.foreground }]}>
-                {boards.length} {boards.length === 1 ? 'board' : 'boards'} stored on this device.
+                {maxBoards !== null
+                  ? `${boards.length} / ${maxBoards} free boards on this device.`
+                  : `${boards.length} ${boards.length === 1 ? 'board' : 'boards'} stored on this device.`}
               </Text>
             </View>
           </View>
@@ -422,6 +431,14 @@ export default function HomeScreen() {
         onClose={closeJoinModal}
         onJoin={handleJoinClass}
       />
+
+      {showAds && (
+        <HomeAdBanner
+          theme={theme}
+          bottomInset={insets.bottom}
+          onRemoveAds={() => openPaywall({ reason: 'remove_ads' })}
+        />
+      )}
     </SafeAreaView>
   );
 }

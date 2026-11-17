@@ -7,8 +7,10 @@ import {
   type BoardOrientation,
   type BoardStyle,
 } from '../../persistence/schema';
+import { useMonetization } from '../../monetization/monetization-context';
 import { colors, spacing, type ThemeColors } from '../../theme';
 import { AppButton } from '../AppButton';
+import { ProBadge } from '../monetization/ProBadge';
 import { customizeBoardModalStyles as styles } from './CustomizeBoardModal.styles';
 
 type CustomizeBoardModalProps = {
@@ -32,12 +34,14 @@ const Choice = memo(function Choice({
   label,
   active,
   swatchColor,
+  badge,
   onPress,
   theme,
 }: {
   label: string;
   active: boolean;
   swatchColor?: string;
+  badge?: string;
   onPress: () => void;
   theme: ThemeColors;
 }) {
@@ -51,6 +55,9 @@ const Choice = memo(function Choice({
         {
           borderColor: active ? theme.primary : theme.border,
           backgroundColor: active ? theme.muted : theme.surface,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
         },
       ]}
     >
@@ -63,6 +70,7 @@ const Choice = memo(function Choice({
         />
       )}
       <Text style={[styles.choiceText, { color: theme.foreground }]}>{label}</Text>
+      {badge && <ProBadge label={badge} variant="pro" theme={theme} compact />}
     </Pressable>
   );
 });
@@ -83,6 +91,8 @@ export const CustomizeBoardModal = memo(function CustomizeBoardModal({
   onCreate,
   onClose,
 }: CustomizeBoardModalProps) {
+  const { canUseStyle, promptGatedFeature } = useMonetization();
+
   return (
     <Modal
       transparent
@@ -138,15 +148,25 @@ export const CustomizeBoardModal = memo(function CustomizeBoardModal({
 
           <Text style={[styles.label, { color: theme.primary }]}>CANVAS SURFACE</Text>
           <View style={[styles.choiceRow, styles.choiceWrap]}>
-            {BOARD_STYLE_OPTIONS.map((opt) => (
-              <Choice
-                key={opt.key}
-                label={opt.shortLabel}
-                active={canvasStyle === opt.key}
-                onPress={() => onSelectStyle(opt.key)}
-                theme={theme}
-              />
-            ))}
+            {BOARD_STYLE_OPTIONS.map((opt) => {
+              const locked = !canUseStyle(opt.key);
+              return (
+                <Choice
+                  key={opt.key}
+                  label={opt.shortLabel}
+                  badge={locked ? 'PRO' : undefined}
+                  active={canvasStyle === opt.key}
+                  onPress={() => {
+                    if (locked) {
+                      promptGatedFeature('board_styles', () => onSelectStyle(opt.key));
+                      return;
+                    }
+                    onSelectStyle(opt.key);
+                  }}
+                  theme={theme}
+                />
+              );
+            })}
           </View>
 
           <Text style={[styles.label, { color: theme.primary }]}>STARTING FRAME</Text>

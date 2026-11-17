@@ -74,6 +74,8 @@ import { InkingQuickTray } from '../src/components/InkingQuickTray';
 import { LessonRecorderBar } from '../src/components/LessonRecorderBar';
 import { LessonReplayModal } from '../src/components/LessonReplayModal';
 import { LiveClassHostSheet } from '../src/components/LiveClassHostSheet';
+import { OneOnOneLiveBar } from '../src/components/classroom/OneOnOneLiveBar';
+import { LiveClassModeModal } from '../src/components/monetization/LiveClassModeModal';
 import { MathKeyboardSheet } from '../src/components/MathKeyboardSheet';
 import { ObjectOptionsSheet } from '../src/components/ObjectOptionsSheet';
 import { OcrReviewScreen } from '../src/components/OcrReviewScreen';
@@ -104,6 +106,7 @@ import { useMagneticMindMap } from '../src/hooks/useMagneticMindMap';
 import { useRevealAndCurtain } from '../src/hooks/useRevealAndCurtain';
 import { useStemGraphing } from '../src/hooks/useStemGraphing';
 import { useVoicePins } from '../src/hooks/useVoicePins';
+import { useMonetization } from '../src/monetization/monetization-context';
 import { DEFAULT_BOARD_SETTINGS, type BoardPageRecord } from '../src/persistence/repository';
 import type { BoardSettings } from '../src/persistence/schema';
 import { isSoftwareKeyboardVisible, resolveEditorLayout } from '../src/responsive/layout';
@@ -152,6 +155,14 @@ export default function BoardEditorScreen() {
   const insets = useSafeAreaInsets();
   const { width, height: windowHeight } = useWindowDimensions();
   const { preferences, updatePreference, theme, isDark, reducedMotion } = usePreferences();
+  const {
+    hasFeature,
+    canAddAnotherPage,
+    canUseGeometry,
+    getLiveClassAccess,
+    openPaywall,
+    promptGatedFeature,
+  } = useMonetization();
   const dark = isDark;
 
   const [history, dispatch] = useReducer(documentReducer, createDocumentHistory());
@@ -502,10 +513,13 @@ export default function BoardEditorScreen() {
         setImageFlowId(`${boardId}-${Date.now()}`);
         setImageFlowOpen(true);
         return;
+      } else if (tool === 'reveal-tape' && !hasFeature('active_recall').allowed) {
+        promptGatedFeature('active_recall', () => setActiveTool('reveal-tape'));
+        return;
       }
       setActiveTool(tool);
     },
-    [activeTool, boardId, preferences.haptics, selectionEditing, tablet],
+    [activeTool, boardId, hasFeature, preferences.haptics, promptGatedFeature, selectionEditing, tablet],
   );
 
   const toggleInking = useCallback(() => {
@@ -528,11 +542,22 @@ export default function BoardEditorScreen() {
     }
   }, [activeTool, lastInkingTool, preferences.haptics, selectionEditing]);
 
-  const handleSwitchInstrument = useCallback((kind: InstrumentKind) => {
-    setActiveInstrument((prev) =>
-      createDefaultInstrument(kind, { x: prev?.x ?? 0, y: prev?.y ?? 0 }),
-    );
-  }, []);
+  const handleSwitchInstrument = useCallback(
+    (kind: InstrumentKind) => {
+      if (!canUseGeometry(kind)) {
+        promptGatedFeature('geometry_pro', () => {
+          setActiveInstrument((prev) =>
+            createDefaultInstrument(kind, { x: prev?.x ?? 0, y: prev?.y ?? 0 }),
+          );
+        });
+        return;
+      }
+      setActiveInstrument((prev) =>
+        createDefaultInstrument(kind, { x: prev?.x ?? 0, y: prev?.y ?? 0 }),
+      );
+    },
+    [canUseGeometry, promptGatedFeature],
+  );
 
   const handleCommitGeometryStroke = useCallback(
     (points: readonly { x: number; y: number }[]) => {
@@ -621,6 +646,33 @@ export default function BoardEditorScreen() {
     setSelectedIds: setSelectedObjectIds,
   });
 
+  const handlePlotMathGated = useCallback(() => {
+    if (!hasFeature('math_stem').allowed) {
+      promptGatedFeature('math_stem', handlePlotMathObject);
+      return;
+    }
+    handlePlotMathObject();
+  }, [handlePlotMathObject, hasFeature, promptGatedFeature]);
+
+  const handleGenerateChartGated = useCallback(
+    (chartType: Parameters<typeof handleGenerateChart>[0]) => {
+      if (!hasFeature('math_stem').allowed) {
+        promptGatedFeature('math_stem', () => handleGenerateChart(chartType));
+        return;
+      }
+      handleGenerateChart(chartType);
+    },
+    [handleGenerateChart, hasFeature, promptGatedFeature],
+  );
+
+  const handleComputeTableStatsGated = useCallback(() => {
+    if (!hasFeature('math_stem').allowed) {
+      promptGatedFeature('math_stem', handleComputeTableStats);
+      return;
+    }
+    handleComputeTableStats();
+  }, [handleComputeTableStats, hasFeature, promptGatedFeature]);
+
   const {
     stageOverlayVisible,
     stageOverlayMode,
@@ -646,6 +698,14 @@ export default function BoardEditorScreen() {
     dispatchBatchCommands: runBatchCommands,
     setSelectedIds: setSelectedObjectIds,
   });
+
+  const handleCoverWithTapeGated = useCallback(() => {
+    if (!hasFeature('active_recall').allowed) {
+      promptGatedFeature('active_recall', handleCoverSelectionWithTape);
+      return;
+    }
+    handleCoverSelectionWithTape();
+  }, [handleCoverSelectionWithTape, hasFeature, promptGatedFeature]);
 
   const {
     isRecording: voicePinRecording,
@@ -723,49 +783,95 @@ export default function BoardEditorScreen() {
         setSelectedObjectIds([table.id]);
         setActiveTool('select');
       } else if (request.type === 'geometry') {
-        const center = getViewportCenterPoint();
-        setActiveInstrument(createDefaultInstrument(request.instrument, center));
-        if (activeTool === 'select') setActiveTool('pen');
+        const openInstrument = () => {
+          const center = getViewportCenterPoint();
+          setActiveInstrument(createDefaultInstrument(request.instrument, center));
+          if (activeTool === 'select') setActiveTool('pen');
+        };
+        if (!canUseGeometry(request.instrument)) {
+          promptGatedFeature('geometry_pro', openInstrument);
+          return;
+        }
+        openInstrument();
       } else if (request.type === 'math') {
-        ocrAndMath.setEditingMathObject(null);
-        ocrAndMath.setMathSheetVisible(true);
+        const openMath = () => {
+          ocrAndMath.setEditingMathObject(null);
+          ocrAndMath.setMathSheetVisible(true);
+        };
+        if (!hasFeature('math_stem').allowed) {
+          promptGatedFeature('math_stem', openMath);
+          return;
+        }
+        openMath();
       } else if (request.type === 'image') {
         if (!boardId) return;
         setImageFlowId(`${boardId}-${Date.now()}`);
         setImageFlowOpen(true);
       } else if (request.type === 'pdf') {
         if (!boardId) return;
+        if (!hasFeature('pdf_import').allowed) {
+          promptGatedFeature('pdf_import', () => setPdfImportVisible(true));
+          return;
+        }
         setPdfImportVisible(true);
       } else if (request.type === 'timer') {
         setTimerVisible(true);
       } else if (request.type === 'calculator') {
         setCalculatorVisible(true);
       } else if (request.type === 'facecam') {
+        if (!hasFeature('face_cam').allowed && !faceCamVisible) {
+          promptGatedFeature('face_cam', () => setFaceCamVisible(true));
+          return;
+        }
         setFaceCamVisible((prev) => !prev);
       } else if (request.type === 'recorder') {
         recorder.setRecorderBarVisible(true);
       } else if (request.type === 'saved-lessons') {
         recorder.setSavedLessonsVisible(true);
       } else if (request.type === 'reveal-tape') {
+        if (!hasFeature('active_recall').allowed) {
+          promptGatedFeature('active_recall', () => setActiveTool('reveal-tape'));
+          return;
+        }
         pressTool('reveal-tape');
       } else if (request.type === 'voice-pin') {
+        if (!hasFeature('active_recall').allowed) {
+          promptGatedFeature('active_recall', () => void handleStartVoicePinAt());
+          return;
+        }
         void handleStartVoicePinAt();
       } else if (request.type === 'curtain') {
+        if (!hasFeature('active_recall').allowed) {
+          promptGatedFeature('active_recall', () => handleOpenStageOverlay('curtain'));
+          return;
+        }
         handleOpenStageOverlay('curtain');
       } else if (request.type === 'spotlight') {
+        if (!hasFeature('active_recall').allowed) {
+          promptGatedFeature('active_recall', () => handleOpenStageOverlay('spotlight'));
+          return;
+        }
         handleOpenStageOverlay('spotlight');
       } else if (request.type === 'flashcards') {
+        if (!hasFeature('active_recall').allowed) {
+          promptGatedFeature('active_recall', () => setFlashcardsVisible(true));
+          return;
+        }
         setFlashcardsVisible(true);
       }
     },
     [
       activeTool,
       boardId,
+      canUseGeometry,
+      faceCamVisible,
       getViewportCenterPoint,
       handleOpenStageOverlay,
       handleStartVoicePinAt,
+      hasFeature,
       ocrAndMath,
       pressTool,
+      promptGatedFeature,
       recorder,
       selectionEditing,
     ],
@@ -927,18 +1033,35 @@ export default function BoardEditorScreen() {
   }, []);
 
   const handleOpenMathSheet = useCallback(() => {
-    ocrAndMath.setEditingMathObject(null);
-    ocrAndMath.setMathSheetVisible(true);
-  }, [ocrAndMath]);
+    const open = () => {
+      ocrAndMath.setEditingMathObject(null);
+      ocrAndMath.setMathSheetVisible(true);
+    };
+    if (!hasFeature('math_stem').allowed) {
+      promptGatedFeature('math_stem', open);
+      return;
+    }
+    open();
+  }, [hasFeature, ocrAndMath, promptGatedFeature]);
 
   const handleOpenPdfImport = useCallback(() => {
     selectionEditing.commitEditing();
+    if (!hasFeature('pdf_import').allowed) {
+      promptGatedFeature('pdf_import', () => setPdfImportVisible(true));
+      return;
+    }
     setPdfImportVisible(true);
-  }, [selectionEditing]);
+  }, [hasFeature, promptGatedFeature, selectionEditing]);
 
   const handleToggleTimer = useCallback(() => setTimerVisible((v) => !v), []);
   const handleToggleCalculator = useCallback(() => setCalculatorVisible((v) => !v), []);
-  const handleToggleFaceCam = useCallback(() => setFaceCamVisible((v) => !v), []);
+  const handleToggleFaceCam = useCallback(() => {
+    if (!hasFeature('face_cam').allowed && !faceCamVisible) {
+      promptGatedFeature('face_cam', () => setFaceCamVisible(true));
+      return;
+    }
+    setFaceCamVisible((v) => !v);
+  }, [faceCamVisible, hasFeature, promptGatedFeature]);
   const handleToggleRecorder = useCallback(
     () => recorder.setRecorderBarVisible((v) => !v),
     [recorder],
@@ -948,16 +1071,50 @@ export default function BoardEditorScreen() {
     [recorder],
   );
   const handleStartVoicePinFromRail = useCallback(() => {
+    if (!hasFeature('active_recall').allowed) {
+      promptGatedFeature('active_recall', () => void handleStartVoicePinAt());
+      return;
+    }
     void handleStartVoicePinAt();
-  }, [handleStartVoicePinAt]);
+  }, [handleStartVoicePinAt, hasFeature, promptGatedFeature]);
   const handleStartVoicePinAtPoint = useCallback(
     (pt: Point) => {
+      if (!hasFeature('active_recall').allowed) {
+        promptGatedFeature('active_recall', () => {
+          void handleStartVoicePinAt(pt);
+          setActiveTool('select');
+        });
+        return;
+      }
       void handleStartVoicePinAt(pt);
       setActiveTool('select');
     },
-    [handleStartVoicePinAt],
+    [handleStartVoicePinAt, hasFeature, promptGatedFeature],
   );
-  const handleOpenFlashcards = useCallback(() => setFlashcardsVisible(true), []);
+  const handleOpenStageOverlayGated = useCallback(
+    (mode: 'curtain' | 'spotlight') => {
+      if (!hasFeature('active_recall').allowed) {
+        promptGatedFeature('active_recall', () => handleOpenStageOverlay(mode));
+        return;
+      }
+      handleOpenStageOverlay(mode);
+    },
+    [handleOpenStageOverlay, hasFeature, promptGatedFeature],
+  );
+  const handleOpenFlashcards = useCallback(() => {
+    if (!hasFeature('active_recall').allowed) {
+      promptGatedFeature('active_recall', () => setFlashcardsVisible(true));
+      return;
+    }
+    setFlashcardsVisible(true);
+  }, [hasFeature, promptGatedFeature]);
+  const handleAddPageGated = useCallback(() => {
+    if (!canAddAnotherPage(persistence.pages.length)) {
+      promptGatedFeature('multi_page', () => void persistence.handleAddPage());
+      return;
+    }
+    void persistence.handleAddPage();
+  }, [canAddAnotherPage, persistence, promptGatedFeature]);
 
   const handlePinTimerToBoard = useCallback(
     (timerState: TimerState) => {
@@ -1036,6 +1193,37 @@ export default function BoardEditorScreen() {
         onOpenExportMenu={handleOpenExportMenu}
       />
 
+      {liveClass.classroomState?.active && liveClass.classroomState.roomInfo && (
+        <OneOnOneLiveBar
+          theme={theme}
+          isDark={dark}
+          role={liveClass.classroomState.role}
+          roomCode={liveClass.classroomState.roomInfo.roomCode}
+          voiceEnabled={liveClass.classroomState.roomInfo.voiceEnabled !== false}
+          connectedStudentName={liveClass.connectedStudent?.displayName ?? null}
+          studentCanSpeak={liveClass.studentCanSpeak}
+          studentHandRaised={liveClass.studentHandRaised}
+          studentCanDraw={liveClass.studentCanDraw}
+          teacherMuted={Boolean(liveClass.classroomState.roomInfo.teacherMuted)}
+          myCanSpeak={Boolean(liveClass.classroomState.myCanSpeak)}
+          myHandRaised={Boolean(liveClass.classroomState.myHandRaised)}
+          myCanDraw={liveClass.classroomState.myPermission === 'can-draw'}
+          onOpenQrSheet={() => liveClass.setHostSheetVisible(true)}
+          onToggleStudentVoice={liveClass.handleToggleStudentVoice}
+          onAllowStudentHandRaise={liveClass.handleAllowStudentHandRaise}
+          onDismissStudentHandRaise={liveClass.handleDismissStudentHandRaise}
+          onToggleStudentDraw={liveClass.handleToggleStudentDraw}
+          onToggleTeacherMute={liveClass.handleToggleTeacherMute}
+          onToggleStudentSelfMic={liveClass.handleToggleStudentMic}
+          onToggleStudentRaiseHand={liveClass.handleToggleRaiseHand}
+          onEndOrLeave={
+            liveClass.classroomState.role === 'teacher'
+              ? liveClass.handleEndClassFromSheet
+              : liveClass.handleLeaveClass
+          }
+        />
+      )}
+
       {persistence.storageError && (
         <View
           accessibilityRole="alert"
@@ -1085,7 +1273,7 @@ export default function BoardEditorScreen() {
             onToggleRecorder={handleToggleRecorder}
             onOpenSavedLessons={handleOpenSavedLessons}
             onStartVoicePin={handleStartVoicePinFromRail}
-            onOpenStageOverlay={handleOpenStageOverlay}
+            onOpenStageOverlay={handleOpenStageOverlayGated}
             onOpenFlashcards={handleOpenFlashcards}
           />
         )}
@@ -1225,9 +1413,10 @@ export default function BoardEditorScreen() {
                       canDeleteCurrentPage={persistence.pages.length > 1}
                       hasBackgroundImage={Boolean(persistence.activeBackgroundPdfObject)}
                       isBackgroundLocked={Boolean(persistence.activeBackgroundPdfObject?.locked)}
+                      showAddPageProBadge={!canAddAnotherPage(persistence.pages.length)}
                       onPrevPage={persistence.handlePrevPage}
                       onNextPage={persistence.handleNextPage}
-                      onAddPage={persistence.handleAddPage}
+                      onAddPage={handleAddPageGated}
                       onDeleteCurrentPage={() => {
                         if (persistence.activePageId) {
                           void persistence.handleDeletePage(persistence.activePageId);
@@ -1459,10 +1648,11 @@ export default function BoardEditorScreen() {
                 selectedIsTable={selectedIsTable}
                 selectedIsStemDiagram={selectedIsStemDiagram}
                 plottableMath={Boolean(plottableMath)}
+                showPlotProBadge={!hasFeature('math_stem').allowed}
                 canTidySelection={canTidySelection}
                 onEditObject={selectionEditing.startEditingExisting}
                 onToggleStyleSheet={selectionEditing.toggleStyleSheet}
-                onPlotMath={handlePlotMathObject}
+                onPlotMath={handlePlotMathGated}
                 onTidyLayout={handleTidyLayout}
                 onTableAction={selectionEditing.handleTableAction}
                 onDuplicate={selectionEditing.duplicateSelected}
@@ -1491,9 +1681,9 @@ export default function BoardEditorScreen() {
                   canChartTable={Boolean(numericTable)}
                   selectedFunctionPlot={selectedFunctionPlot}
                   onTidyLayout={handleTidyLayout}
-                  onPlotMath={handlePlotMathObject}
-                  onGenerateChart={handleGenerateChart}
-                  onComputeTableStats={handleComputeTableStats}
+                  onPlotMath={handlePlotMathGated}
+                  onGenerateChart={handleGenerateChartGated}
+                  onComputeTableStats={handleComputeTableStatsGated}
                   onUpdatePlotParam={handleUpdatePlotParam}
                   onUpdateTangentX={handleUpdateTangentX}
                   onTogglePlotTangent={handleTogglePlotTangent}
@@ -1512,7 +1702,7 @@ export default function BoardEditorScreen() {
                   selectedObjects={selectedObjects}
                   canCoverWithTape={canCoverWithTape}
                   playingPinId={playingVoicePinId}
-                  onCoverWithTape={handleCoverSelectionWithTape}
+                  onCoverWithTape={handleCoverWithTapeGated}
                   onToggleRevealTape={handleToggleRevealTape}
                   onTogglePlayVoicePin={handleTogglePlayVoicePinById}
                   onTogglePrivate={handleToggleSelectedPrivate}
@@ -1633,16 +1823,16 @@ export default function BoardEditorScreen() {
               canChartTable={Boolean(numericTable)}
               selectedFunctionPlot={selectedFunctionPlot}
               onTidyLayout={handleTidyLayout}
-              onPlotMath={handlePlotMathObject}
-              onGenerateChart={handleGenerateChart}
-              onComputeTableStats={handleComputeTableStats}
+              onPlotMath={handlePlotMathGated}
+              onGenerateChart={handleGenerateChartGated}
+              onComputeTableStats={handleComputeTableStatsGated}
               onUpdatePlotParam={handleUpdatePlotParam}
               onUpdateTangentX={handleUpdateTangentX}
               onTogglePlotTangent={handleTogglePlotTangent}
               onCommitPlotChanges={handleCommitPlotChanges}
               canCoverWithTape={canCoverWithTape}
               playingPinId={playingVoicePinId}
-              onCoverWithTape={handleCoverSelectionWithTape}
+              onCoverWithTape={handleCoverWithTapeGated}
               onToggleRevealTape={handleToggleRevealTape}
               onTogglePlayVoicePin={handleTogglePlayVoicePinById}
               onTogglePrivate={handleToggleSelectedPrivate}
@@ -2091,12 +2281,12 @@ export default function BoardEditorScreen() {
         activePageId={persistence.activePageId}
         onClose={() => setPageSorterVisible(false)}
         onSelectPage={(pageId) => persistence.switchToPage(pageId)}
-        onAddPage={persistence.handleAddPage}
+        onAddPage={handleAddPageGated}
         onDuplicatePage={persistence.handleDuplicatePage}
         onRenamePage={persistence.handleRenamePage}
         onMovePage={persistence.handleMovePage}
         onDeletePage={persistence.handleDeletePage}
-        onOpenPdfImport={() => setPdfImportVisible(true)}
+        onOpenPdfImport={handleOpenPdfImport}
       />
 
       <PdfImportModal
@@ -2179,6 +2369,26 @@ export default function BoardEditorScreen() {
         reducedMotion={reducedMotion}
         onChangeSettings={handleChangeBoardSettings}
         onClose={() => setBoardStyleModalVisible(false)}
+      />
+
+      <LiveClassModeModal
+        visible={liveClass.liveModeModalVisible}
+        boardOnlyAccess={getLiveClassAccess('board-only')}
+        voiceAccess={getLiveClassAccess('voice')}
+        theme={theme}
+        reducedMotion={reducedMotion}
+        onStartBoardOnly={() => void liveClass.startSessionWithMode('board-only')}
+        onStartWithVoice={() => void liveClass.startSessionWithMode('voice')}
+        onUpgrade={() => {
+          liveClass.setLiveModeModalVisible(false);
+          const voice = getLiveClassAccess('voice');
+          openPaywall({
+            reason: 'live_voice',
+            remainingTrials: voice.remainingVoiceTrials,
+            passesRemaining: voice.passesRemaining,
+          });
+        }}
+        onClose={() => liveClass.setLiveModeModalVisible(false)}
       />
     </View>
   );

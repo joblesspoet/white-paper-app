@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, BackHandler } from 'react-native';
 import type { useNavigation, useRouter } from 'expo-router';
 
@@ -15,13 +15,14 @@ import {
   type ClassroomSessionState,
 } from '../../classroom/classroom-session';
 import { diffDocumentsToSerializableCommand } from '../../classroom/diff';
-import { getLiveClassEntitlement } from '../../classroom/entitlement';
 import {
   applySerializableCommand,
   type EphemeralLaserPacket,
   type EphemeralStrokePacket,
 } from '../../classroom/protocol';
 import { fcprobe } from '../../dev-probe';
+import type { LiveClassMode } from '../../monetization/entitlement-service';
+import { useMonetization } from '../../monetization/monetization-context';
 import type { BoardPageRecord } from '../../persistence/repository';
 import { DEFAULT_BOARD_SETTINGS, type BoardSettings } from '../../persistence/schema';
 import { openAppSettings, requestMicrophonePermission } from '../../recorder/permissions';
@@ -69,6 +70,13 @@ export function useEditorLiveClass({
   router,
   navigation,
 }: UseEditorLiveClassArgs) {
+  const {
+    getLiveClassAccess,
+    openPaywall,
+    requestRewardedUnlock,
+    recordLiveVoiceStart,
+  } = useMonetization();
+  const [liveModeModalVisible, setLiveModeModalVisible] = useState(false);
   const [hostSheetVisible, setHostSheetVisible] = useState(false);
   const [startingLiveClass, setStartingLiveClass] = useState(false);
   const [classroomState, setClassroomState] = useState<ClassroomSessionState | null>(null);
@@ -93,6 +101,7 @@ export function useEditorLiveClass({
   const studentScratchpadDocRef = useRef<CanvasDocument>(EMPTY_DOCUMENT);
   const isScratchpadModeRef = useRef(false);
   const followTeacherViewportRef = useRef(true);
+  const studentAudioStartedRef = useRef(false);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const routerRef = useRef(router);
@@ -125,6 +134,29 @@ export function useEditorLiveClass({
         if (typeof snapshot.roomInfo.followTeacherViewport === 'boolean') {
           followTeacherViewportRef.current = snapshot.roomInfo.followTeacherViewport;
           setFollowTeacherViewport(snapshot.roomInfo.followTeacherViewport);
+        }
+        if (
+          session.getState().role === 'student' &&
+          snapshot.roomInfo.voiceEnabled !== false &&
+          !studentAudioStartedRef.current &&
+          audioAdapterRef.current
+        ) {
+          studentAudioStartedRef.current = true;
+          void audioAdapterRef.current
+            .connect({
+              roomCode: snapshot.roomInfo.roomCode,
+              peerId: session.getState().peerId,
+              displayName: session.getState().displayName,
+              role: 'student',
+              canPublish: false,
+            })
+            .then((st) => {
+              setVoiceAvailable(st.available);
+              setVoiceMicEnabled(st.micEnabled);
+              if (!st.connected && st.reason) {
+                showClassroomNotice(st.reason);
+              }
+            });
         }
         if (!isScratchpadModeRef.current) {
           applyingRemoteCommandRef.current = true;
@@ -241,10 +273,11 @@ export function useEditorLiveClass({
     showClassroomNotice,
   ]);
 
-  // Auto-join when opened via Student Join route
+  // Auto-join when opened via Student Join route (audio connects in onSnapshot only if voiceEnabled)
   useEffect(() => {
     if (!isStudentRoute || !paramRoomCode) return;
     const session = ensureClassroomSession();
+    studentAudioStartedRef.current = false;
     let cancelled = false;
     void (async () => {
       try {
@@ -253,21 +286,6 @@ export function useEditorLiveClass({
           displayName: paramDisplayName || (isProjectorMode ? 'Classroom Projector' : 'Student'),
         });
         if (cancelled) return;
-        const audio = audioAdapterRef.current;
-        if (audio) {
-          const st = await audio.connect({
-            roomCode: paramRoomCode,
-            peerId: session.getState().peerId,
-            displayName: session.getState().displayName,
-            role: 'student',
-            canPublish: false,
-          });
-          setVoiceAvailable(st.available);
-          setVoiceMicEnabled(st.micEnabled);
-          if (!st.connected && st.reason) {
-            showClassroomNotice(st.reason);
-          }
-        }
       } catch (error) {
         if (!cancelled) {
           Alert.alert(
@@ -282,6 +300,7 @@ export function useEditorLiveClass({
 
     return () => {
       cancelled = true;
+      studentAudioStartedRef.current = false;
       void audioAdapterRef.current?.disconnect();
       void session.endOrLeave();
     };
@@ -291,7 +310,6 @@ export function useEditorLiveClass({
     isStudentRoute,
     paramDisplayName,
     paramRoomCode,
-    showClassroomNotice,
   ]);
 
   // Resumable foreground reconnect
@@ -443,101 +461,136 @@ export function useEditorLiveClass({
     }
   }, [activePageId, boardSettings, classroomState, document, isScratchpadMode, pages, viewportLive]);
 
-  const handleStartOrOpenLiveClass = useCallback(async () => {
-    if (isStudentRoute || startingLiveClassRef.current) return;
-    const session = ensureClassroomSession();
-    if (session.getState().active) {
-      setHostSheetVisible(true);
-      return;
-    }
-
-    const entitlement = getLiveClassEntitlement();
-    if (!entitlement.canHost) {
-      Alert.alert('Teacher Pro Required', entitlement.reason ?? 'Upgrade to host Live Classes.');
-      return;
-    }
-
-    startingLiveClassRef.current = true;
-    setStartingLiveClass(true);
-    setHostSheetVisible(false);
-    try {
-      const micPerm = await requestMicrophonePermission();
-      if (!micPerm.granted) {
-        Alert.alert(
-          'Microphone Permission Required',
-          'Allow microphone access before starting a live class so students can hear your voice.',
-          micPerm.canAskAgain
-            ? [{ text: 'OK' }]
-            : [
-                { text: 'Not Now', style: 'cancel' },
-                { text: 'Open Settings', onPress: () => void openAppSettings() },
-              ],
-        );
+  const startSessionWithMode = useCallback(
+    async (mode: LiveClassMode, skipRewardCheck = false) => {
+      if (isStudentRoute || startingLiveClassRef.current) return;
+      const session = ensureClassroomSession();
+      if (session.getState().active) {
+        setHostSheetVisible(true);
         return;
       }
 
-      const currentPage = pages.find((p) => p.id === activePageId);
-      const roomInfo = await session.startAsTeacher({
-        boardId: boardId ?? 'local-board',
-        boardTitle: title,
-        pageId: activePageId || 'page-1',
-        pageName: currentPage?.name ?? 'Page 1',
-        pageOrderIndex: currentPage?.orderIndex ?? 0,
-        boardSettings: boardSettings ?? DEFAULT_BOARD_SETTINGS,
-        document: documentRef.current,
-        viewport: viewportLive.current,
-        displayName: 'Teacher',
-      });
-
-      setHostSheetVisible(true);
-
-      const audio = audioAdapterRef.current;
-      if (audio) {
-        void (async () => {
-          const st = await audio.connect({
-            roomCode: roomInfo.roomCode,
-            peerId: session.getState().peerId,
-            displayName: 'Teacher',
-            role: 'teacher',
-            canPublish: true,
-          });
-          setVoiceAvailable(st.available);
-          setVoiceMicEnabled(st.micEnabled);
-          if (st.reason) showClassroomNotice(st.reason);
-        })();
+      const access = getLiveClassAccess(mode);
+      if (mode === 'board-only' && access.requiresRewardedAd && !skipRewardCheck) {
+        setLiveModeModalVisible(false);
+        requestRewardedUnlock('board_only_live_class', () => {
+          void startSessionWithMode('board-only', true);
+        });
+        return;
       }
-    } catch (error) {
+
+      if (mode === 'voice' && !access.allowed) {
+        setLiveModeModalVisible(false);
+        openPaywall({
+          reason: 'live_voice',
+          remainingTrials: access.remainingVoiceTrials,
+          passesRemaining: access.passesRemaining,
+        });
+        return;
+      }
+
+      setLiveModeModalVisible(false);
+      startingLiveClassRef.current = true;
+      setStartingLiveClass(true);
       setHostSheetVisible(false);
-      const message =
-        error instanceof Error && error.message
-          ? error.message
-          : 'Could not connect to the Live Classroom server. Check your internet connection and try again.';
-      Alert.alert('Unable to Start Live Class', message);
-    } finally {
-      startingLiveClassRef.current = false;
-      setStartingLiveClass(false);
-    }
-  }, [
-    activePageId,
-    boardId,
-    boardSettings,
-    documentRef,
-    ensureClassroomSession,
-    isStudentRoute,
-    pages,
-    showClassroomNotice,
-    title,
-    viewportLive,
-  ]);
+      try {
+        if (mode === 'voice') {
+          const micPerm = await requestMicrophonePermission();
+          if (!micPerm.granted) {
+            Alert.alert(
+              'Microphone Permission Required',
+              'Allow microphone access before starting a live voice class so students can hear your voice.',
+              micPerm.canAskAgain
+                ? [{ text: 'OK' }]
+                : [
+                    { text: 'Not Now', style: 'cancel' },
+                    { text: 'Open Settings', onPress: () => void openAppSettings() },
+                  ],
+            );
+            return;
+          }
+        }
+
+        const currentPage = pages.find((p) => p.id === activePageId);
+        const roomInfo = await session.startAsTeacher({
+          boardId: boardId ?? 'local-board',
+          boardTitle: title,
+          pageId: activePageId || 'page-1',
+          pageName: currentPage?.name ?? 'Page 1',
+          pageOrderIndex: currentPage?.orderIndex ?? 0,
+          boardSettings: boardSettings ?? DEFAULT_BOARD_SETTINGS,
+          document: documentRef.current,
+          viewport: viewportLive.current,
+          displayName: 'Teacher',
+          voiceEnabled: mode === 'voice',
+          maxStudents: access.maxStudents,
+          ephemeralIntervalMs: access.ephemeralIntervalMs,
+        });
+
+        setHostSheetVisible(true);
+
+        if (mode === 'voice') {
+          await recordLiveVoiceStart();
+          const audio = audioAdapterRef.current;
+          if (audio) {
+            void (async () => {
+              const st = await audio.connect({
+                roomCode: roomInfo.roomCode,
+                peerId: session.getState().peerId,
+                displayName: 'Teacher',
+                role: 'teacher',
+                canPublish: true,
+              });
+              setVoiceAvailable(st.available);
+              setVoiceMicEnabled(st.micEnabled);
+              if (st.reason) showClassroomNotice(st.reason);
+            })();
+          }
+        } else {
+          setVoiceAvailable(false);
+          setVoiceMicEnabled(false);
+          showClassroomNotice(
+            `Board-only Live Class started (up to ${access.maxStudents} students · ${access.maxSessionMinutes}m)`,
+          );
+        }
+      } catch (error) {
+        setHostSheetVisible(false);
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : 'Could not connect to the Live Classroom server. Check your internet connection and try again.';
+        Alert.alert('Unable to Start Live Class', message);
+      } finally {
+        startingLiveClassRef.current = false;
+        setStartingLiveClass(false);
+      }
+    },
+    [
+      activePageId,
+      boardId,
+      boardSettings,
+      documentRef,
+      ensureClassroomSession,
+      getLiveClassAccess,
+      isStudentRoute,
+      openPaywall,
+      pages,
+      recordLiveVoiceStart,
+      requestRewardedUnlock,
+      showClassroomNotice,
+      title,
+      viewportLive,
+    ],
+  );
 
   const handlePressLiveClassButton = useCallback(() => {
     if (startingLiveClassRef.current) return;
     if (classroomState?.active) {
       setHostSheetVisible((prev) => !prev);
     } else {
-      void handleStartOrOpenLiveClass();
+      setLiveModeModalVisible(true);
     }
-  }, [classroomState?.active, handleStartOrOpenLiveClass]);
+  }, [classroomState?.active]);
 
   const handleToggleScratchpad = useCallback(() => {
     const next = !isScratchpadModeRef.current;
@@ -712,12 +765,60 @@ export function useEditorLiveClass({
     void classroomSessionRef.current?.endOrLeave();
   }, []);
 
+  const connectedStudent = useMemo(
+    () => classroomState?.participants.find((p) => p.role === 'student') ?? null,
+    [classroomState?.participants],
+  );
+
+  const studentCanSpeak = Boolean(
+    connectedStudent?.voicePermission === 'can-speak' ||
+      classroomState?.roomInfo?.activeSpeakerPeerId === connectedStudent?.peerId,
+  );
+
+  const studentHandRaised = Boolean(connectedStudent?.handRaised);
+  const studentCanDraw = connectedStudent?.permission === 'can-draw';
+
+  const handleToggleStudentVoice = useCallback(() => {
+    if (!connectedStudent) return;
+    if (studentCanSpeak) {
+      void classroomSessionRef.current?.revokeStudentVoice(connectedStudent.peerId);
+    } else {
+      void classroomSessionRef.current?.allowStudentVoice(connectedStudent.peerId);
+    }
+  }, [connectedStudent, studentCanSpeak]);
+
+  const handleAllowStudentHandRaise = useCallback(() => {
+    if (!connectedStudent) return;
+    void classroomSessionRef.current?.allowStudentVoice(connectedStudent.peerId);
+  }, [connectedStudent]);
+
+  const handleDismissStudentHandRaise = useCallback(() => {
+    if (!connectedStudent) return;
+    void classroomSessionRef.current?.lowerStudentHand(connectedStudent.peerId);
+  }, [connectedStudent]);
+
+  const handleToggleStudentDraw = useCallback(() => {
+    if (!connectedStudent) return;
+    if (studentCanDraw) {
+      void classroomSessionRef.current?.revokeDrawPermission(connectedStudent.peerId);
+    } else {
+      void classroomSessionRef.current?.grantDrawPermission(connectedStudent.peerId);
+    }
+  }, [connectedStudent, studentCanDraw]);
+
   return {
     classroomSessionRef,
+    liveModeModalVisible,
+    setLiveModeModalVisible,
+    startSessionWithMode,
     hostSheetVisible,
     setHostSheetVisible,
     startingLiveClass,
     classroomState,
+    connectedStudent,
+    studentCanSpeak,
+    studentHandRaised,
+    studentCanDraw,
     classroomNotice,
     remoteActiveStroke,
     remoteLaserStroke,
@@ -737,6 +838,10 @@ export function useEditorLiveClass({
     handleToggleTeacherMute,
     handleToggleRaiseHand,
     handleToggleStudentMic,
+    handleToggleStudentVoice,
+    handleAllowStudentHandRaise,
+    handleDismissStudentHandRaise,
+    handleToggleStudentDraw,
     handleLeaveClass,
     handleEndClassFromSheet,
   };

@@ -19,6 +19,8 @@ import {
 } from '../src/components/settings/SettingsRow';
 import { SettingsSection } from '../src/components/settings/SettingsSection';
 import { useSettingsScreen } from '../src/hooks/useSettingsScreen';
+import { useMonetization } from '../src/monetization/monetization-context';
+import type { UserPlanTier } from '../src/monetization/iap-catalog';
 import type {
   AppTheme,
   DefaultCanvasBackground,
@@ -35,6 +37,21 @@ export default function SettingsScreen() {
   const profile = useMemo(() => resolveViewportProfile(width, height), [height, width]);
   const isTablet = profile.isTablet;
   const baseGutter = isTablet ? TABLET_GUTTER : PHONE_GUTTER;
+
+  const {
+    tier,
+    state: monetizationState,
+    getLiveClassAccess,
+    openPaywall,
+    restorePurchases,
+  } = useMonetization();
+  const voiceAccess = getLiveClassAccess('voice');
+  const tierDisplayNames: Record<UserPlanTier, string> = {
+    free: 'Free (Ad-Supported)',
+    ad_free: 'Ad-Free ($1.99)',
+    offline_studio: 'Offline Studio ($4.99)',
+    teacher_pro: 'Teacher Pro',
+  };
 
   const {
     preferences,
@@ -154,6 +171,49 @@ export default function SettingsScreen() {
             </Text>
           </View>
         )}
+
+        <SettingsSection title="PLANS & PURCHASES" caption="Subscriptions, studio & passes" theme={theme}>
+          <SettingsNavRow
+            label="Current plan"
+            subtitle={
+              tier === 'teacher_pro'
+                ? 'Live Classroom + 1080p Video + Offline Studio + Ad-Free'
+                : 'Upgrade for Live Voice, HD Video, PDF Markup & No Ads'
+            }
+            value={tierDisplayNames[tier]}
+            accessibilityLabel={`Current plan: ${tierDisplayNames[tier]}`}
+            theme={theme}
+            onPress={() => openPaywall({ reason: 'upgrade' })}
+          />
+          <SettingsNavRow
+            hasDivider
+            label="Live Voice balance"
+            subtitle="Students always join free"
+            value={
+              tier === 'teacher_pro'
+                ? '25 voice hrs/mo'
+                : `${voiceAccess.remainingVoiceTrials} trials · ${monetizationState.liveClassPasses} passes`
+            }
+            accessibilityLabel="View Live Voice passes and plans"
+            theme={theme}
+            onPress={() =>
+              openPaywall({
+                reason: 'live_voice',
+                remainingTrials: voiceAccess.remainingVoiceTrials,
+                passesRemaining: monetizationState.liveClassPasses,
+              })
+            }
+          />
+          <SettingsNavRow
+            hasDivider
+            label="Restore purchases"
+            subtitle="Re-sync non-consumables & subscriptions"
+            value="Restore"
+            accessibilityLabel="Restore purchases"
+            theme={theme}
+            onPress={() => void restorePurchases()}
+          />
+        </SettingsSection>
 
         <SettingsSection title="APPEARANCE" caption="Canvas environment" theme={theme}>
           <ThemeSegmentControl

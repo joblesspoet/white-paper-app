@@ -18,8 +18,10 @@ import {
   type DefaultExportFormat,
 } from '../persistence/schema';
 import { resolveFlowModalLayout } from '../responsive/layout';
+import { useMonetization } from '../monetization/monetization-context';
 import { colors, spacing, type ThemeColors } from '../theme';
 import { CheckIcon } from './icons';
+import { ProBadge } from './monetization/ProBadge';
 import { settingsPickersStyles as styles } from './SettingsPickers.styles';
 
 type BaseModalProps = {
@@ -115,6 +117,8 @@ export const CanvasPickerModal = memo(function CanvasPickerModal({
   onClose,
   onSelect,
 }: CanvasPickerProps) {
+  const { canUseStyle, promptGatedFeature } = useMonetization();
+
   return (
     <SettingsDialogFrame
       visible={visible}
@@ -164,6 +168,7 @@ export const CanvasPickerModal = memo(function CanvasPickerModal({
       >
         {BOARD_STYLE_OPTIONS.map((opt, i) => {
           const active = style === opt.key;
+          const locked = !canUseStyle(opt.key);
           return (
             <Pressable
               key={opt.key}
@@ -174,10 +179,20 @@ export const CanvasPickerModal = memo(function CanvasPickerModal({
                 styles.optionRow,
                 i > 0 && { borderTopWidth: 1, borderTopColor: theme.border },
               ]}
-              onPress={() => onSelect(background, opt.key)}
+              onPress={() => {
+                if (locked) {
+                  onClose();
+                  promptGatedFeature('board_styles', () => onSelect(background, opt.key));
+                  return;
+                }
+                onSelect(background, opt.key);
+              }}
             >
               <View style={styles.optionText}>
-                <Text style={[styles.optionLabel, { color: theme.foreground }]}>{opt.label}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.optionLabel, { color: theme.foreground }]}>{opt.label}</Text>
+                  {locked && <ProBadge label="PRO" variant="pro" theme={theme} compact />}
+                </View>
                 <Text style={[styles.optionDesc, { color: theme.foreground }]}>
                   {opt.description}
                 </Text>

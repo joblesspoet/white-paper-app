@@ -2,7 +2,9 @@ import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import type { ThemeColors } from '../../theme';
+import type { UserPlanTier } from '../../monetization/iap-catalog';
 import { FlowCanvasLogoIcon, ImportIcon, SettingsIcon } from '../icons';
+import { ProBadge } from '../monetization/ProBadge';
 import { homeHeaderStyles as styles } from './HomeHeader.styles';
 
 type HomeHeaderProps = {
@@ -12,8 +14,17 @@ type HomeHeaderProps = {
   isCompactHeight: boolean;
   isTablet: boolean;
   boardCount: number;
+  planTier: UserPlanTier;
+  onUpgradePress: () => void;
   onImportPress: () => void;
   onSettingsPress: () => void;
+};
+
+const TIER_PILL_LABEL: Record<UserPlanTier, string> = {
+  free: 'Go Pro',
+  ad_free: 'Ad-Free',
+  offline_studio: 'Studio',
+  teacher_pro: 'Teacher Pro',
 };
 
 export const HomeHeader = memo(function HomeHeader({
@@ -23,9 +34,12 @@ export const HomeHeader = memo(function HomeHeader({
   isCompactHeight,
   isTablet,
   boardCount,
+  planTier,
+  onUpgradePress,
   onImportPress,
   onSettingsPress,
 }: HomeHeaderProps) {
+  const isPaid = planTier !== 'free';
   return (
     <View
       style={[
@@ -83,6 +97,34 @@ export const HomeHeader = memo(function HomeHeader({
       </View>
 
       <View style={styles.actions}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={isPaid ? `Current plan: ${TIER_PILL_LABEL[planTier]}` : 'Upgrade to Pro'}
+          onPress={onUpgradePress}
+          style={({ pressed }) => [
+            styles.upgradeButton,
+            {
+              borderColor: isPaid ? theme.primary : theme.accent,
+              backgroundColor: isPaid ? `${theme.primary}16` : `${theme.accent}18`,
+            },
+            pressed && styles.iconButtonPressed,
+          ]}
+        >
+          <ProBadge
+            label={planTier === 'free' ? 'PRO' : 'ACTIVE'}
+            variant={isPaid ? 'live' : 'pro'}
+            theme={theme}
+            compact
+          />
+          <Text
+            style={[
+              styles.upgradeText,
+              { color: isPaid ? theme.primary : theme.accent },
+            ]}
+          >
+            {TIER_PILL_LABEL[planTier]}
+          </Text>
+        </Pressable>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Import a board backup"

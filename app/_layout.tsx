@@ -13,6 +13,7 @@ try {
 
 import { typography } from '../src/theme';
 import { BoardProvider } from '../src/board-context';
+import { MonetizationProvider } from '../src/monetization/monetization-context';
 import { PreferencesProvider, usePreferences } from '../src/settings/preferences-context';
 
 /**
@@ -53,9 +54,11 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <PreferencesProvider>
-          <BoardProvider>
-            <RootNavigation />
-          </BoardProvider>
+          <MonetizationProvider>
+            <BoardProvider>
+              <RootNavigation />
+            </BoardProvider>
+          </MonetizationProvider>
         </PreferencesProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

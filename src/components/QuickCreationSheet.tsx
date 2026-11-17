@@ -21,9 +21,11 @@ import {
 } from '../canvas/document';
 import type { InstrumentKind } from '../canvas/geometry-box';
 import { type ConnectorStyle } from '../canvas/shapes';
+import { useMonetization } from '../monetization/monetization-context';
 import { usePreferences } from '../settings/preferences-context';
 import { spacing, type ThemeColors } from '../theme';
 import { ColorPicker } from './ColorPicker';
+import { ProBadge } from './monetization/ProBadge';
 import {
   QuickCreationCard,
   QuickCreationSection,
@@ -113,6 +115,13 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
   const { height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { reducedMotion } = usePreferences();
+  const { hasFeature, limits } = useMonetization();
+  const pdfBadge = !hasFeature('pdf_import').allowed ? 'PRO' : undefined;
+  const geoProBadge = !hasFeature('geometry_pro').allowed ? 'PRO' : undefined;
+  const mathBadge = !hasFeature('math_stem').allowed ? 'PRO' : undefined;
+  const recallBadge = !hasFeature('active_recall').allowed ? 'PRO' : undefined;
+  const faceCamBadge = !hasFeature('face_cam').allowed ? 'HD' : undefined;
+  const recorderBadge = !limits.lessonVideoUnlimitedEnabled ? '4m' : undefined;
   const [customPickerTarget, setCustomPickerTarget] = useState<'sticky' | 'text' | null>(null);
   /** Draft colour while the custom picker is open; applied when it is confirmed. */
   const [customColor, setCustomColor] = useState<string>(theme.primary);
@@ -517,7 +526,12 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       <PdfDocIcon size={20} color={theme.primary} />
                     </View>
                     <View style={styles.cardText}>
-                      <Text style={[styles.cardTitle, { color: theme.foreground }]}>Import PDF for markup</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={[styles.cardTitle, { color: theme.foreground }]}>
+                          Import PDF for markup
+                        </Text>
+                        {pdfBadge && <ProBadge label={pdfBadge} variant="pro" theme={theme} compact />}
+                      </View>
                       <Text style={[styles.cardCaption, { color: theme.foreground + '99' }]}>
                         Turn PDF pages into locked background worksheets
                       </Text>
@@ -539,6 +553,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Open protractor"
                       label="Protractor"
+                      badge={geoProBadge}
                       icon={<ProtractorIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'geometry', instrument: 'protractor' })}
                     />
@@ -546,6 +561,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Open compass"
                       label="Compass"
+                      badge={geoProBadge}
                       icon={<CompassIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'geometry', instrument: 'compass' })}
                     />
@@ -553,6 +569,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Open set square"
                       label="Set Square"
+                      badge={geoProBadge}
                       icon={<CompassRulerIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'geometry', instrument: 'set-square-45' })}
                     />
@@ -576,6 +593,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Open math formula builder"
                       label="Math f(x)"
+                      badge={mathBadge}
                       icon={<MathSumIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'math' })}
                     />
@@ -585,6 +603,8 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Toggle floating Face-Cam"
                       label="Face-Cam"
+                      badge={faceCamBadge}
+                      badgeVariant="hd"
                       icon={<FaceCamIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'facecam' })}
                     />
@@ -592,6 +612,8 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Open lesson recorder"
                       label="Record"
+                      badge={recorderBadge}
+                      badgeVariant="trial"
                       icon={<RecordDotIcon size={22} color={theme.destructive} />}
                       onPress={() => insert({ type: 'recorder' })}
                     />
@@ -612,6 +634,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Place tap-to-reveal answer tape"
                       label="Reveal Tape"
+                      badge={recallBadge}
                       icon={<RevealTapeIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'reveal-tape' })}
                     />
@@ -619,6 +642,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Record spatial voice pin"
                       label="Voice Pin"
+                      badge={recallBadge}
                       icon={<MicIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'voice-pin' })}
                     />
@@ -626,6 +650,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Open stage curtain shade"
                       label="Curtain"
+                      badge={recallBadge}
                       icon={<CurtainIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'curtain' })}
                     />
@@ -635,6 +660,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Open spotlight focus shade"
                       label="Spotlight"
+                      badge={recallBadge}
                       icon={<SpotlightIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'spotlight' })}
                     />
@@ -642,6 +668,7 @@ export const QuickCreationSheet = memo(function QuickCreationSheet({
                       theme={theme}
                       accessibilityLabel="Study board flashcards"
                       label="Flashcards"
+                      badge={recallBadge}
                       icon={<FlashcardsIcon size={22} color={theme.primary} />}
                       onPress={() => insert({ type: 'flashcards' })}
                     />

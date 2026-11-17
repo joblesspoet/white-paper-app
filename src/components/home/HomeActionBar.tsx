@@ -13,6 +13,7 @@ type HomeActionBarProps = {
   showSearchBar: boolean;
   searchQuery: string;
   boardCount: number;
+  maxBoards: number | null;
   filteredCount: number;
   onSearchChange: (text: string) => void;
   onClearSearch: () => void;
@@ -28,6 +29,7 @@ export const HomeActionBar = memo(function HomeActionBar({
   showSearchBar,
   searchQuery,
   boardCount,
+  maxBoards,
   filteredCount,
   onSearchChange,
   onClearSearch,
@@ -143,7 +145,9 @@ export const HomeActionBar = memo(function HomeActionBar({
           <Text style={[styles.sectionHeading, { color: theme.primary }]}>
             RECENT BOARDS ({filteredCount})
           </Text>
-          <Text style={[styles.sectionCount, { color: theme.foreground }]}>Local storage</Text>
+          <Text style={[styles.sectionCount, { color: theme.foreground }]}>
+            {maxBoards !== null ? `${boardCount} / ${maxBoards} boards` : 'Local storage'}
+          </Text>
         </View>
       )}
     </View>

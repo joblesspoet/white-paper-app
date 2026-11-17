@@ -8,8 +8,10 @@ import {
   type BoardSettings,
   type BoardStyle,
 } from '../../persistence/schema';
+import { useMonetization } from '../../monetization/monetization-context';
 import type { ThemeColors } from '../../theme';
 import { CheckIcon } from '../icons';
+import { ProBadge } from '../monetization/ProBadge';
 import { boardStyleModalStyles as styles } from './BoardStyleModal.styles';
 
 type BoardStyleModalProps = {
@@ -31,6 +33,7 @@ export const BoardStyleModal = memo(function BoardStyleModal({
 }: BoardStyleModalProps) {
   const currentBg = settings.background ?? DEFAULT_BOARD_SETTINGS.background;
   const currentStyle = settings.style ?? DEFAULT_BOARD_SETTINGS.style;
+  const { canUseStyle, promptGatedFeature } = useMonetization();
 
   return (
     <Modal
@@ -102,6 +105,7 @@ export const BoardStyleModal = memo(function BoardStyleModal({
           >
             {BOARD_STYLE_OPTIONS.map((opt, idx) => {
               const active = currentStyle === opt.key;
+              const locked = !canUseStyle(opt.key as BoardStyle);
               return (
                 <Pressable
                   key={opt.key}
@@ -109,6 +113,13 @@ export const BoardStyleModal = memo(function BoardStyleModal({
                   accessibilityState={{ selected: active }}
                   accessibilityLabel={`${opt.label}, ${opt.description}`}
                   onPress={() => {
+                    if (locked) {
+                      onClose();
+                      promptGatedFeature('board_styles', () => {
+                        onChangeSettings({ ...settings, style: opt.key as BoardStyle });
+                      });
+                      return;
+                    }
                     onChangeSettings({ ...settings, style: opt.key as BoardStyle });
                     onClose();
                   }}
@@ -119,14 +130,17 @@ export const BoardStyleModal = memo(function BoardStyleModal({
                   ]}
                 >
                   <View style={styles.optionText}>
-                    <Text
-                      style={[
-                        styles.optionLabel,
-                        { color: active ? theme.primary : theme.foreground },
-                      ]}
-                    >
-                      {opt.label}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text
+                        style={[
+                          styles.optionLabel,
+                          { color: active ? theme.primary : theme.foreground },
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                      {locked && <ProBadge label="PRO" variant="pro" theme={theme} compact />}
+                    </View>
                     <Text style={[styles.optionDesc, { color: theme.foreground }]}>
                       {opt.description}
                     </Text>

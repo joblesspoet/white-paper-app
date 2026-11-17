@@ -1,8 +1,10 @@
 import { memo } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
+import { useMonetization } from '../../monetization/monetization-context';
 import { colors, spacing, type ThemeColors } from '../../theme';
 import type { InkTool } from '../CanvasViewport';
+import { ProBadge, type ProBadgeVariant } from '../monetization/ProBadge';
 import {
   CalculatorIcon,
   CompassRulerIcon,
@@ -77,6 +79,8 @@ const RailButton = memo(function RailButton({
   accessibilityHint,
   selected = false,
   destructiveActive = false,
+  badge,
+  badgeVariant = 'pro',
   theme,
   onPress,
   renderIcon,
@@ -86,6 +90,8 @@ const RailButton = memo(function RailButton({
   accessibilityHint?: string;
   selected?: boolean;
   destructiveActive?: boolean;
+  badge?: string;
+  badgeVariant?: ProBadgeVariant;
   theme: ThemeColors;
   onPress: () => void;
   renderIcon: (color: string) => React.ReactNode;
@@ -112,6 +118,11 @@ const RailButton = memo(function RailButton({
         ]}
       >
         {renderIcon(color)}
+        {badge && (
+          <View style={{ position: 'absolute', top: -4, right: -6 }}>
+            <ProBadge label={badge} variant={badgeVariant} theme={theme} compact />
+          </View>
+        )}
       </View>
       <Text style={[styles.toolLabel, { color }]} numberOfLines={1}>
         {label}
@@ -145,6 +156,13 @@ export const EditorToolRail = memo(function EditorToolRail({
   onOpenStageOverlay,
   onOpenFlashcards,
 }: EditorToolRailProps) {
+  const { hasFeature, limits } = useMonetization();
+  const mathBadge = !hasFeature('math_stem').allowed ? 'PRO' : undefined;
+  const pdfBadge = !hasFeature('pdf_import').allowed ? 'PRO' : undefined;
+  const faceCamBadge = !hasFeature('face_cam').allowed ? 'HD' : undefined;
+  const recorderBadge = !limits.lessonVideoUnlimitedEnabled ? '4m' : undefined;
+  const recallBadge = !hasFeature('active_recall').allowed ? 'PRO' : undefined;
+
   return (
     <View
       style={[
@@ -203,6 +221,7 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="Math"
           accessibilityLabel="Open math formula builder"
+          badge={mathBadge}
           theme={theme}
           onPress={onOpenMath}
           renderIcon={(c) => <MathSumIcon size={20} color={c} />}
@@ -210,6 +229,7 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="PDF"
           accessibilityLabel="Import PDF for markup"
+          badge={pdfBadge}
           theme={theme}
           onPress={onOpenPdfImport}
           renderIcon={(c) => <PdfDocIcon size={20} color={c} />}
@@ -217,6 +237,8 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="Cam"
           accessibilityLabel="Toggle floating Face-Cam"
+          badge={faceCamBadge}
+          badgeVariant="hd"
           selected={faceCamVisible}
           theme={theme}
           onPress={onToggleFaceCam}
@@ -225,6 +247,8 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="Rec"
           accessibilityLabel="Toggle lesson recorder"
+          badge={recorderBadge}
+          badgeVariant="trial"
           selected={recorderBarVisible}
           destructiveActive
           theme={theme}
@@ -249,6 +273,7 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="Tape"
           accessibilityLabel="Place tap-to-reveal answer tape"
+          badge={recallBadge}
           selected={activeTool === 'reveal-tape'}
           theme={theme}
           onPress={() => onToolPress('reveal-tape')}
@@ -257,6 +282,7 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="Voice"
           accessibilityLabel="Record spatial voice pin"
+          badge={recallBadge}
           selected={voicePinRecording}
           destructiveActive
           theme={theme}
@@ -266,6 +292,7 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="Curtain"
           accessibilityLabel="Open stage curtain shade"
+          badge={recallBadge}
           selected={stageOverlayVisible && stageOverlayMode === 'curtain'}
           theme={theme}
           onPress={() => onOpenStageOverlay('curtain')}
@@ -274,6 +301,7 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="Spot"
           accessibilityLabel="Open spotlight focus shade"
+          badge={recallBadge}
           selected={stageOverlayVisible && stageOverlayMode === 'spotlight'}
           theme={theme}
           onPress={() => onOpenStageOverlay('spotlight')}
@@ -282,6 +310,7 @@ export const EditorToolRail = memo(function EditorToolRail({
         <RailButton
           label="Cards"
           accessibilityLabel="Study board flashcards"
+          badge={recallBadge}
           theme={theme}
           onPress={onOpenFlashcards}
           renderIcon={(c) => <FlashcardsIcon size={20} color={c} />}

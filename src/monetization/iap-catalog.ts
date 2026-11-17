@@ -109,8 +109,8 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
   {
     key: 'live_class_5_pack',
     kind: 'consumable',
-    title: '5 Live Voice Class Passes',
-    subtitle: 'Host 5 live classes with LiveKit Voice (up to 60 min & 25 students each)',
+    title: '5 Live 1-on-1 Tutoring Passes',
+    subtitle: 'Host 5 private 1-on-1 live voice sessions (60 min each)',
     referenceUsdPrice: '$1.99',
     storeIds: {
       development: {
@@ -129,8 +129,8 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
   {
     key: 'live_class_20_pack',
     kind: 'consumable',
-    title: '20 Live Voice Class Passes',
-    subtitle: 'Host 20 live classes with LiveKit Voice (up to 60 min & 25 students each)',
+    title: '20 Live 1-on-1 Tutoring Passes',
+    subtitle: 'Host 20 private 1-on-1 live voice sessions (60 min each)',
     referenceUsdPrice: '$4.99',
     storeIds: {
       development: {
@@ -150,7 +150,7 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
     key: 'teacher_pro_monthly',
     kind: 'subscription',
     title: 'Teacher Pro Monthly',
-    subtitle: 'Live Class + Voice (40 students), Unlimited HD Video + Face-Cam & all Studio tools',
+    subtitle: '1-on-1 Live Voice Tutoring, Unlimited HD Video + Face-Cam & all Studio tools',
     referenceUsdPrice: '$2.99/mo',
     storeIds: {
       development: {
@@ -171,7 +171,7 @@ export const IAP_PRODUCTS: readonly IapProductDefinition[] = [
     key: 'teacher_pro_annual',
     kind: 'subscription',
     title: 'Teacher Pro Annual',
-    subtitle: '7-day free trial, then ~$1.67/mo — Live Class + Voice, HD Video + Face-Cam & all Studio tools',
+    subtitle: '7-day free trial, then ~$1.67/mo — 1-on-1 Live Voice, HD Video + Face-Cam & all Studio tools',
     referenceUsdPrice: '$19.99/yr',
     introTrialDays: 7,
     storeIds: {
@@ -263,15 +263,15 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
     boardOnlyLiveClass: {
       enabled: true,
       requiresRewardedAd: true,
-      maxStudents: 15,
-      maxSessionMinutes: 30,
+      maxStudents: 1, // 1-on-1 Private Tutoring session
+      maxSessionMinutes: 45,
       ephemeralIntervalMs: 66,
     },
     liveVoiceClass: {
       lifetimeTrialCount: 3,
-      maxStudents: 10,
-      maxSessionMinutes: 20,
-      monthlyVoiceHoursCap: 1,
+      maxStudents: 1, // 1-on-1 Private Tutoring session
+      maxSessionMinutes: 30,
+      monthlyVoiceHoursCap: 1.5,
     },
     adsEnabled: true,
     rewardedAd24hUnlockSupported: true,
@@ -295,15 +295,15 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
     boardOnlyLiveClass: {
       enabled: true,
       requiresRewardedAd: false,
-      maxStudents: 15,
-      maxSessionMinutes: 45,
+      maxStudents: 1,
+      maxSessionMinutes: 60,
       ephemeralIntervalMs: 66,
     },
     liveVoiceClass: {
       lifetimeTrialCount: 3,
-      maxStudents: 10,
-      maxSessionMinutes: 20,
-      monthlyVoiceHoursCap: 1,
+      maxStudents: 1,
+      maxSessionMinutes: 30,
+      monthlyVoiceHoursCap: 1.5,
     },
     adsEnabled: false,
     rewardedAd24hUnlockSupported: false,
@@ -327,15 +327,15 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
     boardOnlyLiveClass: {
       enabled: true,
       requiresRewardedAd: false,
-      maxStudents: 20,
-      maxSessionMinutes: 60,
+      maxStudents: 1,
+      maxSessionMinutes: 90,
       ephemeralIntervalMs: 50,
     },
     liveVoiceClass: {
       lifetimeTrialCount: 3,
-      maxStudents: 10,
-      maxSessionMinutes: 20,
-      monthlyVoiceHoursCap: 1,
+      maxStudents: 1,
+      maxSessionMinutes: 45,
+      monthlyVoiceHoursCap: 2.5,
     },
     adsEnabled: false,
     rewardedAd24hUnlockSupported: false,
@@ -359,15 +359,15 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
     boardOnlyLiveClass: {
       enabled: true,
       requiresRewardedAd: false,
-      maxStudents: 40,
-      maxSessionMinutes: 120,
+      maxStudents: 1,
+      maxSessionMinutes: 180,
       ephemeralIntervalMs: 33,
     },
     liveVoiceClass: {
       lifetimeTrialCount: 3,
-      maxStudents: 40,
-      maxSessionMinutes: 120,
-      monthlyVoiceHoursCap: 25,
+      maxStudents: 1,
+      maxSessionMinutes: 180,
+      monthlyVoiceHoursCap: 35,
     },
     adsEnabled: false,
     rewardedAd24hUnlockSupported: false,
@@ -375,7 +375,7 @@ export const TIER_LIMITS: Record<UserPlanTier, TierFeatureLimits> = {
 };
 
 export const CONSUMABLE_LIVE_PASS_LIMITS = {
-  maxStudentsPerRoom: 25,
+  maxStudentsPerRoom: 1,
   maxSessionMinutes: 60,
 } as const;
 

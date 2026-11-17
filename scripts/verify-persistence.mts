@@ -197,18 +197,26 @@ const fullDocument: CanvasDocument = {
 async function testFreshDatabase(): Promise<void> {
   const test = openTestDatabase();
   try {
-    assert.deepEqual(planMigrations(0).map((migration) => migration.version), [1, 2, 3, 4]);
-    assert.deepEqual(planMigrations(1).map((migration) => migration.version), [2, 3, 4]);
-    assert.deepEqual(planMigrations(2).map((migration) => migration.version), [3, 4]);
-    assert.deepEqual(planMigrations(3).map((migration) => migration.version), [4]);
+    assert.deepEqual(planMigrations(0).map((migration) => migration.version), [1, 2, 3, 4, 5]);
+    assert.deepEqual(planMigrations(1).map((migration) => migration.version), [2, 3, 4, 5]);
+    assert.deepEqual(planMigrations(2).map((migration) => migration.version), [3, 4, 5]);
+    assert.deepEqual(planMigrations(3).map((migration) => migration.version), [4, 5]);
+    assert.deepEqual(planMigrations(4).map((migration) => migration.version), [5]);
     assert.deepEqual(planMigrations(SCHEMA_VERSION), []);
 
     const result = await migrateDatabase(test.database);
-    assert.deepEqual(result, { from: 0, to: SCHEMA_VERSION, applied: [1, 2, 3, 4] });
+    assert.deepEqual(result, { from: 0, to: SCHEMA_VERSION, applied: [1, 2, 3, 4, 5] });
     assert.equal(await readSchemaVersion(test.database), SCHEMA_VERSION);
 
     const tables = await tableNames(test.database);
-    for (const table of ['boards', 'board_pages', 'canvas_objects', 'media_assets', 'app_preferences']) {
+    for (const table of [
+      'boards',
+      'board_pages',
+      'canvas_objects',
+      'media_assets',
+      'app_preferences',
+      'monetization_state',
+    ]) {
       assert.ok(tables.includes(table), `missing table ${table}`);
     }
     assert.ok((await columnNames(test.database, 'boards')).includes('viewport_json'));
@@ -261,7 +269,7 @@ async function testVersionOneUpgrade(): Promise<void> {
     );
 
     const result = await migrateDatabase(test.database);
-    assert.deepEqual(result, { from: 1, to: SCHEMA_VERSION, applied: [2, 3, 4] });
+    assert.deepEqual(result, { from: 1, to: SCHEMA_VERSION, applied: [2, 3, 4, 5] });
     assert.ok((await columnNames(test.database, 'boards')).includes('viewport_json'));
 
     const snapshot = await loadBoardDocument(test.database, 'legacy');
@@ -281,7 +289,7 @@ async function testVersionTwoUpgrade(): Promise<void> {
     await test.database.execAsync('PRAGMA user_version = 2');
 
     const result = await migrateDatabase(test.database);
-    assert.deepEqual(result, { from: 2, to: SCHEMA_VERSION, applied: [3, 4] });
+    assert.deepEqual(result, { from: 2, to: SCHEMA_VERSION, applied: [3, 4, 5] });
     const tables = await tableNames(test.database);
     assert.ok(tables.includes('app_preferences'));
   } finally {

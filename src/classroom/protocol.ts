@@ -50,6 +50,12 @@ export type ClassroomRoomInfo = {
   teacherMuted: boolean;
   activeSpeakerPeerId: string | null;
   followTeacherViewport: boolean;
+  /** False for Board-Only Live Sync ($0 LiveKit cost). Defaults to true if omitted. */
+  voiceEnabled?: boolean;
+  /** Tier cap on student capacity for this room. */
+  maxStudents?: number;
+  /** Throttled ephemeral broadcast interval (ms) for this room. */
+  ephemeralIntervalMs?: number;
 };
 
 export type EphemeralStrokePacket = {

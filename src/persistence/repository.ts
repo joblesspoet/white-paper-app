@@ -33,12 +33,18 @@ import type { Viewport } from '../canvas/viewport.ts';
 import type { PersistenceDatabase, SqlParams } from './database.ts';
 import {
   DEFAULT_BOARD_SETTINGS,
+  DEFAULT_MONETIZATION_STATE,
+  clampNonNegativeInt,
   parseBoardSettings,
+  parsePersistedEntitlements,
+  parseRewardedUnlocks,
   parseViewport,
   serializeBoardSettings,
   serializeViewport,
   type BoardSettings,
   type AppPreferences,
+  type MonetizationState,
+  type PersistedEntitlementId,
   DEFAULT_APP_PREFERENCES,
   parseAppPreferences,
   serializeAppPreferences,
@@ -1670,4 +1676,200 @@ export async function clearAllLocalData(
 
   return { boardsCleared, objectsCleared, mediaCleared };
 }
+
+// ------------------------------------------------------------ monetization
+
+type MonetizationRow = {
+  active_entitlements_json: string;
+  cached_expires_at: string | null;
+  live_class_passes: number;
+  hosted_voice_trial_count: number;
+  bonus_board_slots: number;
+  rewarded_unlocks_json: string;
+  last_interstitial_at: string | null;
+  updated_at: string;
+};
+
+export async function loadMonetizationState(
+  database: PersistenceDatabase,
+): Promise<MonetizationState> {
+  try {
+    const row = await database.getFirstAsync<MonetizationRow>(
+      `SELECT active_entitlements_json, cached_expires_at, live_class_passes,
+              hosted_voice_trial_count, bonus_board_slots, rewarded_unlocks_json,
+              last_interstitial_at, updated_at
+       FROM monetization_state WHERE id = 1`,
+    );
+    if (!row) {
+      return { ...DEFAULT_MONETIZATION_STATE, rewardedUnlocks: {} };
+    }
+    return {
+      activeEntitlements: parsePersistedEntitlements(row.active_entitlements_json),
+      cachedExpiresAt: typeof row.cached_expires_at === 'string' ? row.cached_expires_at : null,
+      liveClassPasses: clampNonNegativeInt(row.live_class_passes),
+      hostedVoiceTrialCount: clampNonNegativeInt(row.hosted_voice_trial_count),
+      bonusBoardSlots: clampNonNegativeInt(row.bonus_board_slots),
+      rewardedUnlocks: parseRewardedUnlocks(row.rewarded_unlocks_json),
+      lastInterstitialAt:
+        typeof row.last_interstitial_at === 'string' ? row.last_interstitial_at : null,
+      updatedAt: typeof row.updated_at === 'string' ? row.updated_at : '',
+    };
+  } catch {
+    return { ...DEFAULT_MONETIZATION_STATE, rewardedUnlocks: {} };
+  }
+}
+
+export async function saveMonetizationState(
+  database: PersistenceDatabase,
+  state: MonetizationState,
+  now = new Date().toISOString(),
+): Promise<MonetizationState> {
+  const next: MonetizationState = {
+    activeEntitlements: [...new Set(state.activeEntitlements)],
+    cachedExpiresAt: state.cachedExpiresAt ?? null,
+    liveClassPasses: clampNonNegativeInt(state.liveClassPasses),
+    hostedVoiceTrialCount: clampNonNegativeInt(state.hostedVoiceTrialCount),
+    bonusBoardSlots: clampNonNegativeInt(state.bonusBoardSlots),
+    rewardedUnlocks: { ...state.rewardedUnlocks },
+    lastInterstitialAt: state.lastInterstitialAt ?? null,
+    updatedAt: now,
+  };
+  await database.runAsync(
+    `INSERT OR REPLACE INTO monetization_state (
+       id, active_entitlements_json, cached_expires_at, live_class_passes,
+       hosted_voice_trial_count, bonus_board_slots, rewarded_unlocks_json,
+       last_interstitial_at, updated_at
+     ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      JSON.stringify(next.activeEntitlements),
+      next.cachedExpiresAt,
+      next.liveClassPasses,
+      next.hostedVoiceTrialCount,
+      next.bonusBoardSlots,
+      JSON.stringify(next.rewardedUnlocks),
+      next.lastInterstitialAt,
+      next.updatedAt,
+    ],
+  );
+  return next;
+}
+
+export async function updateMonetizationEntitlements(
+  database: PersistenceDatabase,
+  entitlements: readonly PersistedEntitlementId[],
+  cachedExpiresAt: string | null,
+  now = new Date().toISOString(),
+): Promise<MonetizationState> {
+  const current = await loadMonetizationState(database);
+  return saveMonetizationState(
+    database,
+    {
+      ...current,
+      activeEntitlements: [...entitlements],
+      cachedExpiresAt,
+    },
+    now,
+  );
+}
+
+export async function incrementHostedVoiceTrial(
+  database: PersistenceDatabase,
+  now = new Date().toISOString(),
+): Promise<MonetizationState> {
+  const current = await loadMonetizationState(database);
+  return saveMonetizationState(
+    database,
+    { ...current, hostedVoiceTrialCount: current.hostedVoiceTrialCount + 1 },
+    now,
+  );
+}
+
+export async function grantBonusBoardSlot(
+  database: PersistenceDatabase,
+  slots = 1,
+  now = new Date().toISOString(),
+): Promise<MonetizationState> {
+  const current = await loadMonetizationState(database);
+  return saveMonetizationState(
+    database,
+    { ...current, bonusBoardSlots: current.bonusBoardSlots + Math.max(0, Math.floor(slots)) },
+    now,
+  );
+}
+
+export async function grantRewardedUnlock(
+  database: PersistenceDatabase,
+  featureKey: string,
+  expiresAtIso: string,
+  now = new Date().toISOString(),
+): Promise<MonetizationState> {
+  const current = await loadMonetizationState(database);
+  return saveMonetizationState(
+    database,
+    {
+      ...current,
+      rewardedUnlocks: {
+        ...current.rewardedUnlocks,
+        [featureKey]: expiresAtIso,
+      },
+    },
+    now,
+  );
+}
+
+export async function addLiveClassPasses(
+  database: PersistenceDatabase,
+  passes: number,
+  now = new Date().toISOString(),
+): Promise<MonetizationState> {
+  const current = await loadMonetizationState(database);
+  return saveMonetizationState(
+    database,
+    {
+      ...current,
+      liveClassPasses: current.liveClassPasses + Math.max(0, Math.floor(passes)),
+    },
+    now,
+  );
+}
+
+export async function consumeLiveClassPass(
+  database: PersistenceDatabase,
+  now = new Date().toISOString(),
+): Promise<{ consumed: boolean; state: MonetizationState }> {
+  const current = await loadMonetizationState(database);
+  if (current.liveClassPasses <= 0) {
+    return { consumed: false, state: current };
+  }
+  const next = await saveMonetizationState(
+    database,
+    { ...current, liveClassPasses: current.liveClassPasses - 1 },
+    now,
+  );
+  return { consumed: true, state: next };
+}
+
+export async function recordInterstitialShown(
+  database: PersistenceDatabase,
+  shownAtIso = new Date().toISOString(),
+): Promise<MonetizationState> {
+  const current = await loadMonetizationState(database);
+  return saveMonetizationState(
+    database,
+    { ...current, lastInterstitialAt: shownAtIso },
+    shownAtIso,
+  );
+}
+
+export async function resetDevMonetizationState(
+  database: PersistenceDatabase,
+  now = new Date().toISOString(),
+): Promise<MonetizationState> {
+  return saveMonetizationState(
+    database,
+    { ...DEFAULT_MONETIZATION_STATE, rewardedUnlocks: {} },
+    now,
+  );
+}
+
 

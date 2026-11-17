@@ -4,6 +4,7 @@ import { AppState } from 'react-native';
 import type { CanvasDocument } from '../../canvas/document';
 import type { Viewport } from '../../canvas/viewport';
 import { shareFile } from '../../export/share';
+import { useMonetization } from '../../monetization/monetization-context';
 import type { BoardPageRecord } from '../../persistence/repository';
 import {
   beginCountdown,
@@ -61,8 +62,25 @@ export function useEditorRecorder({
   initialDefaultViewport,
   canvasRect,
 }: UseEditorRecorderArgs) {
+  const { limits, openPaywall } = useMonetization();
   const [recorderBarVisible, setRecorderBarVisible] = useState(false);
-  const [recorderQuality, setRecorderQuality] = useState<VideoQuality>('720p');
+  const [recorderQualityState, setRecorderQualityState] = useState<VideoQuality>(
+    limits.lessonRecorderMaxQuality,
+  );
+  const recorderQuality: VideoQuality = limits.lessonVideoUnlimitedEnabled
+    ? recorderQualityState
+    : limits.lessonRecorderMaxQuality;
+
+  const setRecorderQuality = useCallback(
+    (next: VideoQuality) => {
+      if (!limits.lessonVideoUnlimitedEnabled && next !== '480p') {
+        openPaywall({ reason: 'lesson_recorder_hd' });
+        return;
+      }
+      setRecorderQualityState(next);
+    },
+    [limits.lessonVideoUnlimitedEnabled, openPaywall],
+  );
   const [recorderMic, setRecorderMic] = useState(true);
   const [recorderStatus, setRecorderStatus] = useState<RecorderStatus>('idle');
   const [recorderElapsedMs, setRecorderElapsedMs] = useState(0);
@@ -139,15 +157,29 @@ export function useEditorRecorder({
     return () => clearTimeout(timer);
   }, [canvasRect, recorderCountdown, recorderStatus]);
 
-  // Elapsed timer tick while recording
+  const autoStoppedForLimitRef = useRef(false);
+  const stopRecordingRef = useRef<(() => Promise<void>) | null>(null);
+
+  // Elapsed timer tick while recording (enforces free/studio preview cap)
   useEffect(() => {
     if (recorderStatus !== 'recording') return;
+    autoStoppedForLimitRef.current = false;
+    const maxMs =
+      limits.lessonRecorderMaxSeconds !== null
+        ? limits.lessonRecorderMaxSeconds * 1000
+        : null;
     const id = setInterval(() => {
       const session = recorderSessionRef.current;
-      if (session) setRecorderElapsedMs(getElapsedMs(session, Date.now()));
+      if (!session) return;
+      const elapsed = getElapsedMs(session, Date.now());
+      setRecorderElapsedMs(elapsed);
+      if (maxMs !== null && elapsed >= maxMs && !autoStoppedForLimitRef.current) {
+        autoStoppedForLimitRef.current = true;
+        void stopRecordingRef.current?.();
+      }
     }, 250);
     return () => clearInterval(id);
-  }, [recorderStatus]);
+  }, [limits.lessonRecorderMaxSeconds, recorderStatus]);
 
   const recordViewportIfActive = useCallback(
     (next: Viewport) => {
@@ -270,13 +302,17 @@ export function useEditorRecorder({
     setReplayLesson(pkg);
     setReplayAlreadySaved(false);
     setReplayNotice(
-      nativeResult.videoUri
-        ? 'Recorded MP4 video + 60 FPS FlowCanvas replay.'
-        : nativeResult.audioUri
-          ? 'Recorded voice audio + 60 FPS FlowCanvas replay.'
-          : 'Recorded as an interactive 60 FPS FlowCanvas replay (.flowlesson.json).',
+      autoStoppedForLimitRef.current
+        ? 'Reached 4-minute free recording limit. Upgrade to Teacher Pro for unlimited HD video.'
+        : nativeResult.videoUri
+          ? 'Recorded MP4 video + 60 FPS FlowCanvas replay.'
+          : nativeResult.audioUri
+            ? 'Recorded voice audio + 60 FPS FlowCanvas replay.'
+            : 'Recorded as an interactive 60 FPS FlowCanvas replay (.flowlesson.json).',
     );
   }, []);
+
+  stopRecordingRef.current = handleStopRecording;
 
   const handleSaveReplayLesson = useCallback(
     async (lesson: LessonRecordingPackage) => {

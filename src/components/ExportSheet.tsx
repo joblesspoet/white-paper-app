@@ -17,9 +17,11 @@ import { deleteExportFile, exportBoard, type ExportPageInput } from '../export/e
 import { formatBytes, type ExportFileFormat, type ExportScope } from '../export/regions';
 import { isShareAvailable, shareFile } from '../export/share';
 import type { BoardSettings } from '../persistence/schema';
+import { useMonetization } from '../monetization/monetization-context';
 import { resolveFlowModalLayout } from '../responsive/layout';
 import { spacing, typography, type ThemeColors } from '../theme';
 import { AppButton } from './AppButton';
+import { ProBadge } from './monetization/ProBadge';
 import { exportSheetStyles as styles } from './ExportSheet.styles';
 
 type ExportSheetProps = {
@@ -69,6 +71,8 @@ export const ExportSheet = memo(function ExportSheet({
   const hasSelection = selectedIds.length > 0;
   const pageCount = pages && pages.length > 0 ? pages.length : 1;
   const pdfSupported = Platform.OS !== 'web';
+  const { hasFeature, promptGatedFeature, maybeShowPostExportInterstitial } = useMonetization();
+  const multiPageExportAllowed = hasFeature('multi_page_export').allowed;
 
   const [format, setFormat] = useState<ExportFileFormat>(defaultFormat);
   const [scope, setScope] = useState<ExportScope>('visible');
@@ -171,6 +175,7 @@ export const ExportSheet = memo(function ExportSheet({
 
       if (shareOutcome.outcome === 'shared') {
         setStatusMessage(`Exported ${result.fileName} (${formatBytes(result.bytes)}).`);
+        void maybeShowPostExportInterstitial();
       } else if (shareOutcome.outcome === 'cancelled') {
         setStatusMessage('Share cancelled.');
       } else {
@@ -184,7 +189,21 @@ export const ExportSheet = memo(function ExportSheet({
         await deleteExportFile(exportedUri);
       }
     }
-  }, [boardTitle, busy, canvasSize, dark, document, format, includePrivate, pages, scope, selectedIds, settings, viewport]);
+  }, [
+    boardTitle,
+    busy,
+    canvasSize,
+    dark,
+    document,
+    format,
+    includePrivate,
+    maybeShowPostExportInterstitial,
+    pages,
+    scope,
+    selectedIds,
+    settings,
+    viewport,
+  ]);
 
   const showScopePicker = format !== 'backup';
 
@@ -302,6 +321,15 @@ export const ExportSheet = memo(function ExportSheet({
                     accessibilityState={{ selected: scope === 'all-pages' }}
                     disabled={busy}
                     onPress={() => {
+                      if (!multiPageExportAllowed && pageCount > 1) {
+                        promptGatedFeature('multi_page_export', () => {
+                          setScope('all-pages');
+                          if (format === 'png' || format === 'jpeg') {
+                            setFormat(pdfSupported ? 'pdf' : 'backup');
+                          }
+                        });
+                        return;
+                      }
                       setScope('all-pages');
                       if (format === 'png' || format === 'jpeg') {
                         setFormat(pdfSupported ? 'pdf' : 'backup');
@@ -312,12 +340,19 @@ export const ExportSheet = memo(function ExportSheet({
                       {
                         borderColor: scope === 'all-pages' ? theme.primary : theme.border,
                         backgroundColor: scope === 'all-pages' ? theme.muted : theme.surface,
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
                       },
                     ]}
                   >
                     <Text style={[typography.bodyStrong, { color: theme.foreground }]}>
                       All pages ({pageCount})
                     </Text>
+                    {!multiPageExportAllowed && pageCount > 1 && (
+                      <ProBadge label="PRO" variant="pro" theme={theme} compact />
+                    )}
                   </Pressable>
                 </View>
               </View>
